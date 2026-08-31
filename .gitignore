@@ -1,0 +1,16 @@
+.venv/
+.cache/
+reports/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Deterministically regenerated from tests/fixtures/synthetic_incident.py
+examples/*.jsonl

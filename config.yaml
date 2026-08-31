@@ -1,0 +1,44 @@
+# Mistify pipeline configuration.
+# Validated against mistify.common.config.MistifyConfig; unknown keys are rejected.
+
+pipeline:
+  max_agent_tool_calls: 20
+
+adapters:
+  auto_detect: true
+  # Phase 4 adds: elastic, loki, otlp
+  registered: [json_lines]
+  min_detect_confidence: 0.6
+
+bootstrap:            # consumed from Phase 4
+  sample_size: 100
+  llm_fallback_sample_size: 40
+  min_match_rate: 0.85
+
+drain3:
+  sim_th: 0.4
+  depth: 4
+  max_clusters: 2000
+  persistence: file
+  snapshot_path: .cache/drain3_{incident_id}.json
+
+redaction:
+  mode: strict
+  # Runs immediately after adapter parse(), before templating and before any model call.
+  # Phase 2 adds ipv6, ssn and phone alongside their false-positive corpus.
+  entities: [email, ipv4, api_key]
+  salt: ""
+
+scratchpad:
+  path: .cache/incident_{incident_id}.sqlite
+
+llm:
+  model: claude-opus-5
+  adversarial_model: claude-sonnet-5   # must differ from `model` (architecture §6.3)
+  bootstrap_model: claude-haiku-4-5
+  judge_model: claude-opus-5
+  effort: high
+
+report:
+  format: markdown
+  output_dir: ./reports

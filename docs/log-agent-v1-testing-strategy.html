@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Incident Log Analysis Agent — v1 Testing Strategy &amp; Eval Datasets</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a21;
+    --panel-border: #262b35;
+    --text: #e6e9ef;
+    --muted: #9aa3b2;
+    --accent: #5fb3ff;
+    --accent2: #8b7bff;
+    --good: #4fd1a5;
+    --warn: #ffb454;
+    --danger: #ff7a7a;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 40px 24px 100px; }
+  h1 { font-size: 1.8rem; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); margin-top: 0; margin-bottom: 32px; font-size: 0.95rem; }
+  h2 {
+    font-size: 1.15rem;
+    margin-top: 48px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--panel-border);
+    color: var(--accent);
+  }
+  h3 { font-size: 1rem; margin-top: 28px; color: var(--text); }
+  h4 { font-size: 0.92rem; margin-top: 20px; color: var(--accent2); }
+  p { color: var(--text); }
+  .muted { color: var(--muted); }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin: 14px 0;
+  }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  code, .mono { font-family: var(--mono); font-size: 0.85em; }
+  pre {
+    background: #0b0d11;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: #c9d1d9;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.86rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--panel-border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .tag {
+    display: inline-block;
+    font-size: 0.72rem;
+    padding: 2px 8px;
+    border-radius: 20px;
+    background: rgba(95,179,255,0.12);
+    color: var(--accent);
+    margin-right: 6px;
+  }
+  .tag.warn { background: rgba(255,180,84,0.12); color: var(--warn); }
+  .tag.good { background: rgba(79,209,165,0.12); color: var(--good); }
+  .tag.danger { background: rgba(255,122,122,0.12); color: var(--danger); }
+  ol, ul { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  footer { margin-top: 60px; color: var(--muted); font-size: 0.8rem; border-top: 1px solid var(--panel-border); padding-top: 20px; }
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0; }
+  .toc a {
+    font-size: 0.78rem; color: var(--accent); text-decoration: none;
+    background: var(--panel); border: 1px solid var(--panel-border);
+    padding: 5px 10px; border-radius: 20px;
+  }
+  .toc a:hover { border-color: var(--accent); }
+  .principle {
+    background: linear-gradient(135deg, rgba(95,179,255,0.08), rgba(139,123,255,0.08));
+    border: 1px solid var(--panel-border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 20px 0;
+    font-size: 0.95rem;
+  }
+  .gap-item {
+    border-left: 3px solid var(--danger);
+    padding-left: 14px;
+    margin: 14px 0;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Incident Log Analysis Agent</h1>
+  <p class="subtitle">v1 testing strategy — per-component test plans, public eval datasets, and tech-stack exploration setup</p>
+
+  <div class="principle">
+    <strong>Design principle carried over from failure-mode analysis:</strong> components that can be unit-tested deterministically (adapters, redaction, DB layer, loop mechanics) get conventional tests. Components whose correctness depends on reasoning quality (templating fidelity, agent conclusions, adversarial catch-rate) need curated eval datasets — a green unit-test suite does not prove those work.
+  </div>
+
+  <div class="toc">
+    <a href="#matrix">Test matrix</a>
+    <a href="#unit">Unit-testable components</a>
+    <a href="#eval">Eval-dataset components</a>
+    <a href="#datasets">Public datasets</a>
+    <a href="#gaps">Known gaps</a>
+    <a href="#stacks">Exploring tech stacks</a>
+  </div>
+
+  <h2 id="matrix">1. Test matrix overview</h2>
+  <table>
+    <tr><th>Component</th><th>What to test</th><th>Test type</th><th>Data source</th></tr>
+    <tr><td>Adapters</td><td>Format detection accuracy, parse correctness</td><td><span class="tag good">unit</span></td><td>Hand-built fixtures per format</td></tr>
+    <tr><td>Bootstrapper</td><td>Structural clustering, LLM schema inference, match-rate gate</td><td><span class="tag good">unit</span> + <span class="tag warn">eval</span></td><td>Synthetic unseen formats</td></tr>
+    <tr><td>Drain3 wrapper</td><td>Compression ratio, template correctness vs ground truth</td><td><span class="tag warn">eval</span></td><td>Loghub-2k / Loghub-2.0</td></tr>
+    <tr><td>Redaction</td><td>Entity recall/precision, hash consistency</td><td><span class="tag good">unit</span></td><td>Synthetic PII-injected fixtures</td></tr>
+    <tr><td>Scratchpad DB</td><td>Read-only enforcement, migrations, evidence constraint</td><td><span class="tag good">unit</span></td><td>N/A — deterministic</td></tr>
+    <tr><td>Agent loop</td><td>Tool-call budget enforcement, forced convergence</td><td><span class="tag good">unit</span></td><td>Mocked LLM responses</td></tr>
+    <tr><td>Adversarial check</td><td>Catches wrong-but-plausible reasoning, doesn't flip correct conclusions</td><td><span class="tag danger">eval — hard</span></td><td>Hand-built labeled incidents</td></tr>
+    <tr><td>Report generation</td><td>Faithfulness to cited scratchpad evidence</td><td><span class="tag good">unit</span> (automated diff check)</td><td>N/A — deterministic</td></tr>
+  </table>
+
+  <h2 id="unit">2. Unit-testable components (deterministic)</h2>
+
+  <h3>2.1 Adapters</h3>
+  <ul>
+    <li><code>detect()</code> confidence scoring against fixture files per registered format (JSON Lines, Elastic export, Loki export, OTLP).</li>
+    <li><code>parse()</code> correctness: golden-output diffing — parsed <code>LogRecord</code> list compared field-by-field against an expected fixture.</li>
+    <li>Negative cases: malformed input per format should fail predictably, not silently produce partial/garbage records.</li>
+  </ul>
+
+  <h3>2.2 Redaction</h3>
+  <ul>
+    <li>Entity detection recall/precision against synthetic PII-injected log lines (emails, IPs, credit cards, SSNs, API keys planted at known positions).</li>
+    <li>Hash consistency: same input value → same hash token across multiple lines and multiple fields (raw text and template params).</li>
+    <li>False-positive check: legitimate diagnostic values (error codes, version strings) should not get redacted by an overly broad pattern.</li>
+  </ul>
+
+  <h3>2.3 Scratchpad DB</h3>
+  <ul>
+    <li>Schema migrations apply cleanly and are idempotent.</li>
+    <li><code>run_readonly_sql()</code> rejects INSERT/UPDATE/DELETE/DROP/ATTACH — this is a security boundary, test it adversarially.</li>
+    <li><code>write_note()</code> enforces the mandatory <code>supporting_evidence_json</code> constraint — a note with empty evidence should fail to write.</li>
+  </ul>
+
+  <h3>2.4 Agent loop mechanics</h3>
+  <ul>
+    <li>Tool-call budget enforcement: mocked LLM responses that keep requesting tools past <code>max_agent_tool_calls</code> must trigger forced convergence, not run indefinitely.</li>
+    <li>Forced-convergence report explicitly states it was budget-limited (see failure-mode §6.4 in the architecture doc) — assert this string/flag is present, don't just check the loop terminates.</li>
+  </ul>
+
+  <h3>2.5 Report generation (citation faithfulness)</h3>
+  <p>Automated, not manual: for every claim in a generated report, re-fetch its cited <code>log_events</code>/<code>template_id</code> rows from the scratchpad and diff the claim text against what those rows actually contain. This is the automated defense against hallucinated citations flagged as a silent failure mode.</p>
+
+  <h2 id="eval">3. Components requiring curated eval datasets</h2>
+
+  <h3>3.1 Drain3 / templating fidelity</h3>
+  <p>Needs ground-truth log templates to measure against — this is a solved benchmarking problem in the log-parsing research community, don't build your own from scratch. Metrics to track per dataset: compression ratio (unique templates ÷ total lines), template-level precision/recall against ground truth, and behavior on rare/long-tail templates specifically (these are the ones most likely to carry incident signal and most likely to be mis-clustered).</p>
+
+  <h3>3.2 Agent loop + adversarial check (end-to-end reasoning quality)</h3>
+  <p>Needs real or realistic incident scenarios with a known root cause, scored on whether the final report identifies it correctly, at what cost (tool calls, tokens), and whether the adversarial pass improves or degrades the outcome versus the pre-adversarial draft.</p>
+
+  <h2 id="datasets">4. Public datasets to use</h2>
+
+  <h3>4.1 Loghub-2.0 / Loghub-2k</h3>
+  <div class="card">
+    <p>The standard benchmark for log parsing — directly usable for the Drain3 wrapper eval (§3.1).</p>
+    <ul>
+      <li>Covers distributed systems (Hadoop, HDFS, OpenStack, Spark, Zookeeper), supercomputers (BGL, HPC, Thunderbird), OSes (Linux, Mac), server/standalone software (Apache, OpenSSH, HealthApp, Proxifier).</li>
+      <li><strong>Loghub-2k</strong>: 2,000 annotated logs per system — fast iteration during development.</li>
+      <li><strong>Full Loghub-2.0</strong>: scales to millions of lines per system (Thunderbird alone: ~16.6M lines) — use for stress-testing compression ratio and Drain3 performance at real incident volume.</li>
+      <li>Ground-truth log templates are annotated per dataset, giving a real precision/recall number instead of eyeballing output.</li>
+      <li><strong>BGL and Thunderbird</strong> additionally carry anomaly labels (originating in anomaly-detection research) — useful beyond template accuracy, for testing whether the agent loop surfaces the actually-anomalous signal rather than just clustering correctly.</li>
+    </ul>
+    <p class="muted">Source: <span class="mono">github.com/logpai/loghub-2.0</span> — freely available for research/academic use; redistribution inside your repo's fixtures requires citing the LogPub paper per their terms (verify exact wording before bundling into an OSS repo).</p>
+  </div>
+
+  <h3>4.2 LogDx-CI</h3>
+  <div class="card">
+    <p>Closer to your actual use case than Loghub: scores full-pipeline downstream diagnosis quality, not just parsing accuracy.</p>
+    <ul>
+      <li>35 real GitHub Actions failure cases, scored by multiple LLM debugger families plus a tool-using agent — the only found benchmark that evaluates the outcome of LLM-based log diagnosis end-to-end rather than the parsing step in isolation.</li>
+      <li>Directly reusable as an eval corpus for the agent loop + adversarial check (§3.2), since it already scores diagnosis correctness, cost per case, and tool-call count — the same axes proposed in the architecture doc's evaluation plan.</li>
+    </ul>
+  </div>
+
+  <h3>4.3 Comparison summary</h3>
+  <table>
+    <tr><th>Dataset</th><th>Best for</th><th>Scale</th><th>Ground truth type</th></tr>
+    <tr><td>Loghub-2k</td><td>Fast template-accuracy iteration</td><td>2,000 lines/system</td><td>Annotated templates</td></tr>
+    <tr><td>Loghub-2.0 (full)</td><td>Compression-ratio stress test at volume</td><td>21k–16.6M lines/system</td><td>Annotated templates</td></tr>
+    <tr><td>BGL / Thunderbird subsets</td><td>Anomaly-surfacing capability</td><td>4.6M / 16.6M lines</td><td>Templates + anomaly labels</td></tr>
+    <tr><td>LogDx-CI</td><td>End-to-end diagnosis quality</td><td>35 real CI failure cases</td><td>Root-cause correctness scoring</td></tr>
+  </table>
+
+  <h2 id="gaps">5. Known gaps — no public dataset available</h2>
+
+  <div class="gap-item">
+    <h4>Adversarial-check catch rate</h4>
+    <p>No public dataset scores whether a verification pass catches a plausible-but-wrong conclusion. <strong>Plan:</strong> hand-build a small set (10–15 cases) from Loghub or LogDx-CI incidents; for a subset, deliberately construct a plausible-but-wrong alternative narrative and check whether the adversarial pass catches it versus rubber-stamping.</p>
+  </div>
+
+  <div class="gap-item">
+    <h4>Elastic / Loki export-format fixtures</h4>
+    <p>No pre-existing dataset in native Elastic/Loki export shape. <strong>Plan:</strong> generate these locally by running real stacks against Loghub data — see §6 below — rather than hand-authoring export JSON, since export schemas (nested <code>_source</code> fields, Loki label sets) have quirks easy to get subtly wrong by hand.</p>
+  </div>
+
+  <div class="gap-item">
+    <h4>Bootstrapper (unknown-format) accuracy</h4>
+    <p>No dataset exists by definition — it's for formats not already covered. <strong>Plan:</strong> synthetically construct a handful of plausible-but-unseen log shapes (custom delimiter styles, unusual timestamp formats) as an internal eval set, refreshed periodically so the bootstrapper isn't just overfit to a fixed set of shapes.</p>
+  </div>
+
+  <h2 id="stacks">6. Exploring the target tech stacks hands-on</h2>
+  <p>For Elastic and Loki specifically (v1 priority formats), the goal is authentic export shape, not hand-mocked JSON.</p>
+
+  <h3>6.1 Elastic / OpenSearch</h3>
+  <ol>
+    <li>Run the official Docker Compose single-node setup locally.</li>
+    <li>Feed Loghub-2k sample files in via Filebeat or Logstash.</li>
+    <li>Pull real <code>_search</code> API exports — this captures the actual nested <code>_source</code> field structure your adapter needs to handle.</li>
+  </ol>
+
+  <h3>6.2 Grafana Loki</h3>
+  <ol>
+    <li>Run Grafana's docker-compose stack bundling Loki + Promtail + Grafana.</li>
+    <li>Point Promtail at the same Loghub sample files for a fair side-by-side comparison with the Elastic path.</li>
+    <li>Query via LogQL and export results — captures real label-set structure Loki attaches to log streams.</li>
+  </ol>
+
+  <p class="muted">Using the same underlying Loghub source data through both pipelines gives directly comparable adapter test fixtures, and surfaces store-specific quirks (field nesting, label conventions) that would be easy to miss authoring fixtures by hand.</p>
+
+  <footer>
+    v1 testing strategy — companion to the v1 architecture and technical scaffolding documents. Dataset licensing terms should be verified directly before redistribution in an OSS repository.
+  </footer>
+
+</div>
+</body>
+</html>

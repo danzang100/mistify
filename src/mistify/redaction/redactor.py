@@ -1,0 +1,118 @@
+"""Hash-and-replace redaction engine.
+
+Runs immediately after adapter `parse()` and before every other stage -- templating, the
+Drain3 snapshot, the scratchpad, and any model call (decisions G1 and G2). Placing it here
+rather than after templating is what makes the "nothing unredacted reaches a model or lands
+on disk" guarantee true for the unknown-format path as well as the registered-adapter path.
+
+The same source value always yields the same placeholder within a run, so an investigator can
+still correlate "this address appears in these fourteen lines" without ever seeing the value.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from collections import Counter
+from dataclasses import replace
+from typing import Any
+
+from mistify.common.models import LogRecord
+from mistify.redaction.patterns import CONTEXT_GUARDS, ENTITY_ORDER, PATTERNS
+
+__all__ = ["Redactor"]
+
+_HASH_LENGTH = 4
+
+
+class Redactor:
+    """Replaces detected entities with stable `[ENTITY:hash]` placeholders."""
+
+    def __init__(self, mode: str = "strict", entities: list[str] | None = None, salt: str = ""):
+        if mode not in {"strict", "permissive", "off"}:
+            raise ValueError(f"unknown redaction mode: {mode!r}")
+        self.mode = mode
+        self.salt = salt
+        requested = list(PATTERNS) if entities is None else list(entities)
+        unknown = sorted(set(requested) - set(PATTERNS))
+        if unknown:
+            raise ValueError(f"unknown redaction entities: {', '.join(unknown)}")
+        # Preserve the declared precedence regardless of the order the caller listed them.
+        self.entities: list[str] = [e for e in ENTITY_ORDER if e in requested]
+        self._counts: Counter[str] = Counter()
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode != "off" and bool(self.entities)
+
+    @property
+    def counts(self) -> dict[str, int]:
+        """Redactions performed per entity, for the run's health metrics."""
+        return dict(self._counts)
+
+    def _token(self, entity: str, value: str) -> str:
+        digest = hashlib.blake2s(
+            f"{self.salt}:{entity}:{value}".encode(), digest_size=8
+        ).hexdigest()[:_HASH_LENGTH]
+        return f"[{entity.upper()}:{digest}]"
+
+    def redact(self, text: str) -> str:
+        """Redact every configured entity in `text`."""
+        if not self.enabled or not text:
+            return text
+
+        for entity in self.entities:
+            pattern = PATTERNS[entity]
+            guard = CONTEXT_GUARDS.get(entity)
+
+            def _replace(
+                match: re.Match[str],
+                _entity: str = entity,
+                _guard: re.Pattern[str] | None = guard,
+            ) -> str:
+                if _guard is not None and _guard.search(match.string[: match.start()]):
+                    # Preceding context marks this as a false positive (e.g. a version
+                    # string). Leave the value intact rather than destroy a diagnostic.
+                    return match.group(0)
+                groups = match.groupdict()
+                if "value" in groups and groups["value"] is not None:
+                    # Keep the surrounding key name; swap only the secret itself.
+                    value = groups["value"]
+                    self._counts[_entity] += 1
+                    start, end = match.span("value")
+                    return (
+                        match.group(0)[: start - match.start()]
+                        + self._token(_entity, value)
+                        + match.group(0)[end - match.start() :]
+                    )
+                self._counts[_entity] += 1
+                return self._token(_entity, match.group(0))
+
+            text = pattern.sub(_replace, text)
+        return text
+
+    def redact_value(self, value: Any) -> Any:
+        """Recursively redact strings inside an arbitrary structured field value."""
+        if isinstance(value, str):
+            return self.redact(value)
+        if isinstance(value, dict):
+            return {k: self.redact_value(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self.redact_value(v) for v in value]
+        return value
+
+    def redact_record(self, record: LogRecord) -> LogRecord:
+        """Return a copy of `record` with `raw`, `message` and every field redacted.
+
+        Structured fields are redacted too -- a JSON log routinely carries the address in
+        `fields.user.email` and never in the message text, so redacting only the free text
+        would leak exactly the formats v1 prioritises.
+        """
+        if not self.enabled:
+            return record
+        return replace(
+            record,
+            raw=self.redact(record.raw),
+            message=self.redact(record.message),
+            fields=self.redact_value(record.fields),
+        )

@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mistify v1 Build Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+  :root {
+    --ground:      #f7f8fb;
+    --panel:       #ffffff;
+    --panel-2:     #eef1f6;
+    --border:      #dde2ea;
+    --border-soft: #e7ebf2;
+    --text:        #161a21;
+    --text-2:      #38404e;
+    --muted:       #5b6472;
+    --accent:      #0b6ec4;
+    --accent-2:    #5b4bd6;
+    --good:        #12805f;
+    --warn:        #a35c00;
+    --danger:      #c0333a;
+    --good-bg:     rgba(18,128,95,0.10);
+    --warn-bg:     rgba(163,92,0,0.10);
+    --danger-bg:   rgba(192,51,58,0.10);
+    --accent-bg:   rgba(11,110,196,0.09);
+    --accent2-bg:  rgba(91,75,214,0.09);
+    --code-bg:     #f1f4f9;
+
+    --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: "IBM Plex Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0f1115;
+      --panel:       #161a21;
+      --panel-2:     #1b202a;
+      --border:      #262b35;
+      --border-soft: #1f242e;
+      --text:        #e6e9ef;
+      --text-2:      #c3cad6;
+      --muted:       #9aa3b2;
+      --accent:      #5fb3ff;
+      --accent-2:    #8b7bff;
+      --good:        #4fd1a5;
+      --warn:        #ffb454;
+      --danger:      #ff7a7a;
+      --good-bg:     rgba(79,209,165,0.12);
+      --warn-bg:     rgba(255,180,84,0.12);
+      --danger-bg:   rgba(255,122,122,0.12);
+      --accent-bg:   rgba(95,179,255,0.12);
+      --accent2-bg:  rgba(139,123,255,0.12);
+      --code-bg:     #0b0d11;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #0f1115;
+    --panel:       #161a21;
+    --panel-2:     #1b202a;
+    --border:      #262b35;
+    --border-soft: #1f242e;
+    --text:        #e6e9ef;
+    --text-2:      #c3cad6;
+    --muted:       #9aa3b2;
+    --accent:      #5fb3ff;
+    --accent-2:    #8b7bff;
+    --good:        #4fd1a5;
+    --warn:        #ffb454;
+    --danger:      #ff7a7a;
+    --good-bg:     rgba(79,209,165,0.12);
+    --warn-bg:     rgba(255,180,84,0.12);
+    --danger-bg:   rgba(255,122,122,0.12);
+    --accent-bg:   rgba(95,179,255,0.12);
+    --accent2-bg:  rgba(139,123,255,0.12);
+    --code-bg:     #0b0d11;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 940px;
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  a { color: var(--accent); }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 3px;
+  }
+
+  /* ---------- masthead ---------- */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-size: clamp(1.9rem, 4.2vw, 2.6rem);
+    font-weight: 600;
+    letter-spacing: -0.022em;
+    line-height: 1.12;
+    text-wrap: balance;
+    margin: 0 0 12px;
+  }
+  .standfirst {
+    font-size: 1.05rem;
+    color: var(--text-2);
+    max-width: 66ch;
+    margin: 0 0 32px;
+  }
+
+  .verdict {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .verdict p { margin: 0; max-width: 70ch; }
+  .verdict strong { color: var(--text); font-weight: 600; }
+
+  /* ---------- sections ---------- */
+  h2 {
+    font-size: 1.28rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    margin: 56px 0 6px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    text-wrap: balance;
+  }
+  h2 .num {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--accent);
+    margin-right: 12px;
+    vertical-align: 2px;
+  }
+  h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 30px 0 4px;
+    letter-spacing: -0.005em;
+  }
+  p { margin: 10px 0; max-width: 72ch; color: var(--text-2); }
+  p.lede { color: var(--text-2); margin-top: 4px; }
+  .muted { color: var(--muted); }
+  strong { color: var(--text); font-weight: 600; }
+
+  ul, ol { padding-left: 20px; margin: 10px 0; max-width: 72ch; color: var(--text-2); }
+  li { margin-bottom: 6px; }
+  li::marker { color: var(--muted); }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.845em;
+    background: var(--code-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--text);
+    word-break: break-word;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.6;
+    color: var(--text-2);
+    margin: 14px 0;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; }
+
+  /* ---------- chips ---------- */
+  .chip {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 4px;
+    white-space: nowrap;
+    background: var(--accent-bg);
+    color: var(--accent);
+  }
+  .chip.silent { background: var(--danger-bg); color: var(--danger); }
+  .chip.correct { background: var(--warn-bg); color: var(--warn); }
+  .chip.gap { background: var(--accent2-bg); color: var(--accent-2); }
+  .chip.ok { background: var(--good-bg); color: var(--good); }
+
+  /* ---------- gap cards ---------- */
+  .gaps { display: flex; flex-direction: column; gap: 14px; margin-top: 20px; }
+  .gap {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .gap-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .gap-id {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .gap-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+    flex: 1 1 340px;
+    letter-spacing: -0.005em;
+  }
+  .gap dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 5px 16px; }
+  @media (max-width: 620px) { .gap dl { grid-template-columns: 1fr; gap: 2px; } }
+  .gap dt {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-top: 4px;
+  }
+  .gap dd { margin: 0; color: var(--text-2); font-size: 0.95rem; }
+  .gap dd.fix { color: var(--text); }
+
+  /* ---------- tables ---------- */
+  .scroll { overflow-x: auto; margin: 16px 0; border: 1px solid var(--border); border-radius: 8px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    background: var(--panel);
+    min-width: 520px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-soft);
+    vertical-align: top;
+    color: var(--text-2);
+  }
+  thead th {
+    color: var(--muted);
+    font-weight: 500;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    background: var(--panel-2);
+    border-bottom: 1px solid var(--border);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td code { font-size: 0.8em; }
+  .num-cell { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* ---------- phase rail ---------- */
+  .phases { display: flex; flex-direction: column; gap: 0; margin-top: 22px; }
+  .phase {
+    display: grid;
+    grid-template-columns: 62px 1fr;
+    gap: 0 22px;
+    padding-bottom: 28px;
+  }
+  .phase:last-child { padding-bottom: 4px; }
+  .rail { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .rail .dot {
+    width: 42px; height: 42px;
+    flex: 0 0 42px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-family: var(--mono);
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-bg);
+    border: 1px solid var(--border);
+  }
+  .rail .line { width: 1px; flex: 1 1 auto; background: var(--border); min-height: 12px; }
+  .phase:last-child .rail .line { display: none; }
+  .phase-body { display: flex; flex-direction: column; gap: 8px; padding-top: 6px; min-width: 0; }
+  .phase-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 14px; }
+  .phase-name { font-size: 1.05rem; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+  .phase-cost {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .phase-body ul { margin: 2px 0; }
+  .exit {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--good);
+    border-radius: 6px;
+    padding: 11px 15px;
+    font-size: 0.9rem;
+    color: var(--text-2);
+    max-width: 72ch;
+  }
+  .exit b {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--good);
+    display: block;
+    margin-bottom: 3px;
+    font-weight: 600;
+  }
+  @media (max-width: 560px) {
+    .phase { grid-template-columns: 40px 1fr; gap: 0 14px; }
+    .rail .dot { width: 36px; height: 36px; flex-basis: 36px; font-size: 0.85rem; }
+  }
+
+  /* ---------- ladder ---------- */
+  .ladder { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+  .rung {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    align-items: baseline;
+  }
+  .rung .label { font-weight: 600; color: var(--text); flex: 0 0 auto; }
+  .rung .scope { color: var(--text-2); font-size: 0.93rem; flex: 1 1 320px; }
+
+  /* ---------- decisions ---------- */
+  .decisions { display: flex; flex-direction: column; gap: 12px; margin-top: 18px; counter-reset: dec; }
+  .decision {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .decision .q { font-weight: 600; color: var(--text); }
+  .decision .rec { font-size: 0.93rem; color: var(--text-2); margin: 0; }
+  .decision .rec span {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-right: 8px;
+    font-weight: 600;
+  }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 22px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+  footer p { color: var(--muted); font-size: 0.82rem; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">Implementation plan · drafted 31 Aug 2026</p>
+  <h1>Mistify v1 Build Plan</h1>
+  <p class="standfirst">
+    A build order for the incident log analysis agent described in the three v1 design documents —
+    what to settle before writing code, what to build in which sequence, and what to cut if the
+    schedule tightens.
+  </p>
+
+  <div class="verdict">
+    <p>
+      <strong>Where this stands.</strong> The architecture, scaffolding, and testing documents are
+      unusually complete — module boundaries, config shape, DB schema, and tool signatures are all
+      specified well enough to build from directly. This plan does not re-derive them.
+    </p>
+    <p>
+      What is missing is a <strong>build order</strong>, and there are <strong>eight unresolved
+      details</strong> where the three documents contradict each other or specify a component that
+      nothing actually produces. Four of those are in the "silent failure" category the architecture
+      document itself flags as highest priority. They are cheap to fix now and expensive to fix after
+      the pipeline exists, so they come first.
+    </p>
+  </div>
+
+  <h2><span class="num">01</span>Settle these before Phase 1</h2>
+  <p class="lede">
+    Each item below is a real inconsistency between the shipped documents, not a design preference.
+    The severity chip uses the architecture document's own vocabulary: <span class="chip silent">silent</span>
+    means the pipeline produces plausible output with no indication anything went wrong.
+  </p>
+
+  <div class="gaps">
+
+    <div class="gap">
+      <div class="gap-head">
+        <span class="gap-id">G1</span>
+        <span class="gap-title">Redaction runs after the bootstrapper has already called the LLM</span>
+        <span class="chip silent">silent</span>
+      </div>
+      <dl>
+        <dt>Docs say</dt>
+        <dd>Architecture §2.3a: redaction runs "before anything is written to the scratchpad or reaches an LLM". But §2.2a step 2 sends 20–50 <em>raw</em> sample lines to an LLM for schema inference — and that happens before templating, which is before redaction.</dd>
+        <dt>Breaks</dt>
+        <dd>Every unknown-format ingest leaks unredacted production log lines to the model. The stage ordering makes the guarantee in §2.3a false exactly when it matters most.</dd>
+        <dt>Fix</dt>
+        <dd class="fix">Move redaction to run immediately after adapter <code>parse()</code>, before both the bootstrapper and Drain3. Redaction becomes the first thing that touches a <code>LogRecord</code>, not the third.</dd>
+      </dl>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <span class="gap-id">G2</span>
+        <span class="gap-title">The persisted Drain3 snapshot stores unredacted text</span>
+        <span class="chip silent">silent</span>
+      </div>
+      <dl>
+        <dt>Docs say</dt>
+        <dd>Drain3 is trained on <code>LogRecord.raw</code> and the tree is persisted to <code>.cache/drain3_state.json</code> (§2.3, config <code>drain3.snapshot_path</code>). Redaction happens after.</dd>
+        <dt>Breaks</dt>
+        <dd>The snapshot is a durable on-disk artifact containing secrets and PII, sitting outside whatever handling the redacted scratchpad gets.</dd>
+        <dt>Fix</dt>
+        <dd class="fix">Same reordering as G1 closes it. Bonus: templating redacted text is <em>better</em> clustering, since <code>[EMAIL:a7f2]</code> is one token shape where raw addresses are unbounded cardinality. Add a Drain3 mask for the <code>[TYPE:hash]</code> form so the hash suffix does not become the new high-cardinality token.</dd>
+      </dl>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <span class="gap-id">G3</span>
+        <span class="gap-title"><code>anomaly_score</code> is load-bearing but deferred to "future"</span>
+        <span class="chip silent">silent</span>
+      </div>
+      <dl>
+        <dt>Docs say</dt>
+        <dd>It is a column in <code>templates</code>, an enum value in <code>query_templates(order_by=…)</code>, and step 3 of the adversarial check is "flag any high <code>anomaly_score</code> template excluded from the draft conclusion". But architecture §4 lists anomaly scoring under future improvements — nothing in v1 computes it.</dd>
+        <dt>Breaks</dt>
+        <dd>The column stays <code>0.0</code>. The agent can sort by it and get an arbitrary order. The adversarial check's third and most mechanical test silently becomes a no-op — the one check that does not depend on the model's judgement.</dd>
+        <dt>Fix</dt>
+        <dd class="fix">Ship a cheap deterministic score in v1, computed in SQL after load — no model call, no baseline corpus needed: <code>rarity</code> (inverse log frequency) × <code>severity_weight</code> × <code>burstiness</code> (max events in any 1-minute bucket ÷ mean). Add cross-incident novelty later when template trees are reused. It does not need to be sophisticated; it needs to be non-constant.</dd>
+      </dl>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <span class="gap-id">G4</span>
+        <span class="gap-title">Read-only SQL enforced by keyword blocklist</span>
+        <span class="chip silent">silent</span>
+      </div>
+      <dl>
+        <dt>Docs say</dt>
+        <dd>Scaffolding §7: <code>run_readonly_sql()</code> "rejects INSERT/UPDATE/DELETE/DROP/ATTACH". Testing §2.3 correctly calls this a security boundary and says to test it adversarially.</dd>
+        <dt>Breaks</dt>
+        <dd>A blocklist over SQL text loses to comments, string literals, CTEs, and <code>PRAGMA</code>. Tested adversarially, it will fail — and the failure surface is a model-authored query string.</dd>
+        <dt>Fix</dt>
+        <dd class="fix">Make SQLite enforce it, not a regex. Open a second connection with <code>sqlite3.connect("file:…?mode=ro", uri=True)</code>, set <code>PRAGMA query_only=ON</code>, register a <code>set_authorizer()</code> callback that denies everything except <code>SQLITE_SELECT</code>/<code>SQLITE_READ</code>/<code>SQLITE_FUNCTION</code> on the four known tables, and cap runtime with <code>set_progress_handler</code>. Keep the keyword check as a fast pre-filter for better error messages, not as the boundary.</dd>
+      </dl>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <span class="gap-id">G5</span>
+        <span class="gap-title">The default credit-card pattern will redact diagnostic values</span>
+        <span class="chip correct">correctness</span>
+      </div>
+      <dl>
+        <dt>Docs say</dt>
+        <dd>Scaffolding §6: <code>"credit_card": r"\b(?:\d[ -]*?){13,16}\b"</code>, on by default in <code>strict</code> mode.</dd>
+        <dt>Breaks</dt>
+        <dd>That matches any 13–16 digit run: epoch-millisecond timestamps, request IDs, trace IDs, numeric span IDs. This is the architecture document's own "redaction over-reach destroys diagnostic values" failure mode, pre-triggered by the shipped default — and the destroyed values are exactly the correlation keys the agent needs.</dd>
+        <dt>Fix</dt>
+        <dd class="fix">Gate the match behind a Luhn checksum, and require a separator or non-digit boundary. Add the false-positive corpus from testing §2.2 (error codes, version strings, trace IDs, epoch timestamps) as a standing regression fixture before the pattern library grows.</dd>
+      </dl>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <span class="gap-id">G6</span>
+        <span class="gap-title">No <code>incidents</code> record — the CLI's own key has no origin</span>
+        <span class="chip gap">missing</span>
+      </div>
+      <dl>
+        <dt>Docs say</dt>
+        <dd><code>investigate</code> and <code>report</code> both take <code>--incident-id</code>, and the scratchpad path is <code>incident_{incident_id}.sqlite</code>. But <code>ingest</code> takes only <code>--source</code> and <code>--format</code>, and no table records an incident.</dd>
+        <dt>Breaks</dt>
+        <dd>There is no defined point where an incident is created, no way to list incidents, and no home for run metadata.</dd>
+        <dt>Fix</dt>
+        <dd class="fix">Add <code>--incident-id</code> to <code>ingest</code> (defaulting to a date-plus-slug derived from the source), and add a <code>run_metadata</code> table — see G7, which needs the same table.</dd>
+      </dl>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <span class="gap-id">G7</span>
+        <span class="gap-title">Per-stage health metrics are mandated but have nowhere to live</span>
+        <span class="chip silent">silent</span>
+      </div>
+      <dl>
+        <dt>Docs say</dt>
+        <dd>Architecture §6, stated as a design principle: "A pipeline health metric per stage is not optional polish." Compression ratio, bootstrapper match rate, redaction counts, and the budget-limited flag are all named as required signals.</dd>
+        <dt>Breaks</dt>
+        <dd>The four-table schema has no column for any of them. Without persistence there is nothing for the report to declare, nothing to assert in a test, and no way to notice a run degraded — which is the precise failure the principle exists to prevent.</dd>
+        <dt>Fix</dt>
+        <dd class="fix">Add a fifth table in <code>0001_init.sql</code>: <code>run_metadata(stage, metric, value, ts)</code>. Every stage writes its numbers; the report template reads them into a health block; tests assert on rows rather than on log output.</dd>
+      </dl>
+    </div>
+
+    <div class="gap">
+      <div class="gap-head">
+        <span class="gap-id">G8</span>
+        <span class="gap-title">Citation faithfulness is classified as a unit test</span>
+        <span class="chip correct">correctness</span>
+      </div>
+      <dl>
+        <dt>Docs say</dt>
+        <dd>Testing §2.5 and the matrix mark report faithfulness as <span class="chip ok">unit</span> — "re-fetch its cited rows and diff the claim text against what those rows actually contain."</dd>
+        <dt>Breaks</dt>
+        <dd>Checking whether a natural-language claim is <em>entailed</em> by a set of log rows is not a text diff. Written as a string comparison it will pass everything, which is worse than not having the check — it is a green test asserting nothing.</dd>
+        <dt>Fix</dt>
+        <dd class="fix">Split it in two. The deterministic half is a real unit test: every cited <code>log_event.id</code> and <code>template_id</code> exists, falls inside the claimed window, and matches the claimed source and severity. The semantic half is an entailment judge (a third model call, different model from both the loop and the adversarial pass) scored on a labelled fixture set — reclassify it as <span class="chip correct">eval</span> in the matrix.</dd>
+      </dl>
+    </div>
+
+  </div>
+
+  <h2><span class="num">02</span>Model and API corrections</h2>
+  <p class="lede">
+    <code>config.yaml</code> pins <code>claude-sonnet-4-6</code> for both the loop and the adversarial pass.
+    That model still exists, but it is no longer the right default, and setting both keys to the same
+    value contradicts architecture §6.3, which requires a different model for the adversarial pass to
+    avoid correlated blind spots.
+  </p>
+
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Role</th><th>Use</th><th>Why</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Investigation loop</td>
+          <td><code>claude-opus-5</code></td>
+          <td>Strongest model for long-horizon agentic tool use; 1M context. Run at <code>effort: "high"</code>, adaptive thinking on.</td>
+        </tr>
+        <tr>
+          <td>Adversarial pass</td>
+          <td><code>claude-sonnet-5</code></td>
+          <td>Satisfies §6.3's different-model requirement. Move to <code>claude-fable-5</code> if Phase 5 measures the catch rate as the binding constraint.</td>
+        </tr>
+        <tr>
+          <td>Bootstrapper schema inference</td>
+          <td><code>claude-haiku-4-5</code></td>
+          <td>Narrow structured-output task over 20–50 lines, gated by a match-rate check that catches a bad answer. No need to spend a frontier model here.</td>
+        </tr>
+        <tr>
+          <td>Entailment judge (G8)</td>
+          <td><code>claude-opus-5</code></td>
+          <td>Distinct from the adversarial model so a shared bias cannot rubber-stamp its own citations.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Four API capabilities that map onto designs already in the docs</h3>
+
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Doc design</th><th>Build with</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>"Hard cap on tool calls, forced convergence step if budget is hit" (§2.5)</td>
+          <td><strong>Task budgets.</strong> <code>output_config.task_budget</code> with beta <code>task-budgets-2026-03-13</code> gives the model a token ceiling it can <em>see</em>, so it paces itself and lands the investigation instead of being severed mid-thought. Keep <code>max_agent_tool_calls</code> as the hard backstop; the budget makes hitting it rare.</td>
+        </tr>
+        <tr>
+          <td>The step loop in <code>agent/loop.py</code></td>
+          <td><strong>Tool Runner.</strong> <code>client.beta.messages.tool_runner()</code> with <code>@beta_tool</code>-decorated functions removes the hand-written loop, and its per-iteration body is the natural place to write <code>query_log</code> rows and enforce the budget. Schemas generate from the function signatures, so <code>tools.py</code> stops being a hand-maintained JSON blob.</td>
+        </tr>
+        <tr>
+          <td>Structured critique from the adversarial pass; <code>InferredTemplate</code> from the bootstrapper</td>
+          <td><strong>Structured outputs.</strong> <code>client.messages.parse()</code> with a Pydantic model. Note assistant prefill is removed on all current models — if any prompt was going to lean on it to force JSON shape, this replaces it.</td>
+        </tr>
+        <tr>
+          <td>Re-sending the template digest on every loop step</td>
+          <td><strong>Prompt caching.</strong> The system prompt plus the template summary is a large stable prefix repeated across every step of every investigation. One <code>cache_control</code> breakpoint after it is the single biggest cost lever in the design. Verify with <code>usage.cache_read_input_tokens</code> — put the incident-specific question <em>after</em> the breakpoint or nothing caches.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="muted">
+    One more: Phase 5's eval sweeps re-run the same corpus repeatedly and are not latency-sensitive.
+    Run them through the Batch API at 50% cost.
+  </p>
+
+  <h2><span class="num">03</span>Build sequence</h2>
+  <p class="lede">
+    The ordering principle: <strong>get one thin slice running end to end before widening any layer.</strong>
+    The scaffolding document lists components by architectural grouping, which is the right way to
+    organize a repository and the wrong order to build one — it puts four adapters and a bootstrapper
+    ahead of the first line of agent code, and the agent loop is where the design risk actually lives.
+    Phase 1 therefore builds the narrowest possible path from a JSONL file to a rendered report, then
+    every later phase widens one layer of something that already works.
+  </p>
+
+  <div class="phases">
+
+    <div class="phase">
+      <div class="rail"><div class="dot">0</div><div class="line"></div></div>
+      <div class="phase-body">
+        <div class="phase-head"><span class="phase-name">Decisions and skeleton</span><span class="phase-cost">~0.5 day</span></div>
+        <ul>
+          <li>Resolve G1–G8 and amend the design docs — the docs are the spec, so the fixes belong in them, not only in code.</li>
+          <li><code>git init</code>; <code>uv init</code>; <code>pyproject.toml</code> with the §11 dependency set; ruff, pytest, mypy.</li>
+          <li><code>common/models.py</code> (<code>LogRecord</code>, <code>Template</code>, <code>Note</code>) and <code>common/config.py</code> with the pydantic model for <code>config.yaml</code>.</li>
+          <li>Directory tree from scaffolding §1, every package with a real <code>__init__.py</code> and a failing placeholder test.</li>
+        </ul>
+        <div class="exit"><b>Exit</b><code>uv run pytest</code> passes, <code>mistify --help</code> lists the three commands, config round-trips through the pydantic model.</div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="rail"><div class="dot">1</div><div class="line"></div></div>
+      <div class="phase-body">
+        <div class="phase-head"><span class="phase-name">Walking skeleton — one file to one report</span><span class="phase-cost">2–3 days</span></div>
+        <ul>
+          <li><code>json_lines</code> adapter only. No registry dispatch yet, no bootstrapper.</li>
+          <li><code>Redactor</code> with three entities (email, ipv4, api_key), running <em>first</em> per G1.</li>
+          <li><code>DrainTemplater</code> over redacted text, with snapshot persistence.</li>
+          <li><code>ScratchpadDB</code>: migrations, bulk insert, template upsert, <code>run_metadata</code> (G7).</li>
+          <li>A deliberately dumb three-step agent: top templates by count → one <code>get_slice</code> → one <code>write_note</code>. Hardcoded, no model call.</li>
+          <li>Jinja report template rendering notes plus the health block.</li>
+          <li>A synthetic 5,000-line incident fixture with a <strong>planted, known root cause</strong> — this fixture is the ground truth every later phase is measured against, so build it here.</li>
+        </ul>
+        <div class="exit"><b>Exit</b><code>mistify run --source fixture.jsonl</code> writes a markdown report naming the planted cause. Nothing intelligent has happened yet — but every seam between components has been proven, and from here each phase replaces one box with a real implementation.</div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="rail"><div class="dot">2</div><div class="line"></div></div>
+      <div class="phase-body">
+        <div class="phase-head"><span class="phase-name">Scratchpad and scoring hardening</span><span class="phase-cost">1–2 days</span></div>
+        <ul>
+          <li>Real read-only enforcement per G4, plus the adversarial SQL suite testing §2.3 asks for — comment injection, CTEs, <code>PRAGMA</code>, <code>ATTACH</code>, and a runaway cartesian join against the timeout.</li>
+          <li>Mandatory evidence constraint on <code>write_note</code>, enforced in the schema and not only in Python.</li>
+          <li><code>anomaly_score</code> computation per G3, as a post-load SQL pass.</li>
+          <li>Compression-ratio metric and the §6.1 calibration pass: try 2–3 <code>sim_th</code> values against a sample, pick the one landing in a sane band, record the choice in <code>run_metadata</code>.</li>
+          <li>Full redaction entity set with the Luhn fix and the false-positive corpus from G5.</li>
+        </ul>
+        <div class="exit"><b>Exit</b>The adversarial SQL suite passes. On the Phase 1 fixture, the planted anomalous template ranks top-5 by <code>anomaly_score</code> — that is what makes the adversarial check's third test real.</div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="rail"><div class="dot">3</div><div class="line"></div></div>
+      <div class="phase-body">
+        <div class="phase-head"><span class="phase-name">The real agent loop</span><span class="phase-cost">2–3 days</span></div>
+        <ul>
+          <li>Four tools as <code>@beta_tool</code> functions; Tool Runner drives the loop; every call writes a <code>query_log</code> row.</li>
+          <li>Task budget plus the hard call cap; forced convergence path; the budget-limited flag written to <code>run_metadata</code> and surfaced verbatim in the report.</li>
+          <li>Prompt caching around the system prompt and template digest.</li>
+          <li>Adversarial pass as structured output — a critique that <em>objects</em>, never one that rewrites (§6.2), with objections weighted by evidence strength.</li>
+          <li>The rebuttal step from §6.2: the original reasoning answers the objection with one targeted query before anything finalizes. Cheap, and it is what turns a one-shot veto into a debate.</li>
+          <li>Deterministic half of the citation check (G8) wired into report generation.</li>
+          <li>Mocked-LLM tests: budget exhaustion, forced convergence, the budget-limited string actually appearing in output.</li>
+        </ul>
+        <div class="exit"><b>Exit</b>A live run on the Phase 1 fixture identifies the planted cause with citations that resolve to real rows. Cost and tool-call count recorded — this is the first number worth comparing against a baseline.</div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="rail"><div class="dot">4</div><div class="line"></div></div>
+      <div class="phase-body">
+        <div class="phase-head"><span class="phase-name">Format coverage and bootstrapper</span><span class="phase-cost">2–3 days</span></div>
+        <ul>
+          <li>Elastic, Loki, and OTLP adapters; <code>registry.detect_format()</code> with the 0.6 confidence floor.</li>
+          <li>Fixtures generated the way testing §6 prescribes — Loghub-2k pushed through real Elastic and Loki Docker stacks, then exported. Hand-authored export JSON gets the nesting and label conventions subtly wrong, and those quirks are the whole point of the adapters.</li>
+          <li>Structural shape clustering; LLM inference as structured output; the match-rate gate; sub-template retry; persisted inferred adapters.</li>
+          <li>Detection confusion matrix across all fixtures, including deliberate near-misses.</li>
+        </ul>
+        <div class="exit"><b>Exit</b>Every fixture routes to the right adapter. <code>sample_unknown_format.log</code> bootstraps above the 0.85 match rate; a deliberately pathological file falls back to raw-line mode <em>loudly</em>, with the reason in <code>run_metadata</code>.</div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="rail"><div class="dot">5</div><div class="line"></div></div>
+      <div class="phase-body">
+        <div class="phase-head"><span class="phase-name">Evaluation harness</span><span class="phase-cost">2–4 days</span></div>
+        <ul>
+          <li>Loghub-2k: template precision and recall against annotated ground truth, plus long-tail template behaviour specifically — rare templates are where incident signal lives and where clustering fails.</li>
+          <li>Loghub-2.0 at volume (Thunderbird, BGL): compression ratio and Drain3 throughput at real incident scale.</li>
+          <li>LogDx-CI: end-to-end diagnosis correctness, cost per case, tool calls per case.</li>
+          <li>Baselines on the same cases — grep, tail, and raw injection — because a root-cause accuracy number means nothing without them.</li>
+          <li>The hand-built adversarial set testing §5 calls for: 10–15 cases, a subset carrying a deliberately plausible-but-wrong narrative, scored on catch rate <em>and</em> on false-flip rate against correct conclusions.</li>
+          <li>Batch API for the sweeps.</li>
+        </ul>
+        <div class="exit"><b>Exit</b>A scorecard table fit to paste into the README. This is the phase that separates the project from a demo, and it is the one most likely to get squeezed — protect it ahead of Phase 6.</div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="rail"><div class="dot">6</div><div class="line"></div></div>
+      <div class="phase-body">
+        <div class="phase-head"><span class="phase-name">MCP server and packaging</span><span class="phase-cost">1–2 days</span></div>
+        <ul>
+          <li><code>ingest_logs</code>, <code>investigate</code>, <code>get_report</code> over the MCP SDK, sharing the CLI's code path so redaction cannot be bypassed by entry point.</li>
+          <li>A test asserting exactly that: an MCP ingest of PII-laden input produces a scratchpad with no unredacted values.</li>
+          <li>HTML and PDF report renderers; README with the Phase 5 scorecard; install instructions for Claude Desktop and Claude Code.</li>
+        </ul>
+        <div class="exit"><b>Exit</b>Installed as an MCP server in a real client, it ingests and investigates a file end to end without touching the CLI.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <p style="margin-top:26px;"><strong>Total: roughly 11–17 focused days</strong> — call it three to four calendar weeks part-time. Phases 0–3 are strictly sequential; Phase 4 can run in parallel with Phase 5 if Loghub work starts while adapters are being written.</p>
+
+  <h2><span class="num">04</span>If the schedule tightens</h2>
+  <p class="lede">A descope ladder, from most to least defensible. Each rung is still a coherent thing to show.</p>
+  <div class="ladder">
+    <div class="rung"><span class="label">Full v1</span><span class="scope">Phases 0–6. Everything in the three documents, evaluated.</span></div>
+    <div class="rung"><span class="label">Credible v1</span><span class="scope">Phases 0–5, dropping the MCP server. A CLI with a real scorecard beats an MCP server without one.</span></div>
+    <div class="rung"><span class="label">Minimum defensible</span><span class="scope">Phases 0–3 plus the Loghub-2k template eval and the grep baseline, JSON Lines only. Narrow, but every claim in it is measured.</span></div>
+    <div class="rung"><span class="label">Do not ship</span><span class="scope">Phases 0–4 with no evaluation. Wide format coverage and an unmeasured agent is the exact demo the architecture document's §5 warns against.</span></div>
+  </div>
+
+  <h2><span class="num">05</span>Open decisions</h2>
+  <p class="lede">Four things I need from you. Each has a recommendation, and each changes what gets built rather than only how it is named.</p>
+  <div class="decisions">
+
+    <div class="decision">
+      <div class="q">Package name — <code>mistify</code> or <code>log-agent</code>?</div>
+      <p class="rec"><span>Rec</span>The repo is <code>mistify</code>; the scaffolding document says <code>log-agent/</code> throughout. Go with <code>mistify</code> for the distribution, package, and CLI, since it is the name that already exists and the docs are the newer thing to amend.</p>
+    </div>
+
+    <div class="decision">
+      <div class="q">Do the chunking config keys stay?</div>
+      <p class="rec"><span>Rec</span><code>chunk_window_minutes</code> and <code>chunk_overlap_minutes</code> are in <code>config.yaml</code>, but no pipeline stage consumes them — the agent slices on demand via <code>get_slice</code> instead. Drop both for v1 rather than shipping config that does nothing; the overlapping-window idea is already recorded as a future improvement in architecture §4.</p>
+    </div>
+
+    <div class="decision">
+      <div class="q">Is this portfolio work or something you intend to run on real logs?</div>
+      <p class="rec"><span>Rec</span>It changes Phase 2 and Phase 6 materially. Real logs mean redaction defaults get audited per deployment and the <code>permissive</code>/<code>off</code> modes need guard rails. Portfolio means Phase 5 is the most valuable phase and deserves the extra days. Answer determines where to spend the squeeze.</p>
+    </div>
+
+    <div class="decision">
+      <div class="q">Start now, or amend the design docs first?</div>
+      <p class="rec"><span>Rec</span>Amend first — it is under an hour of edits to fold G1–G8 back into the three documents, and they are the spec everything else is built against. Then Phase 0.</p>
+    </div>
+
+  </div>
+
+  <footer>
+    <p>Build plan for the v1 architecture, technical scaffolding, and testing strategy documents. Estimates are focused working days for one person and assume the design questions above are settled before Phase 1 begins.</p>
+  </footer>
+
+</div>
+</body>
+</html>
