@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
@@ -20,6 +20,7 @@ from mistify.common.models import (
     ScratchpadNote,
     TemplateSummary,
 )
+from mistify.metrics import Metric
 
 __all__ = ["MIGRATIONS", "ReadOnlyViolation", "ScratchpadDB"]
 
@@ -229,17 +230,46 @@ class ScratchpadDB:
         self._conn.commit()
         return len(scores)
 
-    def record_metric(self, stage: str, metric: str, value: object) -> None:
-        """Record one per-stage health metric, replacing any prior value for the same key."""
+    _METRIC_UPSERT = (
+        "INSERT INTO run_metadata (stage, metric, value, value_num, ts)"
+        " VALUES (?, ?, ?, ?, ?)"
+        " ON CONFLICT(stage, metric) DO UPDATE SET"
+        " value=excluded.value, value_num=excluded.value_num, ts=excluded.ts"
+    )
+
+    @staticmethod
+    def _metric_row(
+        stage: str, metric: str, value: object
+    ) -> tuple[str, str, str, float | None, str]:
         numeric = float(value) if isinstance(value, (bool, int, float)) else None
-        self._conn.execute(
-            "INSERT INTO run_metadata (stage, metric, value, value_num, ts)"
-            " VALUES (?, ?, ?, ?, ?)"
-            " ON CONFLICT(stage, metric) DO UPDATE SET"
-            " value=excluded.value, value_num=excluded.value_num, ts=excluded.ts",
-            (stage, metric, str(value), numeric, _now()),
-        )
+        return (stage, metric, str(value), numeric, _now())
+
+    def _record_metric(self, stage: str, metric: str, value: object) -> None:
+        """Write one metric row by raw name.
+
+        Private on purpose. The declared vocabulary in `mistify.metrics` is the way in, so a
+        metric name cannot drift away from the reader that acts on it. Kept as its own
+        mechanism rather than folded into `record` so the upsert can be exercised directly --
+        the same justification as the tests that bypass `write_note` to prove the SQL CHECK.
+        """
+        self._conn.execute(self._METRIC_UPSERT, self._metric_row(stage, metric, value))
         self._conn.commit()
+
+    def record(self, metric: Metric, value: object) -> None:
+        """Record one declared health metric, replacing any prior value for the same key."""
+        self._record_metric(metric.stage, metric.name, value)
+
+    def record_many(self, entries: Iterable[tuple[Metric, object]]) -> int:
+        """Record a batch of declared metrics in one transaction.
+
+        This is the shape a pipeline stage hands back: stages return the metrics they
+        produced rather than writing them mid-computation.
+        """
+        rows = [self._metric_row(m.stage, m.name, value) for m, value in entries]
+        if rows:
+            self._conn.executemany(self._METRIC_UPSERT, rows)
+            self._conn.commit()
+        return len(rows)
 
     def metrics(self, stage: str | None = None) -> list[dict[str, Any]]:
         if stage is None:

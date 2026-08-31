@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 from mistify.agent.skeleton import INVESTIGATOR_NAME, run_skeleton_investigation
+from mistify.metrics import (
+    INVESTIGATE_INVESTIGATOR,
+    INVESTIGATE_NOTES_WRITTEN,
+    INVESTIGATE_OUTCOME,
+    MetricView,
+)
 from mistify.scratchpad.db import ScratchpadDB
 from tests.fixtures.synthetic_incident import RED_HERRING_MARKER, ROOT_CAUSE_MARKER
 
@@ -69,15 +75,15 @@ def test_every_step_is_logged_for_audit(loaded_db: ScratchpadDB) -> None:
 
 def test_records_its_own_health_metrics(loaded_db: ScratchpadDB) -> None:
     run_skeleton_investigation(loaded_db)
-    metrics = {m["metric"]: m["value"] for m in loaded_db.metrics("investigate")}
-    assert metrics["investigator"] == INVESTIGATOR_NAME
-    assert metrics["outcome"] == "converged"
-    assert metrics["notes_written"] == "1"
+    view = MetricView(loaded_db.metrics("investigate"))
+    assert view.text(INVESTIGATE_INVESTIGATOR) == INVESTIGATOR_NAME
+    assert view.text(INVESTIGATE_OUTCOME) == "converged"
+    assert view.number(INVESTIGATE_NOTES_WRITTEN) == 1
 
 
 def test_empty_scratchpad_converges_without_inventing_a_finding(db: ScratchpadDB) -> None:
     result = run_skeleton_investigation(db)
     assert result.notes == []
     assert result.target_template_id is None
-    metrics = {m["metric"]: m["value"] for m in db.metrics("investigate")}
-    assert metrics["outcome"] == "no_templates"
+    view = MetricView(db.metrics("investigate"))
+    assert view.text(INVESTIGATE_OUTCOME) == "no_templates"

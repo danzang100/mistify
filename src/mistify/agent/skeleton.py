@@ -17,6 +17,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from mistify.common.models import SEVERITIES, ScratchpadNote
+from mistify.metrics import (
+    INVESTIGATE_INVESTIGATOR,
+    INVESTIGATE_NOTES_WRITTEN,
+    INVESTIGATE_OUTCOME,
+    INVESTIGATE_STEPS,
+    INVESTIGATE_TARGET_TEMPLATE_ID,
+)
 from mistify.scratchpad.db import ScratchpadDB
 
 __all__ = ["INVESTIGATOR_NAME", "SkeletonResult", "run_skeleton_investigation"]
@@ -40,9 +47,9 @@ def run_skeleton_investigation(db: ScratchpadDB) -> SkeletonResult:
     ranked = db.top_templates(limit=10, order_by="severity")
     db.log_query(step, "top_templates(order_by='severity', limit=10)", len(ranked))
     if not ranked:
-        db.record_metric("investigate", "investigator", INVESTIGATOR_NAME)
-        db.record_metric("investigate", "steps", step)
-        db.record_metric("investigate", "outcome", "no_templates")
+        db.record(INVESTIGATE_INVESTIGATOR, INVESTIGATOR_NAME)
+        db.record(INVESTIGATE_STEPS, step)
+        db.record(INVESTIGATE_OUTCOME, "no_templates")
         return SkeletonResult(notes=[], steps=step, target_template_id=None)
 
     target = ranked[0]
@@ -71,11 +78,11 @@ def run_skeleton_investigation(db: ScratchpadDB) -> SkeletonResult:
     }
     note_id = db.write_note(step, note_text, evidence, confidence="low")
 
-    db.record_metric("investigate", "investigator", INVESTIGATOR_NAME)
-    db.record_metric("investigate", "steps", step)
-    db.record_metric("investigate", "notes_written", 1)
-    db.record_metric("investigate", "target_template_id", template_id)
-    db.record_metric("investigate", "outcome", "converged")
+    db.record(INVESTIGATE_INVESTIGATOR, INVESTIGATOR_NAME)
+    db.record(INVESTIGATE_STEPS, step)
+    db.record(INVESTIGATE_NOTES_WRITTEN, 1)
+    db.record(INVESTIGATE_TARGET_TEMPLATE_ID, template_id)
+    db.record(INVESTIGATE_OUTCOME, "converged")
 
     notes = [n for n in db.notes() if n.id == note_id]
     return SkeletonResult(notes=notes, steps=step, target_template_id=template_id)

@@ -8,6 +8,12 @@ from pathlib import Path
 import pytest
 
 from mistify.common.models import LogRecord, TemplateSummary, parse_timestamp
+from mistify.metrics import (
+    INGEST_FORMAT,
+    INGEST_LINES_READ,
+    TEMPLATING_COMPRESSION_RATIO,
+    MetricView,
+)
 from mistify.scratchpad.db import MIGRATIONS, ReadOnlyViolation, ScratchpadDB
 
 # --------------------------------------------------------------- migrations
@@ -34,7 +40,7 @@ def test_migrations_apply_on_first_open(tmp_path: Path) -> None:
 def test_migrations_are_idempotent(tmp_path: Path) -> None:
     path = tmp_path / "a.sqlite"
     with ScratchpadDB(path) as db:
-        db.record_metric("ingest", "lines_read", 10)
+        db.record(INGEST_LINES_READ, 10)
     with ScratchpadDB(path) as db:
         assert db.apply_migrations() == []
         assert db.metrics("ingest")[0]["value"] == "10"
@@ -68,8 +74,8 @@ def test_incident_is_none_before_ingest(tmp_path: Path) -> None:
 
 def test_metrics_round_trip_with_numeric_column(tmp_path: Path) -> None:
     with ScratchpadDB(tmp_path / "a.sqlite") as db:
-        db.record_metric("templating", "compression_ratio", 0.0412)
-        db.record_metric("ingest", "format", "json_lines")
+        db.record(TEMPLATING_COMPRESSION_RATIO, 0.0412)
+        db.record(INGEST_FORMAT, "json_lines")
         metrics = {(m["stage"], m["metric"]): m for m in db.metrics()}
 
     assert metrics[("templating", "compression_ratio")]["value_num"] == pytest.approx(0.0412)
@@ -79,8 +85,8 @@ def test_metrics_round_trip_with_numeric_column(tmp_path: Path) -> None:
 
 def test_recording_the_same_metric_twice_replaces_it(tmp_path: Path) -> None:
     with ScratchpadDB(tmp_path / "a.sqlite") as db:
-        db.record_metric("ingest", "lines_read", 10)
-        db.record_metric("ingest", "lines_read", 20)
+        db.record(INGEST_LINES_READ, 10)
+        db.record(INGEST_LINES_READ, 20)
         rows = db.metrics("ingest")
     assert len(rows) == 1
     assert rows[0]["value"] == "20"
@@ -88,8 +94,8 @@ def test_recording_the_same_metric_twice_replaces_it(tmp_path: Path) -> None:
 
 def test_metrics_can_be_filtered_by_stage(tmp_path: Path) -> None:
     with ScratchpadDB(tmp_path / "a.sqlite") as db:
-        db.record_metric("ingest", "a", 1)
-        db.record_metric("redaction", "b", 2)
+        db._record_metric("ingest", "a", 1)
+        db._record_metric("redaction", "b", 2)
         assert [m["metric"] for m in db.metrics("redaction")] == ["b"]
 
 
@@ -356,3 +362,45 @@ def test_known_template_ids_returns_only_those_present(noisy: ScratchpadDB) -> N
 
 def test_known_template_ids_of_nothing_is_empty(noisy: ScratchpadDB) -> None:
     assert noisy.known_template_ids([]) == set()
+
+
+# --------------------------------------------------------------- declared metric writers
+
+
+def test_record_many_writes_a_batch(tmp_path: Path) -> None:
+    """The shape a pipeline stage hands back: metrics returned, not written mid-computation."""
+    with ScratchpadDB(tmp_path / "batch.sqlite") as db:
+        written = db.record_many(
+            [(INGEST_LINES_READ, 4946), (TEMPLATING_COMPRESSION_RATIO, 0.0018)]
+        )
+        view = MetricView(db.metrics())
+
+    assert written == 2
+    assert view.number(INGEST_LINES_READ) == 4946
+    assert view.number(TEMPLATING_COMPRESSION_RATIO) == pytest.approx(0.0018)
+
+
+def test_record_many_of_nothing_writes_nothing(tmp_path: Path) -> None:
+    with ScratchpadDB(tmp_path / "empty.sqlite") as db:
+        assert db.record_many([]) == 0
+        assert db.metrics() == []
+
+
+def test_record_many_replaces_like_record(tmp_path: Path) -> None:
+    with ScratchpadDB(tmp_path / "twice.sqlite") as db:
+        db.record(INGEST_LINES_READ, 10)
+        db.record_many([(INGEST_LINES_READ, 20)])
+        rows = db.metrics("ingest")
+
+    assert len(rows) == 1
+    assert rows[0]["value"] == "20"
+
+
+def test_the_raw_writer_is_private() -> None:
+    """The declared vocabulary is the way in, so a name cannot drift from its reader.
+
+    `_record_metric` survives as an internal seam -- the upsert needs testing directly, and
+    synthetic names have no declaration -- but it is not the public path.
+    """
+    assert not hasattr(ScratchpadDB, "record_metric")
+    assert hasattr(ScratchpadDB, "_record_metric")

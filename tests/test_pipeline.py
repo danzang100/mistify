@@ -10,6 +10,17 @@ import pytest
 
 from mistify.common.config import MistifyConfig
 from mistify.common.models import severity_rank
+from mistify.metrics import (
+    INGEST_LINES_READ,
+    INGEST_PARSE_ERRORS,
+    REDACTION_MODE,
+    REDACTION_TOTAL,
+    SCRATCHPAD_ORPHAN_EVENTS,
+    TEMPLATING_COMPRESSION_RATIO,
+    TEMPLATING_REDUCTION_FACTOR,
+    TEMPLATING_UNIQUE_TEMPLATES,
+    MetricView,
+)
 from mistify.pipeline import IngestResult, UnknownFormatError, derive_incident_id, ingest
 from mistify.scratchpad.db import ScratchpadDB
 from mistify.templating.drain_wrapper import read_snapshot
@@ -113,24 +124,26 @@ def test_no_planted_secret_reaches_the_drain3_snapshot(
 
 
 def test_every_stage_reports_health_metrics(loaded_db: ScratchpadDB) -> None:
-    keys = {(m["stage"], m["metric"]) for m in loaded_db.metrics()}
+    view = MetricView(loaded_db.metrics())
     for expected in (
-        ("ingest", "lines_read"),
-        ("ingest", "parse_errors"),
-        ("redaction", "mode"),
-        ("redaction", "redacted_total"),
-        ("templating", "compression_ratio"),
-        ("templating", "unique_templates"),
-        ("scratchpad", "orphan_events"),
+        INGEST_LINES_READ,
+        INGEST_PARSE_ERRORS,
+        REDACTION_MODE,
+        REDACTION_TOTAL,
+        TEMPLATING_COMPRESSION_RATIO,
+        TEMPLATING_UNIQUE_TEMPLATES,
+        SCRATCHPAD_ORPHAN_EVENTS,
     ):
-        assert expected in keys, f"missing health metric {expected}"
+        assert expected in view, f"missing health metric {expected}"
 
 
 def test_compression_ratio_metric_matches_the_result(
     ingested: IngestResult, loaded_db: ScratchpadDB
 ) -> None:
-    metric = next(m for m in loaded_db.metrics("templating") if m["metric"] == "compression_ratio")
-    assert metric["value_num"] == pytest.approx(ingested.compression_ratio, abs=1e-4)
+    view = MetricView(loaded_db.metrics("templating"))
+    assert view.number(TEMPLATING_COMPRESSION_RATIO) == pytest.approx(
+        ingested.compression_ratio, abs=1e-4
+    )
 
 
 # --------------------------------------------------------------- errors and options
@@ -154,6 +167,18 @@ def test_unknown_format_raises_until_phase_4(tmp_path: Path, config: MistifyConf
     source.write_text("Aug 30 14:22:01 host sshd[1]: Accepted password\n" * 20, encoding="utf-8")
     with pytest.raises(UnknownFormatError, match="Phase 4"):
         ingest(source, config, incident_id="syslog")
+
+
+def test_unregistered_forced_format_raises_unknown_format(
+    incident_file: Path, config: MistifyConfig
+) -> None:
+    """A typo in --format must reach the CLI as the error it catches, not as a traceback.
+
+    The registry raises ValueError for a name it does not know; the CLI only handles
+    UnknownFormatError, so the translation has to happen here.
+    """
+    with pytest.raises(UnknownFormatError, match="json_lines"):
+        ingest(incident_file, config, incident_id="bogus", format_name="not_a_format")
 
 
 def test_missing_source_raises(config: MistifyConfig) -> None:
@@ -328,6 +353,6 @@ def test_reduction_factor_is_lines_per_template(
 ) -> None:
     """How much less the agent reads, which is the number compression was a proxy for."""
     expected = ingested.events_loaded / ingested.unique_templates
-    metric = next(m for m in loaded_db.metrics("templating") if m["metric"] == "reduction_factor")
+    view = MetricView(loaded_db.metrics("templating"))
     assert ingested.reduction_factor == pytest.approx(expected)
-    assert metric["value_num"] == pytest.approx(expected, abs=0.01)
+    assert view.number(TEMPLATING_REDUCTION_FACTOR) == pytest.approx(expected, abs=0.01)

@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from mistify.common.models import TemplateSummary
-from mistify.templating.calibration import calibrate_sim_th, find_over_merged
+from mistify.metrics import TEMPLATING_CALIBRATION_STATUS
+from mistify.templating.calibration import (
+    CalibrationStatus,
+    calibrate_sim_th,
+    find_over_merged,
+)
 
 
 def _repetitive(count: int = 400) -> list[str]:
@@ -34,7 +39,7 @@ def _free_text(count: int = 200) -> list[str]:
 
 def test_selects_a_threshold_on_clusterable_input() -> None:
     result = calibrate_sim_th(_repetitive(), [0.3, 0.4, 0.5], 0.002, 0.30)
-    assert result.status == "selected"
+    assert result.status == CalibrationStatus.SELECTED
     assert result.chosen_sim_th in {0.3, 0.4, 0.5}
     assert len(result.candidates) == 3
 
@@ -74,7 +79,7 @@ def test_candidates_are_deduplicated_and_ordered() -> None:
 def test_unclusterable_input_is_flagged_rather_than_silently_accepted() -> None:
     """Free text produces one template per line, leaving the agent the raw haystack."""
     result = calibrate_sim_th(_free_text(), [0.3, 0.4, 0.5], 0.002, 0.30)
-    assert result.status == "under_clustered"
+    assert result.status == CalibrationStatus.UNDER_CLUSTERED
     assert "little noise could be collapsed" in result.reason
 
 
@@ -90,7 +95,7 @@ def test_over_merging_input_falls_back_to_the_strictest_threshold() -> None:
     the strictest threshold available, flagged loudly rather than quietly accepted.
     """
     result = calibrate_sim_th(_over_mergeable(), [0.05, 0.1, 0.15], 0.002, 0.30)
-    assert result.status == "signal_at_risk"
+    assert result.status == CalibrationStatus.SIGNAL_AT_RISK
     assert result.chosen_sim_th == 0.15
     assert "losing signal costs more" in result.reason
 
@@ -108,18 +113,29 @@ def test_best_compression_is_rejected_when_it_destroys_signal() -> None:
     ratios = dict(result.candidates)
     assert ratios[0.05] < ratios[0.5], "0.05 should compress harder"
     assert result.chosen_sim_th == 0.5
-    assert result.status != "signal_at_risk"
+    assert result.status != CalibrationStatus.SIGNAL_AT_RISK
 
 
 def test_empty_sample_is_skipped_not_guessed() -> None:
     result = calibrate_sim_th([], [0.4, 0.5], 0.002, 0.30)
-    assert result.status == "skipped"
+    assert result.status == CalibrationStatus.SKIPPED
     assert result.chosen_sim_th == 0.4
 
 
 def test_no_candidates_is_an_error() -> None:
     with pytest.raises(ValueError, match="at least one candidate"):
         calibrate_sim_th(_repetitive(), [], 0.002, 0.30)
+
+
+def test_the_statuses_that_warn_match_the_metric_declaration() -> None:
+    """Two declarations of "which outcomes are bad" that must not drift apart.
+
+    The report warns on whatever `templating.calibration_status` declares as its trigger
+    values, while this module decides which statuses mean the run did not calibrate cleanly.
+    They agree today by coincidence; a status added on one side and not the other would
+    silently disable the warning, which is the failure the metric vocabulary exists to stop.
+    """
+    assert CalibrationStatus.warns() == TEMPLATING_CALIBRATION_STATUS.trigger_values
 
 
 # --------------------------------------------------------------- over-merge detection

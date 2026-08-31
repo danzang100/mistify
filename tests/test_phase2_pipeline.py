@@ -9,6 +9,27 @@ import pytest
 
 from mistify.common.config import MistifyConfig
 from mistify.common.models import severity_rank
+from mistify.metrics import (
+    ANOMALY_BUCKET_MINUTES,
+    ANOMALY_NEEDLE_POSITION,
+    ANOMALY_SCORED_TEMPLATES,
+    ANOMALY_SEVERITY_INFORMATIVE,
+    ANOMALY_SIGNAL_TEMPLATE_IDS,
+    ANOMALY_SIGNAL_TEMPLATES,
+    ANOMALY_SUPPRESSED_NOISE,
+    ANOMALY_TOP_SCORE,
+    ANOMALY_TOP_TEMPLATE_ID,
+    ANOMALY_UNMAPPED_SEVERITY_SHARE,
+    ANOMALY_WEIGHTS,
+    TEMPLATING_CALIBRATION_CANDIDATES,
+    TEMPLATING_CALIBRATION_REASON,
+    TEMPLATING_CALIBRATION_STATUS,
+    TEMPLATING_COVERAGE,
+    TEMPLATING_OVER_MERGED,
+    TEMPLATING_REDUCTION_FACTOR,
+    TEMPLATING_SIM_TH,
+    MetricView,
+)
 from mistify.pipeline import IngestResult, ingest
 from mistify.scratchpad.db import ScratchpadDB
 
@@ -46,21 +67,19 @@ def test_calibration_records_health_metrics(
     ingested: IngestResult, loaded_db: ScratchpadDB
 ) -> None:
     """Decision G7: the choice must be auditable, not magic."""
-    metrics = {m["metric"]: m for m in loaded_db.metrics("templating")}
-    assert metrics["calibration_status"]["value"] == ingested.calibration_status
-    assert metrics["calibration_candidates"]["value"]
-    assert metrics["calibration_reason"]["value"]
-    assert metrics["sim_th"]["value_num"] == ingested.sim_th
+    view = MetricView(loaded_db.metrics("templating"))
+    assert view.text(TEMPLATING_CALIBRATION_STATUS) == ingested.calibration_status
+    assert view.text(TEMPLATING_CALIBRATION_CANDIDATES)
+    assert view.text(TEMPLATING_CALIBRATION_REASON)
+    assert view.number(TEMPLATING_SIM_TH) == ingested.sim_th
 
 
 def test_over_merged_metric_is_zero_for_the_clean_incident(
     ingested: IngestResult, loaded_db: ScratchpadDB
 ) -> None:
     """The over-clustering half of §6.1: nothing in the synthetic file should trip it."""
-    metric = next(
-        m for m in loaded_db.metrics("templating") if m["metric"] == "over_merged_templates"
-    )
-    assert metric["value_num"] == 0
+    view = MetricView(loaded_db.metrics("templating"))
+    assert view.number(TEMPLATING_OVER_MERGED) == 0
     assert ingested.over_merged == 0
 
 
@@ -68,12 +87,14 @@ def test_over_merged_metric_is_zero_for_the_clean_incident(
 
 
 def test_anomaly_stage_records_health_metrics(loaded_db: ScratchpadDB) -> None:
-    metrics = {m["metric"]: m for m in loaded_db.metrics("anomaly")}
-    assert metrics["scored_templates"]["value_num"] == loaded_db.template_count()
-    assert metrics["top_template_id"]["value_num"] is not None
-    assert 0.0 < float(metrics["top_score"]["value_num"]) <= 1.0
-    assert metrics["bucket_minutes"]["value_num"] == 1
-    assert "severity" in metrics["weights"]["value"]
+    view = MetricView(loaded_db.metrics("anomaly"))
+    top_score = view.number(ANOMALY_TOP_SCORE)
+    weights = view.text(ANOMALY_WEIGHTS)
+    assert view.number(ANOMALY_SCORED_TEMPLATES) == loaded_db.template_count()
+    assert view.number(ANOMALY_TOP_TEMPLATE_ID) is not None
+    assert top_score is not None and 0.0 < top_score <= 1.0
+    assert view.number(ANOMALY_BUCKET_MINUTES) == 1
+    assert weights is not None and "severity" in weights
 
 
 def test_every_template_gets_an_anomaly_score(loaded_db: ScratchpadDB) -> None:
@@ -121,8 +142,8 @@ def test_coverage_is_the_reported_invariant(
 ) -> None:
     """Every event must be reachable through a template, or the agent cannot find it."""
     assert ingested.template_coverage == 1.0
-    metric = next(m for m in loaded_db.metrics("templating") if m["metric"] == "template_coverage")
-    assert metric["value_num"] == 1.0
+    view = MetricView(loaded_db.metrics("templating"))
+    assert view.number(TEMPLATING_COVERAGE) == 1.0
 
 
 def test_reduction_factor_describes_the_agent_workload(
@@ -132,16 +153,16 @@ def test_reduction_factor_describes_the_agent_workload(
     assert ingested.reduction_factor == pytest.approx(
         ingested.events_loaded / ingested.unique_templates
     )
-    metric = next(m for m in loaded_db.metrics("templating") if m["metric"] == "reduction_factor")
-    assert metric["value_num"] == pytest.approx(ingested.reduction_factor, abs=0.01)
+    view = MetricView(loaded_db.metrics("templating"))
+    assert view.number(TEMPLATING_REDUCTION_FACTOR) == pytest.approx(
+        ingested.reduction_factor, abs=0.01
+    )
 
 
 def test_needle_position_is_recorded(loaded_db: ScratchpadDB) -> None:
     """Where the most severe template lands in the ranked list the agent reads top-down."""
-    metric = next(
-        m for m in loaded_db.metrics("anomaly") if m["metric"] == "max_severity_rank_position"
-    )
-    assert metric["value_num"] == 1
+    view = MetricView(loaded_db.metrics("anomaly"))
+    assert view.number(ANOMALY_NEEDLE_POSITION) == 1
 
 
 def test_clean_incident_evicts_nothing(ingested: IngestResult) -> None:
@@ -182,9 +203,9 @@ def test_severity_is_dropped_when_no_log_carries_one(tmp_path: Path) -> None:
     """Half the scoring weight would otherwise be an identical constant on every template."""
     result = ingest(_severityless_file(tmp_path), _config(tmp_path, "nosev"), incident_id="nosev")
     with ScratchpadDB(result.scratchpad_path) as db:
-        metrics = {m["metric"]: m["value"] for m in db.metrics("anomaly")}
-    assert metrics["severity_informative"] == "False"
-    assert float(metrics["unmapped_severity_share"]) == 1.0
+        view = MetricView(db.metrics("anomaly"))
+    assert view.flag(ANOMALY_SEVERITY_INFORMATIVE) is False
+    assert view.number(ANOMALY_UNMAPPED_SEVERITY_SHARE) == 1.0
 
 
 def test_the_rare_exception_still_ranks_first_without_severity(tmp_path: Path) -> None:
@@ -196,8 +217,8 @@ def test_the_rare_exception_still_ranks_first_without_severity(tmp_path: Path) -
 
 def test_labelled_logs_keep_the_severity_component(ingested: IngestResult) -> None:
     with ScratchpadDB(ingested.scratchpad_path) as db:
-        metrics = {m["metric"]: m["value"] for m in db.metrics("anomaly")}
-    assert metrics["severity_informative"] == "True"
+        view = MetricView(db.metrics("anomaly"))
+    assert view.flag(ANOMALY_SEVERITY_INFORMATIVE) is True
 
 
 # --------------------------------------------------------------- signal set
@@ -205,19 +226,23 @@ def test_labelled_logs_keep_the_severity_component(ingested: IngestResult) -> No
 
 def test_signal_template_set_is_recorded(loaded_db: ScratchpadDB) -> None:
     """The set the Phase 3 adversarial check must account for."""
-    metrics = {m["metric"]: m for m in loaded_db.metrics("anomaly")}
-    count = int(metrics["signal_templates"]["value_num"])
-    ids = metrics["signal_template_ids"]["value"].split(",")
+    view = MetricView(loaded_db.metrics("anomaly"))
+    recorded = view.number(ANOMALY_SIGNAL_TEMPLATES)
+    ids_value = view.text(ANOMALY_SIGNAL_TEMPLATE_IDS)
+    assert recorded is not None and ids_value is not None
+    count = int(recorded)
+    ids = ids_value.split(",")
     assert count >= 1
     assert len(ids) == count
 
 
 def test_signal_set_leads_with_the_top_ranked_template(loaded_db: ScratchpadDB) -> None:
-    metrics = {m["metric"]: m["value"] for m in loaded_db.metrics("anomaly")}
-    first = metrics["signal_template_ids"].split(",")[0]
-    assert first == metrics["top_template_id"]
+    view = MetricView(loaded_db.metrics("anomaly"))
+    ids_value = view.text(ANOMALY_SIGNAL_TEMPLATE_IDS)
+    assert ids_value is not None
+    assert ids_value.split(",")[0] == view.text(ANOMALY_TOP_TEMPLATE_ID)
 
 
 def test_noise_suppression_count_is_recorded(loaded_db: ScratchpadDB) -> None:
-    metrics = {m["metric"]: m for m in loaded_db.metrics("anomaly")}
-    assert metrics["suppressed_noise_templates"]["value_num"] is not None
+    view = MetricView(loaded_db.metrics("anomaly"))
+    assert view.number(ANOMALY_SUPPRESSED_NOISE) is not None

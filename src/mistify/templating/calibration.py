@@ -19,22 +19,44 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from mistify.common.models import SEVERITIES, TemplateSummary, severity_rank
 from mistify.templating.drain_wrapper import DrainTemplater
 
 __all__ = [
     "CalibrationResult",
+    "CalibrationStatus",
     "OverMergedTemplate",
     "calibrate_sim_th",
     "find_over_merged",
 ]
 
 
+class CalibrationStatus(StrEnum):
+    """Outcome of a calibration pass.
+
+    An enum rather than bare strings because the report acts on two of these values, and
+    re-declaring them as literals in the reader is the same defect the metric vocabulary
+    exists to prevent.
+    """
+
+    SELECTED = "selected"
+    UNDER_CLUSTERED = "under_clustered"
+    SIGNAL_AT_RISK = "signal_at_risk"
+    SKIPPED = "skipped"
+    DISABLED = "disabled"
+
+    @classmethod
+    def warns(cls) -> frozenset[str]:
+        """Statuses a reader should surface: the run did not calibrate cleanly."""
+        return frozenset({cls.UNDER_CLUSTERED.value, cls.SIGNAL_AT_RISK.value})
+
+
 @dataclass(slots=True)
 class CalibrationResult:
     chosen_sim_th: float
-    status: str
+    status: CalibrationStatus
     candidates: list[tuple[float, float]] = field(default_factory=list)
     reason: str = ""
 
@@ -80,7 +102,7 @@ def calibrate_sim_th(
     if not messages:
         return CalibrationResult(
             chosen_sim_th=ordered[0],
-            status="skipped",
+            status=CalibrationStatus.SKIPPED,
             reason="no sample messages available",
         )
 
@@ -110,7 +132,7 @@ def calibrate_sim_th(
         strictest = max(ordered)
         return CalibrationResult(
             chosen_sim_th=strictest,
-            status="signal_at_risk",
+            status=CalibrationStatus.SIGNAL_AT_RISK,
             candidates=measured,
             reason=(
                 "every candidate produced a template spanning "
@@ -122,7 +144,7 @@ def calibrate_sim_th(
     if chosen_ratio > target_max:
         return CalibrationResult(
             chosen_sim_th=chosen_th,
-            status="under_clustered",
+            status=CalibrationStatus.UNDER_CLUSTERED,
             candidates=measured,
             reason=(
                 f"best candidate {chosen_th} still leaves {template_count} templates "
@@ -133,7 +155,7 @@ def calibrate_sim_th(
 
     return CalibrationResult(
         chosen_sim_th=chosen_th,
-        status="selected",
+        status=CalibrationStatus.SELECTED,
         candidates=measured,
         reason=(
             f"{template_count} templates at sim_th={chosen_th} (ratio {chosen_ratio:.4f}); "

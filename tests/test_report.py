@@ -7,6 +7,21 @@ from pathlib import Path
 import pytest
 
 from mistify.agent.skeleton import INVESTIGATOR_NAME, run_skeleton_investigation
+from mistify.metrics import (
+    ANOMALY_NEEDLE_POSITION,
+    INGEST_PARSE_ERRORS,
+    REDACTION_MODE,
+    SCRATCHPAD_ORPHAN_EVENTS,
+    TEMPLATING_CALIBRATION_REASON,
+    TEMPLATING_CALIBRATION_STATUS,
+    TEMPLATING_COVERAGE,
+    TEMPLATING_EVICTED,
+    TEMPLATING_LARGEST_SHARE,
+    TEMPLATING_OVER_MERGED,
+    TEMPLATING_OVER_MERGED_IDS,
+    TEMPLATING_REDUCTION_FACTOR,
+    MetricView,
+)
 from mistify.report.generator import (
     TOP_TEMPLATE_LIMIT,
     generate_report,
@@ -14,6 +29,7 @@ from mistify.report.generator import (
     write_report,
 )
 from mistify.scratchpad.db import ScratchpadDB
+from mistify.templating.calibration import CalibrationStatus
 from tests.fixtures.synthetic_incident import PLANTED_API_KEY, PLANTED_EMAILS, ROOT_CAUSE_MARKER
 
 TRUNCATED_LIMIT = 3
@@ -121,12 +137,12 @@ def test_fabricated_citations_surface_in_the_report(loaded_db: ScratchpadDB) -> 
 
 
 def test_disabled_redaction_is_called_out(loaded_db: ScratchpadDB) -> None:
-    loaded_db.record_metric("redaction", "mode", "off")
+    loaded_db.record(REDACTION_MODE, "off")
     assert "Redaction was disabled" in generate_report(loaded_db)
 
 
 def test_parse_errors_are_called_out(loaded_db: ScratchpadDB) -> None:
-    loaded_db.record_metric("ingest", "parse_errors", 12)
+    loaded_db.record(INGEST_PARSE_ERRORS, 12)
     assert "12 line(s) failed to parse" in generate_report(loaded_db)
 
 
@@ -136,12 +152,12 @@ def test_weak_reduction_is_called_out(loaded_db: ScratchpadDB) -> None:
     Stated as lines per template rather than as a ratio: "reduced 1.4x" is the number that
     tells a reader how much smaller the haystack actually got.
     """
-    loaded_db.record_metric("templating", "reduction_factor", 1.4)
+    loaded_db.record(TEMPLATING_REDUCTION_FACTOR, 1.4)
     assert "reduced the file only 1.4x" in generate_report(loaded_db)
 
 
 def test_orphan_events_are_called_out(loaded_db: ScratchpadDB) -> None:
-    loaded_db.record_metric("scratchpad", "orphan_events", 5)
+    loaded_db.record(SCRATCHPAD_ORPHAN_EVENTS, 5)
     assert "reference a template that does not exist" in generate_report(loaded_db)
 
 
@@ -159,9 +175,9 @@ def test_signal_at_risk_calibration_is_called_out(loaded_db: ScratchpadDB) -> No
     `signal_at_risk` means every candidate threshold over-merged, so the run fell back to the
     strictest one and kept the tokens rather than risk collapsing the needle.
     """
-    loaded_db.record_metric("templating", "calibration_status", "signal_at_risk")
-    loaded_db.record_metric(
-        "templating", "calibration_reason", "every candidate produced a template spanning 3+"
+    loaded_db.record(TEMPLATING_CALIBRATION_STATUS, CalibrationStatus.SIGNAL_AT_RISK)
+    loaded_db.record(
+        TEMPLATING_CALIBRATION_REASON, "every candidate produced a template spanning 3+"
     )
     report = generate_report(loaded_db)
     assert "could not find a threshold that preserves signal" in report
@@ -170,9 +186,9 @@ def test_signal_at_risk_calibration_is_called_out(loaded_db: ScratchpadDB) -> No
 
 def test_under_clustered_calibration_is_called_out(loaded_db: ScratchpadDB) -> None:
     """The other failure direction: nothing collapsed, so the agent still has the haystack."""
-    loaded_db.record_metric("templating", "calibration_status", "under_clustered")
-    loaded_db.record_metric(
-        "templating", "calibration_reason", "best candidate 0.5 still leaves 1940 templates"
+    loaded_db.record(TEMPLATING_CALIBRATION_STATUS, CalibrationStatus.UNDER_CLUSTERED)
+    loaded_db.record(
+        TEMPLATING_CALIBRATION_REASON, "best candidate 0.5 still leaves 1940 templates"
     )
     report = generate_report(loaded_db)
     assert "could not collapse much noise" in report
@@ -180,15 +196,15 @@ def test_under_clustered_calibration_is_called_out(loaded_db: ScratchpadDB) -> N
 
 
 def test_selected_calibration_produces_no_warning(loaded_db: ScratchpadDB) -> None:
-    loaded_db.record_metric("templating", "calibration_status", "selected")
+    loaded_db.record(TEMPLATING_CALIBRATION_STATUS, CalibrationStatus.SELECTED)
     report = generate_report(loaded_db)
     assert "Templating calibration" not in report
 
 
 def test_over_merged_templates_are_called_out(loaded_db: ScratchpadDB) -> None:
     """Over-clustering is invisible in the compression ratio, so it needs its own line."""
-    loaded_db.record_metric("templating", "over_merged_templates", 2)
-    loaded_db.record_metric("templating", "over_merged_ids", "4,7")
+    loaded_db.record(TEMPLATING_OVER_MERGED, 2)
+    loaded_db.record(TEMPLATING_OVER_MERGED_IDS, "4,7")
     report = generate_report(loaded_db)
     assert "span a wide severity range" in report
     assert "templates 4,7" in report
@@ -208,7 +224,7 @@ def test_lost_template_coverage_is_called_out(loaded_db: ScratchpadDB) -> None:
     An event whose template was dropped cannot be found through template search at all, so
     this is the one health metric that invalidates the conclusion rather than qualifying it.
     """
-    loaded_db.record_metric("templating", "template_coverage", 0.82)
+    loaded_db.record(TEMPLATING_COVERAGE, 0.82)
     report = generate_report(loaded_db)
     assert "CRITICAL" in report
     assert "18.0% of events have no reachable template" in report
@@ -216,13 +232,13 @@ def test_lost_template_coverage_is_called_out(loaded_db: ScratchpadDB) -> None:
 
 
 def test_full_coverage_produces_no_warning(loaded_db: ScratchpadDB) -> None:
-    loaded_db.record_metric("templating", "template_coverage", 1.0)
+    loaded_db.record(TEMPLATING_COVERAGE, 1.0)
     assert "no reachable template" not in generate_report(loaded_db)
 
 
 def test_evicted_templates_are_called_out(loaded_db: ScratchpadDB) -> None:
     """Eviction splits one condition across several ids, which understates its counts."""
-    loaded_db.record_metric("templating", "evicted_templates", 12)
+    loaded_db.record(TEMPLATING_EVICTED, 12)
     report = generate_report(loaded_db)
     assert "12 template(s) were evicted" in report
     assert "drain3.max_clusters" in report
@@ -230,14 +246,14 @@ def test_evicted_templates_are_called_out(loaded_db: ScratchpadDB) -> None:
 
 def test_dominant_template_is_called_out(loaded_db: ScratchpadDB) -> None:
     """Compression can succeed and still leave one noisy shape owning the whole file."""
-    loaded_db.record_metric("templating", "largest_template_share", 0.71)
+    loaded_db.record(TEMPLATING_LARGEST_SHARE, 0.71)
     report = generate_report(loaded_db)
     assert "One template accounts for 71% of all events" in report
 
 
 def test_buried_severe_template_is_called_out(loaded_db: ScratchpadDB) -> None:
     """The needle question asked directly: does the worst template surface near the top?"""
-    loaded_db.record_metric("anomaly", "max_severity_rank_position", 9)
+    loaded_db.record(ANOMALY_NEEDLE_POSITION, 9)
     report = generate_report(loaded_db)
     assert "The most severe template ranks #9" in report
     assert "not surfacing near the top" in report
@@ -255,6 +271,51 @@ def test_clean_run_has_no_signal_warnings(loaded_db: ScratchpadDB) -> None:
         "The most severe template ranks",
     ):
         assert phrase not in report
+
+
+# --------------------------------------------------------------- absent versus zero
+
+
+def test_a_recorded_zero_is_not_a_missing_metric(db: ScratchpadDB) -> None:
+    """The distinction the old `(value_num or 0)` reads could not express.
+
+    A stage that published 0.0 and a stage that published nothing at all used to be the same
+    answer to every reader, which meant "this stage never reported" was unsayable.
+    """
+    db.record(TEMPLATING_REDUCTION_FACTOR, 0.0)
+    view = MetricView(db.metrics())
+    assert view.number(TEMPLATING_REDUCTION_FACTOR) == 0.0
+    assert view.number(TEMPLATING_COVERAGE) is None
+
+
+def test_missing_coverage_does_not_warn(db: ScratchpadDB) -> None:
+    """A metric nobody recorded is not evidence of lost coverage."""
+    assert MetricView(db.metrics()).triggers(TEMPLATING_COVERAGE) is False
+
+
+def test_an_empty_file_is_not_reported_as_weak_reduction(loaded_db: ScratchpadDB) -> None:
+    """Reduction of exactly 0.0 means there was nothing to template, not bad templating.
+
+    This is the metric's floor doing its job: the warning is about a file with too little
+    repeated structure, and an empty file has no structure to judge.
+    """
+    loaded_db.record(TEMPLATING_REDUCTION_FACTOR, 0.0)
+    assert "reduced the file only" not in generate_report(loaded_db)
+
+    loaded_db.record(TEMPLATING_REDUCTION_FACTOR, 1.4)
+    assert "reduced the file only 1.4x" in generate_report(loaded_db)
+
+
+def test_zero_coverage_is_the_loudest_warning(loaded_db: ScratchpadDB) -> None:
+    """Coverage 0.0 means nothing is findable, so it must warn hardest, not fall silent.
+
+    Reading this metric as `value or 1.0` would have inverted its meaning exactly here: the
+    total failure would have looked like a perfectly covered run.
+    """
+    loaded_db.record(TEMPLATING_COVERAGE, 0.0)
+    report = generate_report(loaded_db)
+    assert "CRITICAL" in report
+    assert "100.0% of events have no reachable template" in report
 
 
 # --------------------------------------------------------------- template list truncation

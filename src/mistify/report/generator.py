@@ -20,7 +20,26 @@ from jinja2 import Environment, PackageLoader, StrictUndefined
 from mistify import __version__
 from mistify.agent.skeleton import INVESTIGATOR_NAME
 from mistify.common.models import SEVERITIES
+from mistify.metrics import (
+    ANOMALY_NEEDLE_POSITION,
+    INGEST_PARSE_ERRORS,
+    INGEST_UNMAPPED_SEVERITY,
+    INVESTIGATE_INVESTIGATOR,
+    REDACTION_MODE,
+    SCRATCHPAD_ORPHAN_EVENTS,
+    TEMPLATING_CALIBRATION_REASON,
+    TEMPLATING_CALIBRATION_STATUS,
+    TEMPLATING_COVERAGE,
+    TEMPLATING_EVICTED,
+    TEMPLATING_LARGEST_SHARE,
+    TEMPLATING_OVER_MERGED,
+    TEMPLATING_OVER_MERGED_IDS,
+    TEMPLATING_REDUCTION_FACTOR,
+    Metric,
+    MetricView,
+)
 from mistify.scratchpad.db import ScratchpadDB
+from mistify.templating.calibration import CalibrationStatus
 
 __all__ = [
     "TOP_TEMPLATE_LIMIT",
@@ -109,17 +128,16 @@ def collect(db: ScratchpadDB) -> ReportData:
         item["max_severity"] = SEVERITIES[int(item["max_severity_rank"])]
         top_templates.append(item)
 
+    # Two reads of the same rows, deliberately. The raw rows stay in the template context so
+    # the health table renders whatever a stage published, including metrics added after this
+    # code was written. The view is for the warnings, which act on specific named metrics.
     metrics = db.metrics()
-    warnings.extend(_health_warnings(metrics))
+    view = MetricView(metrics)
+    warnings.extend(_health_warnings(view))
 
-    investigator = next(
-        (
-            m["value"]
-            for m in metrics
-            if m["stage"] == "investigate" and m["metric"] == "investigator"
-        ),
-        "unknown",
-    )
+    investigator = view.text(INVESTIGATE_INVESTIGATOR)
+    if investigator is None:
+        investigator = "unknown"
 
     first_ts, last_ts = db.time_bounds()
     return {
@@ -142,91 +160,103 @@ def collect(db: ScratchpadDB) -> ReportData:
     }
 
 
-def _health_warnings(metrics: list[dict[str, Any]]) -> list[str]:
-    """Turn health metrics into explicit warnings so a degraded run says so."""
-    lookup = {(m["stage"], m["metric"]): m for m in metrics}
+def _triggered_value(view: MetricView, metric: Metric) -> float:
+    """The number behind a warning that has already fired.
+
+    `triggers()` returning True means the metric was recorded and numeric, so this narrows
+    away the None the signature admits rather than defaulting it. Defaulting is what the old
+    `(row["value_num"] or 0)` did, and it would print a confident "0" for a metric that never
+    arrived at all.
+    """
+    value = view.number(metric)
+    if value is None:  # pragma: no cover -- triggers() has already ruled this out
+        raise ValueError(f"{metric} triggered without a numeric value")
+    return value
+
+
+def _health_warnings(view: MetricView) -> list[str]:
+    """Turn health metrics into explicit warnings so a degraded run says so.
+
+    No cutoff appears in this function. Where a metric becomes worth mentioning is declared on
+    the metric itself and evaluated by `MetricView.triggers`; all this supplies is the wording,
+    which is the only half a reader actually owns.
+    """
     warnings: list[str] = []
 
-    parse_errors = lookup.get(("ingest", "parse_errors"))
-    if parse_errors and (parse_errors["value_num"] or 0) > 0:
-        warnings.append(
-            f"{int(parse_errors['value_num'])} line(s) failed to parse and were skipped."
-        )
+    if view.triggers(INGEST_PARSE_ERRORS):
+        errors = int(_triggered_value(view, INGEST_PARSE_ERRORS))
+        warnings.append(f"{errors} line(s) failed to parse and were skipped.")
 
-    unmapped = lookup.get(("ingest", "unmapped_severity"))
-    if unmapped and (unmapped["value_num"] or 0) > 0:
+    if view.triggers(INGEST_UNMAPPED_SEVERITY):
+        unmapped = int(_triggered_value(view, INGEST_UNMAPPED_SEVERITY))
         warnings.append(
-            f"{int(unmapped['value_num'])} event(s) carried an unrecognised severity and "
-            "were defaulted to INFO."
+            f"{unmapped} event(s) carried an unrecognised severity and were defaulted to INFO."
         )
 
     # Coverage first: it is the invariant, and it is the failure the ratio hides.
-    coverage = lookup.get(("templating", "template_coverage"))
-    if coverage and (coverage["value_num"] if coverage["value_num"] is not None else 1.0) < 1.0:
-        lost = 1.0 - float(coverage["value_num"])
+    if view.triggers(TEMPLATING_COVERAGE):
+        lost = 1.0 - _triggered_value(view, TEMPLATING_COVERAGE)
         warnings.append(
             f"CRITICAL: {lost:.1%} of events have no reachable template. Those lines cannot "
             "be found through template search at all, and any conclusion drawn here is "
             "based on a partial view of the incident."
         )
 
-    evicted = lookup.get(("templating", "evicted_templates"))
-    if evicted and (evicted["value_num"] or 0) > 0:
+    if view.triggers(TEMPLATING_EVICTED):
+        evicted = int(_triggered_value(view, TEMPLATING_EVICTED))
         warnings.append(
-            f"{int(evicted['value_num'])} template(s) were evicted from the matching tree, "
+            f"{evicted} template(s) were evicted from the matching tree, "
             "so one condition's occurrences may be split across several templates and its "
             "counts understated. Raise drain3.max_clusters."
         )
 
-    reduction = lookup.get(("templating", "reduction_factor"))
-    if reduction and 0 < (reduction["value_num"] or 0) < 2.0:
+    # The floor on this metric is load-bearing: exactly 0.0 means an empty file, not a badly
+    # compressed one, and an empty file is not something to blame templating for.
+    if view.triggers(TEMPLATING_REDUCTION_FACTOR):
+        reduction = _triggered_value(view, TEMPLATING_REDUCTION_FACTOR)
         warnings.append(
-            f"Templating reduced the file only {reduction['value_num']:.1f}x — there is "
+            f"Templating reduced the file only {reduction:.1f}x — there is "
             "little repeated structure here, so the agent is searching close to the raw "
             "haystack and template ranking may be unreliable."
         )
 
-    dominant = lookup.get(("templating", "largest_template_share"))
-    if dominant and (dominant["value_num"] or 0) > 0.6:
+    if view.triggers(TEMPLATING_LARGEST_SHARE):
+        share = _triggered_value(view, TEMPLATING_LARGEST_SHARE)
         warnings.append(
-            f"One template accounts for {dominant['value_num']:.0%} of all events. A "
+            f"One template accounts for {share:.0%} of all events. A "
             "dominant noisy template crowds attention even after compression."
         )
 
-    needle = lookup.get(("anomaly", "max_severity_rank_position"))
-    if needle and (needle["value_num"] or 0) > 5:
+    if view.triggers(ANOMALY_NEEDLE_POSITION):
+        position = int(_triggered_value(view, ANOMALY_NEEDLE_POSITION))
         warnings.append(
-            f"The most severe template ranks #{int(needle['value_num'])} by anomaly score. "
+            f"The most severe template ranks #{position} by anomaly score. "
             "The worst thing in the file is not surfacing near the top of the ranked list."
         )
 
-    orphans = lookup.get(("scratchpad", "orphan_events"))
-    if orphans and (orphans["value_num"] or 0) > 0:
-        warnings.append(
-            f"{int(orphans['value_num'])} event(s) reference a template that does not exist."
-        )
+    if view.triggers(SCRATCHPAD_ORPHAN_EVENTS):
+        orphans = int(_triggered_value(view, SCRATCHPAD_ORPHAN_EVENTS))
+        warnings.append(f"{orphans} event(s) reference a template that does not exist.")
 
-    mode = lookup.get(("redaction", "mode"))
-    if mode and mode["value"] == "off":
+    if view.triggers(REDACTION_MODE):
         warnings.append("Redaction was disabled for this run.")
 
-    calibration = lookup.get(("templating", "calibration_status"))
-    if calibration and calibration["value"] in {"signal_at_risk", "under_clustered"}:
-        reason = lookup.get(("templating", "calibration_reason"))
-        detail = f" {reason['value']}" if reason else ""
+    if view.triggers(TEMPLATING_CALIBRATION_STATUS):
+        reason = view.text(TEMPLATING_CALIBRATION_REASON)
+        detail = "" if reason is None else f" {reason}"
         headline = (
             "Templating calibration could not find a threshold that preserves signal."
-            if calibration["value"] == "signal_at_risk"
+            if view.text(TEMPLATING_CALIBRATION_STATUS) == CalibrationStatus.SIGNAL_AT_RISK
             else "Templating calibration could not collapse much noise."
         )
         warnings.append(f"{headline}{detail}")
 
-    over_merged = lookup.get(("templating", "over_merged_templates"))
-    if over_merged and (over_merged["value_num"] or 0) > 0:
-        ids = lookup.get(("templating", "over_merged_ids"))
-        detail = f" (templates {ids['value']})" if ids else ""
+    if view.triggers(TEMPLATING_OVER_MERGED):
+        over_merged = int(_triggered_value(view, TEMPLATING_OVER_MERGED))
+        ids = view.text(TEMPLATING_OVER_MERGED_IDS)
+        detail = "" if ids is None else f" (templates {ids})"
         warnings.append(
-            f"{int(over_merged['value_num'])} template(s) span a wide severity range"
+            f"{over_merged} template(s) span a wide severity range"
             f"{detail} — distinct conditions may have been merged into one template."
         )
 
