@@ -240,8 +240,8 @@ HIGH_CARDINALITY_LINES = 2000
 NEEDLE_MESSAGE = "Storage engine halted after unrecoverable checksum mismatch"
 
 
-@pytest.fixture
-def high_cardinality_file(tmp_path: Path) -> Path:
+@pytest.fixture(scope="session")
+def high_cardinality_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A file with no repeated structure, carrying one rare FATAL line.
 
     Every message is a genuinely distinct shape, which is the input Drain3 handles worst:
@@ -269,26 +269,33 @@ def high_cardinality_file(tmp_path: Path) -> Path:
             "message": NEEDLE_MESSAGE,
         },
     )
-    path = tmp_path / "high_cardinality.jsonl"
+    path = tmp_path_factory.mktemp("high-cardinality") / "high_cardinality.jsonl"
     path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
     return path
 
 
-@pytest.fixture
-def high_cardinality_ingest(high_cardinality_file: Path, tmp_path: Path) -> IngestResult:
+@pytest.fixture(scope="session")
+def high_cardinality_ingest(
+    high_cardinality_file: Path, tmp_path_factory: pytest.TempPathFactory
+) -> IngestResult:
     """That file ingested with a max_clusters small enough to force eviction.
 
     Calibration is off so the threshold is the one under test rather than one chosen from a
     sample, and `max_clusters` is far below the number of shapes in the file.
+
+    Session-scoped and shared rather than copied: both readers of this fixture only read, and
+    forcing eviction over two thousand distinct shapes is the most expensive ingest in the
+    suite. Any test that starts writing to it needs its own copy.
     """
+    directory = tmp_path_factory.mktemp("high-cardinality-ingest")
     config = MistifyConfig.model_validate(
         {
             "drain3": {
                 "max_clusters": 50,
                 "calibrate": False,
-                "snapshot_path": str(tmp_path / "hc_{incident_id}.json"),
+                "snapshot_path": str(directory / "hc_{incident_id}.json"),
             },
-            "scratchpad": {"path": str(tmp_path / "hc_{incident_id}.sqlite")},
+            "scratchpad": {"path": str(directory / "hc_{incident_id}.sqlite")},
         }
     )
     return ingest(high_cardinality_file, config, incident_id="high-cardinality")

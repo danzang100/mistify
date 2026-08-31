@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mistify Data Flow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --ground:  #f7f8fb;
+    --panel:   #ffffff;
+    --panel-2: #eef1f6;
+    --border:  #dde2ea;
+    --text:    #161a21;
+    --text-2:  #38404e;
+    --muted:   #5b6472;
+    --accent:  #0b6ec4;
+    --good:    #12805f;
+    --warn:    #a35c00;
+    --danger:  #c0333a;
+    --code-bg: #f1f4f9;
+    --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --mono: "IBM Plex Mono", SFMono-Regular, Consolas, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:  #0f1115;
+      --panel:   #161a21;
+      --panel-2: #1b202a;
+      --border:  #262b35;
+      --text:    #e6e9ef;
+      --text-2:  #c3cad6;
+      --muted:   #9aa3b2;
+      --accent:  #5fb3ff;
+      --good:    #4fd1a5;
+      --warn:    #ffb454;
+      --danger:  #ff7a7a;
+      --code-bg: #0b0d11;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:  #0f1115;
+    --panel:   #161a21;
+    --panel-2: #1b202a;
+    --border:  #262b35;
+    --text:    #e6e9ef;
+    --text-2:  #c3cad6;
+    --muted:   #9aa3b2;
+    --accent:  #5fb3ff;
+    --good:    #4fd1a5;
+    --warn:    #ffb454;
+    --danger:  #ff7a7a;
+    --code-bg: #0b0d11;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 52px 24px 88px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 12px;
+  }
+  h1 {
+    font-size: clamp(1.8rem, 4vw, 2.4rem);
+    font-weight: 600;
+    letter-spacing: -0.022em;
+    margin: 0 0 10px;
+    text-wrap: balance;
+  }
+  .standfirst { color: var(--text-2); max-width: 66ch; margin: 0 0 8px; }
+
+  h2 {
+    font-size: 1.2rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    margin: 52px 0 4px;
+    padding-bottom: 9px;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 0.98rem; font-weight: 600; margin: 26px 0 2px; }
+  p { color: var(--text-2); max-width: 72ch; margin: 10px 0; }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    word-break: break-word;
+  }
+
+  figure { margin: 22px 0 0; }
+  figure svg { max-width: 100%; height: auto; display: block; }
+  .figbox {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    overflow-x: auto;
+  }
+  figcaption {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-top: 12px;
+    max-width: 72ch;
+  }
+
+  /* --- svg vocabulary --- */
+  .nbox  { fill: var(--panel-2); stroke: var(--border); stroke-width: 1.5; }
+  .nbox.key { stroke: var(--accent); stroke-width: 2.5; }
+  .nbox.ext { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; }
+  .nlab  { fill: var(--text); font: 600 13px var(--sans); }
+  .nsub  { fill: var(--muted); font: 400 10.5px var(--mono); }
+  .edge  { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+  .edge.side { stroke-dasharray: 5 4; }
+  .edge.warn { stroke: var(--danger); stroke-width: 2; }
+  .elab  { fill: var(--muted); font: 400 11px var(--mono); }
+  .elab.hot { fill: var(--accent); }
+  .ahead { fill: var(--muted); }
+  .ahead.warn { fill: var(--danger); }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 15px 17px;
+  }
+  .card h4 {
+    margin: 0 0 6px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+  }
+  .card p { margin: 4px 0 0; font-size: 0.9rem; }
+  .tag {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+  }
+
+  .shape {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--text-2);
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 9px 12px;
+    margin-top: 10px;
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  .rule {
+    border-left: 3px solid var(--good);
+    background: var(--panel);
+    border-radius: 0 8px 8px 0;
+    padding: 12px 16px;
+    margin: 16px 0;
+  }
+  .rule.hard { border-left-color: var(--danger); }
+  .rule b {
+    display: block;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--good);
+    margin-bottom: 3px;
+  }
+  .rule.hard b { color: var(--danger); }
+  .rule p { margin: 0; font-size: 0.92rem; }
+
+  .scroll { overflow-x: auto; margin: 16px 0; border: 1px solid var(--border); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.87rem; background: var(--panel); min-width: 500px; }
+  th, td { text-align: left; padding: 9px 13px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--text-2); }
+  thead th {
+    color: var(--muted); font-weight: 500; font-family: var(--mono);
+    font-size: 0.7rem; letter-spacing: 0.07em; text-transform: uppercase;
+    background: var(--panel-2);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td code { font-size: 0.8em; }
+
+  footer {
+    margin-top: 56px; padding-top: 20px;
+    border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 0.8rem;
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">mistify</p>
+  <h1>Mistify Data Flow</h1>
+  <p class="standfirst">
+    How one line in a log file becomes a line in an incident report — what it is at each hop, and
+    which guarantees hold where.
+  </p>
+
+  <!-- ================= THE SPINE ================= -->
+  <h2>The ingest spine</h2>
+  <p>
+    One pass, left to right in time. The labels on the arrows are the data's actual shape at that
+    point, not a description of it.
+  </p>
+
+  <figure>
+    <div class="figbox">
+      <svg viewBox="0 0 820 640" role="img"
+           aria-label="Ingest pipeline: a log file is parsed into LogRecords, redacted, templated, batch-loaded into the SQLite scratchpad, then scored. Calibration is a side pass that only chooses a threshold. The redaction vault is a separate file.">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" class="ahead"/>
+          </marker>
+        </defs>
+
+        <!-- main column boxes -->
+        <rect class="nbox ext" x="40" y="14"  width="210" height="44" rx="7"/>
+        <text class="nlab" x="60" y="34">log file</text>
+        <text class="nsub" x="60" y="49">.jsonl on disk</text>
+
+        <rect class="nbox" x="40" y="106" width="210" height="52" rx="7"/>
+        <text class="nlab" x="60" y="128">Adapter</text>
+        <text class="nsub" x="60" y="144">detect_format · parse</text>
+
+        <rect class="nbox key" x="40" y="206" width="210" height="52" rx="7"/>
+        <text class="nlab" x="60" y="228">Redactor</text>
+        <text class="nsub" x="60" y="244">first stage to touch a record</text>
+
+        <rect class="nbox" x="40" y="306" width="210" height="52" rx="7"/>
+        <text class="nlab" x="60" y="328">Templater</text>
+        <text class="nsub" x="60" y="344">Drain3 + registry</text>
+
+        <rect class="nbox" x="40" y="406" width="210" height="52" rx="7"/>
+        <text class="nlab" x="60" y="428">Scratchpad load</text>
+        <text class="nsub" x="60" y="444">batches of 5,000</text>
+
+        <rect class="nbox" x="40" y="506" width="210" height="52" rx="7"/>
+        <text class="nlab" x="60" y="528">Scoring</text>
+        <text class="nsub" x="60" y="544">anomaly · signal · noise</text>
+
+        <!-- main edges -->
+        <line class="edge" x1="145" y1="58"  x2="145" y2="100" marker-end="url(#ah)"/>
+        <text class="elab" x="266" y="84">raw lines</text>
+
+        <line class="edge" x1="145" y1="158" x2="145" y2="200" marker-end="url(#ah)"/>
+        <text class="elab" x="266" y="177">LogRecord(ts, source, severity,</text>
+        <text class="elab" x="266" y="192">raw, message, fields)</text>
+
+        <line class="edge" x1="145" y1="258" x2="145" y2="300" marker-end="url(#ah)"/>
+        <text class="elab hot" x="266" y="277">every value → [TYPE:hash]</text>
+        <text class="elab" x="266" y="292">raw, message and fields</text>
+
+        <line class="edge" x1="145" y1="358" x2="145" y2="400" marker-end="url(#ah)"/>
+        <text class="elab" x="266" y="377">+ template_id</text>
+        <text class="elab" x="266" y="392">pattern, params</text>
+
+        <line class="edge" x1="145" y1="458" x2="145" y2="500" marker-end="url(#ah)"/>
+        <text class="elab" x="266" y="477">rows in log_events</text>
+        <text class="elab" x="266" y="492">and templates</text>
+
+        <line class="edge" x1="145" y1="558" x2="145" y2="596" marker-end="url(#ah)"/>
+        <text class="elab" x="266" y="583">anomaly_score per template</text>
+
+        <rect class="nbox ext" x="40" y="596" width="210" height="34" rx="7"/>
+        <text class="nlab" x="60" y="618">scratchpad, ready to read</text>
+
+        <!-- calibration side pass -->
+        <rect class="nbox" x="560" y="106" width="220" height="70" rx="7"/>
+        <text class="nlab" x="580" y="130">Calibration</text>
+        <text class="nsub" x="580" y="146">re-reads ≤2,000 lines,</text>
+        <text class="nsub" x="580" y="160">tries each sim_th</text>
+
+        <path class="edge side" d="M 250 132 L 560 132" marker-end="url(#ah)"/>
+        <text class="elab" x="330" y="124">sample</text>
+
+        <path class="edge side" d="M 670 176 L 670 332 L 250 332" marker-end="url(#ah)"/>
+        <text class="elab" x="440" y="324">chosen sim_th</text>
+
+        <!-- vault side output -->
+        <rect class="nbox ext" x="560" y="206" width="220" height="52" rx="7"/>
+        <text class="nlab" x="580" y="228">Vault</text>
+        <text class="nsub" x="580" y="244">separate file · opt in</text>
+
+        <path class="edge side" d="M 250 232 L 560 232" marker-end="url(#ah)"/>
+        <text class="elab" x="330" y="224">placeholder → value</text>
+
+        <!-- scoring reads back -->
+        <path class="edge side" d="M 250 432 L 420 432 L 420 532 L 250 532" marker-end="url(#ah)"/>
+        <text class="elab" x="300" y="424">reads back for burst stats</text>
+      </svg>
+    </div>
+    <figcaption>
+      Solid arrows carry the record stream. Dashed arrows are side paths: calibration only chooses a
+      number, and the vault only receives a mapping. Scoring reads the loaded rows back out rather
+      than working from the stream, because burstiness needs the whole incident.
+    </figcaption>
+  </figure>
+
+  <div class="rule hard">
+    <b>The ordering that everything else rests on</b>
+    <p>
+      Redaction runs immediately after <code>parse()</code> — before templating, before the Drain3
+      snapshot is written to disk, and before any line could reach a model. Put it anywhere later
+      and the guarantee fails on the unknown-format path, where the bootstrapper sends sample lines
+      to a model before templating has happened at all.
+    </p>
+  </div>
+
+  <!-- ================= STAGES ================= -->
+  <h2>What each stage does</h2>
+
+  <div class="grid2">
+    <div class="card">
+      <h4>Adapter <span class="tag">format in, records out</span></h4>
+      <p>
+        Samples the first lines, scores each registered adapter, and takes the best above 0.6. Below
+        that it returns nothing, which is the handoff to the Phase 4 bootstrapper rather than a
+        failure. Malformed lines are skipped and counted, never half-parsed.
+      </p>
+    </div>
+    <div class="card">
+      <h4>Redactor <span class="tag">values out, correlation kept</span></h4>
+      <p>
+        Replaces each detected value with a stable <code>[TYPE:hash]</code>. The same value always
+        yields the same placeholder within an incident, so "this address appears in these fourteen
+        lines" survives redaction even though the address does not.
+      </p>
+    </div>
+    <div class="card">
+      <h4>Calibration <span class="tag">side pass</span></h4>
+      <p>
+        Measures candidate thresholds against a redacted sample and keeps the one leaving fewest
+        templates without merging distinct conditions. It never touches the record stream — its only
+        output is a number the templater is then built with.
+      </p>
+    </div>
+    <div class="card">
+      <h4>Templater <span class="tag">many lines, one shape</span></h4>
+      <p>
+        Mines a shape per message and keeps its own registry of every template ever seen, so Drain3
+        evicting a cluster from its matching tree can never leave an event pointing at a template row
+        that was not written.
+      </p>
+    </div>
+    <div class="card">
+      <h4>Load <span class="tag">bounded memory</span></h4>
+      <p>
+        Events flush every 5,000 records instead of buffering the file. Templates are written after
+        the events, which is why an explicit orphan check replaces foreign-key enforcement.
+      </p>
+    </div>
+    <div class="card">
+      <h4>Scoring <span class="tag">search order</span></h4>
+      <p>
+        Ranks templates by severity, burstiness and rarity — no model involved. The ranking is the
+        search order, so the rarest and most severe are met before the noise.
+      </p>
+    </div>
+  </div>
+
+  <div class="shape">raw line   {"timestamp": "…", "level": "FATAL", "service": "checkout", "message": "pool exhausted: 0 of 40 …"}
+LogRecord  ts=2026-08-30T14:38:03.583149Z  severity=FATAL  source=checkout-service
+           raw=&lt;original line&gt;  message="pool exhausted: 0 of 40 …"  fields={trace_id: …}
+redacted   message unchanged here; a line with an address becomes "… from [IPV4:2f01]"
+templated  template_id=9  pattern="Database connection pool exhausted: 0 of &lt;*&gt; connections available"
+row        log_events(id, ts, source, severity, template_id, raw, message, fields_json)</div>
+
+  <!-- ================= SCRATCHPAD ================= -->
+  <h2>What the scratchpad holds</h2>
+  <p>
+    One SQLite file per incident. It is the working memory of the whole system: every stage writes
+    here, and every reader reads here rather than going back to the log file.
+  </p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>table</th><th>holds</th></tr></thead>
+      <tbody>
+        <tr><td><code>incidents</code></td><td>Which source, when, which format, which redaction mode.</td></tr>
+        <tr><td><code>log_events</code></td><td>One row per parsed line, redacted, pointing at its template.</td></tr>
+        <tr><td><code>templates</code></td><td>One row per shape, with counts, severity mix and anomaly score.</td></tr>
+        <tr><td><code>scratchpad_notes</code></td><td>What the investigator concluded. Evidence is mandatory, enforced in SQL.</td></tr>
+        <tr><td><code>query_log</code></td><td>Every slice the investigator asked for, so a conclusion can be audited.</td></tr>
+        <tr><td><code>run_metadata</code></td><td>Per-stage health metrics.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ================= READ PATHS ================= -->
+  <h2>Three ways out</h2>
+
+  <figure>
+    <div class="figbox">
+      <svg viewBox="0 0 820 300" role="img"
+           aria-label="Three readers of the scratchpad: the investigator through a read-only SQL channel, the report generator, and the reveal command which reads the separate vault file. The read-only channel cannot reach the vault.">
+        <defs>
+          <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" class="ahead"/>
+          </marker>
+          <marker id="ahx" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" class="ahead warn"/>
+          </marker>
+        </defs>
+
+        <rect class="nbox" x="40" y="110" width="180" height="60" rx="7"/>
+        <text class="nlab" x="60" y="134">Scratchpad</text>
+        <text class="nsub" x="60" y="150">one file per incident</text>
+
+        <rect class="nbox ext" x="40" y="220" width="180" height="52" rx="7"/>
+        <text class="nlab" x="60" y="242">Vault</text>
+        <text class="nsub" x="60" y="258">separate file</text>
+
+        <rect class="nbox key" x="330" y="24" width="200" height="60" rx="7"/>
+        <text class="nlab" x="350" y="48">Investigator</text>
+        <text class="nsub" x="350" y="64">read-only SQL channel</text>
+
+        <rect class="nbox" x="330" y="112" width="200" height="56" rx="7"/>
+        <text class="nlab" x="350" y="134">Report</text>
+        <text class="nsub" x="350" y="150">notes + health + ranking</text>
+
+        <rect class="nbox" x="330" y="220" width="200" height="52" rx="7"/>
+        <text class="nlab" x="350" y="242">mistify reveal</text>
+        <text class="nsub" x="350" y="258">operator, opt in</text>
+
+        <path class="edge" d="M 220 130 L 275 130 L 275 54 L 330 54" marker-end="url(#ah2)"/>
+        <path class="edge" d="M 220 142 L 330 142" marker-end="url(#ah2)"/>
+        <path class="edge" d="M 220 246 L 330 246" marker-end="url(#ah2)"/>
+
+        <path class="edge warn" d="M 400 84 L 400 214" marker-end="url(#ahx)" stroke-dasharray="5 4"/>
+        <text class="elab" x="412" y="146" fill="var(--danger)">denied</text>
+        <text class="elab" x="412" y="162" fill="var(--danger)">mode=ro · query_only</text>
+        <text class="elab" x="412" y="178" fill="var(--danger)">authorizer blocks ATTACH</text>
+
+        <rect class="nbox ext" x="620" y="112" width="160" height="56" rx="7"/>
+        <text class="nlab" x="640" y="134">incident report</text>
+        <text class="nsub" x="640" y="150">markdown</text>
+        <path class="edge" d="M 530 140 L 620 140" marker-end="url(#ah2)"/>
+      </svg>
+    </div>
+    <figcaption>
+      The investigator's SQL runs on a connection SQLite itself refuses to let write, and that same
+      authorizer denies <code>ATTACH</code> — which is what makes keeping the vault in its own file a
+      real boundary rather than a naming convention.
+    </figcaption>
+  </figure>
+
+  <div class="rule">
+    <b>Why the vault is not a table</b>
+    <p>
+      The read-only channel can read any table in the database it is pointed at. A vault table living
+      in the scratchpad would be one <code>SELECT</code> away from undoing redaction entirely.
+    </p>
+  </div>
+
+  <!-- ================= METRICS ================= -->
+  <h2>Health metrics, briefly</h2>
+  <p>
+    Every stage publishes a few numbers about its own run into <code>run_metadata</code>, so a
+    degraded run is visible rather than inferred from a report that reads fine. They are declared
+    once in a single vocabulary that writers and readers share, and a handful of them drive warnings
+    in the report — coverage below 1.0, templates evicted, one template dominating the file, the most
+    severe template failing to rank near the top. The rest are shown and not acted on.
+  </p>
+  <p>
+    The distinction matters for one reason: renaming a metric a reader acts on changes behaviour,
+    and renaming one that is only displayed does not.
+  </p>
+
+  <!-- ================= INVARIANTS ================= -->
+  <h2>What must stay true</h2>
+
+  <div class="grid2">
+    <div class="card">
+      <h4>Redaction is first</h4>
+      <p>Nothing downstream — templater, snapshot, database, model — ever sees an unredacted record.</p>
+    </div>
+    <div class="card">
+      <h4>Coverage is 1.0</h4>
+      <p>Every event reaches a template. An event whose template is missing is a line no search can surface.</p>
+    </div>
+    <div class="card">
+      <h4>Evidence is mandatory</h4>
+      <p>A note without supporting evidence cannot be written; the constraint is in SQL, not just Python.</p>
+    </div>
+    <div class="card">
+      <h4>Timestamps sort as text</h4>
+      <p>Fixed width, always UTC — string order and chronological order are the same thing.</p>
+    </div>
+  </div>
+
+  <footer>
+    Ingest is one pass; investigate and report are separate commands over the same scratchpad. The
+    investigation step is still a hardcoded heuristic — the model-driven loop arrives in Phase 3.
+  </footer>
+
+</div>
+</body>
+</html>
