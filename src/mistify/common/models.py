@@ -144,7 +144,16 @@ class LogRecord:
     format: str = "unknown"
 
     def isoformat(self) -> str:
-        return self.ts.astimezone(UTC).isoformat().replace("+00:00", "Z")
+        """Fixed-width UTC ISO-8601, microseconds always present.
+
+        The width matters because `ts` is stored as TEXT and compared lexicographically.
+        `datetime.isoformat()` omits microseconds when they are zero, so a whole-second
+        timestamp renders shorter than a fractional one in the same second -- and since "."
+        sorts before "Z", `14:38:00.442Z` would compare as *earlier* than `14:38:00Z`.
+        Padding to a constant width makes string order and chronological order the same
+        thing, which is what every `ORDER BY ts`, `MIN(ts)` and time-window slice assumes.
+        """
+        return self.ts.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
 
 
 @dataclass(slots=True)

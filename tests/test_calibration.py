@@ -13,6 +13,15 @@ def _repetitive(count: int = 400) -> list[str]:
     return [f"Handled GET /api/v2/item/{i} in {i % 90}ms" for i in range(count)]
 
 
+def _over_mergeable(count: int = 200) -> list[str]:
+    """One shared token and five varying ones.
+
+    Below a similarity threshold of roughly 1/6 these all collapse into a single
+    mostly-wildcard template: maximum compression, total loss of the distinctions.
+    """
+    return [f"event alpha{i} beta{i} gamma{i} delta{i} epsilon{i}" for i in range(count)]
+
+
 def _free_text(count: int = 200) -> list[str]:
     """Lines with no shared shape — nothing to cluster, so compression must fail."""
     return [
@@ -23,21 +32,28 @@ def _free_text(count: int = 200) -> list[str]:
 # --------------------------------------------------------------- selection
 
 
-def test_picks_a_threshold_inside_the_band() -> None:
+def test_selects_a_threshold_on_clusterable_input() -> None:
     result = calibrate_sim_th(_repetitive(), [0.3, 0.4, 0.5], 0.002, 0.30)
-    assert result.status == "in_band"
+    assert result.status == "selected"
     assert result.chosen_sim_th in {0.3, 0.4, 0.5}
     assert len(result.candidates) == 3
 
 
-def test_prefers_the_highest_in_band_threshold() -> None:
-    """Among acceptable options, take the least merging.
+def test_prefers_the_threshold_that_collapses_the_most_noise() -> None:
+    """The objective is a shorter haystack, not a target ratio.
 
-    Over-clustering destroys the signal being compressed for; under-clustering only costs
-    tokens. When several thresholds are acceptable the conservative one wins.
+    The agent's search space is the template list, so among thresholds that did not
+    over-merge, the one leaving fewest templates is the one that made its job easiest.
     """
     result = calibrate_sim_th(_repetitive(), [0.2, 0.4, 0.6], 0.0, 1.0)
-    assert result.chosen_sim_th == 0.6
+    counts = {th: ratio for th, ratio in result.candidates}
+    assert counts[result.chosen_sim_th] == min(counts.values())
+
+
+def test_reason_names_the_template_count_not_just_the_ratio() -> None:
+    """The number that matters to the agent is how many templates it must read."""
+    result = calibrate_sim_th(_repetitive(), [0.3, 0.5], 0.002, 0.30)
+    assert "templates at sim_th=" in result.reason
 
 
 def test_reports_every_candidate_it_measured() -> None:
@@ -56,10 +72,10 @@ def test_candidates_are_deduplicated_and_ordered() -> None:
 
 
 def test_unclusterable_input_is_flagged_rather_than_silently_accepted() -> None:
-    """Free text produces one template per line. That must be visible, not swallowed."""
+    """Free text produces one template per line, leaving the agent the raw haystack."""
     result = calibrate_sim_th(_free_text(), [0.3, 0.4, 0.5], 0.002, 0.30)
-    assert result.status == "out_of_band"
-    assert "under-clustering" in result.reason
+    assert result.status == "under_clustered"
+    assert "little noise could be collapsed" in result.reason
 
 
 def test_out_of_band_still_returns_a_usable_threshold() -> None:
@@ -67,11 +83,32 @@ def test_out_of_band_still_returns_a_usable_threshold() -> None:
     assert result.chosen_sim_th in {0.3, 0.5}
 
 
-def test_over_clustering_is_named_in_the_reason() -> None:
-    """A band the input compresses straight past should read as over-clustering."""
-    result = calibrate_sim_th(_repetitive(), [0.4], 0.90, 0.99)
-    assert result.status == "out_of_band"
-    assert "over-clustering" in result.reason
+def test_over_merging_input_falls_back_to_the_strictest_threshold() -> None:
+    """When every candidate destroys signal, prefer signal over a tidy template list.
+
+    Under-clustering only costs tokens; over-clustering loses the needle, so the fallback is
+    the strictest threshold available, flagged loudly rather than quietly accepted.
+    """
+    result = calibrate_sim_th(_over_mergeable(), [0.05, 0.1, 0.15], 0.002, 0.30)
+    assert result.status == "signal_at_risk"
+    assert result.chosen_sim_th == 0.15
+    assert "losing signal costs more" in result.reason
+
+
+def test_best_compression_is_rejected_when_it_destroys_signal() -> None:
+    """The heart of the change: compression is not the objective.
+
+    At the loosest threshold these 200 distinct messages collapse into a single
+    `event <*> <*> <*> <*> <*>` template — a compression ratio of 0.005, which is the *best*
+    score any candidate can post and the worst possible outcome. Selection must reject it in
+    favour of the threshold that keeps the messages apart, even though that one compresses
+    far worse.
+    """
+    result = calibrate_sim_th(_over_mergeable(), [0.05, 0.5], 0.0, 1.0)
+    ratios = dict(result.candidates)
+    assert ratios[0.05] < ratios[0.5], "0.05 should compress harder"
+    assert result.chosen_sim_th == 0.5
+    assert result.status != "signal_at_risk"
 
 
 def test_empty_sample_is_skipped_not_guessed() -> None:

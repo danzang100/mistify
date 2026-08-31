@@ -26,7 +26,10 @@ from mistify.scratchpad.db import ScratchpadDB
 from mistify.templating.calibration import calibrate_sim_th, find_over_merged
 from mistify.templating.drain_wrapper import DrainTemplater
 
-__all__ = ["IngestResult", "derive_incident_id", "ingest"]
+__all__ = ["EVENT_BATCH_SIZE", "IngestResult", "derive_incident_id", "ingest"]
+
+#: Records held in memory between INSERTs. Bounds peak memory independently of file size.
+EVENT_BATCH_SIZE = 5000
 
 
 class UnknownFormatError(RuntimeError):
@@ -49,6 +52,9 @@ class IngestResult:
     sim_th: float
     calibration_status: str
     over_merged: int
+    template_coverage: float
+    reduction_factor: float
+    evicted_templates: int
     redaction_counts: dict[str, int] = field(default_factory=dict)
 
 
@@ -123,6 +129,7 @@ def ingest(
             target_max=config.drain3.target_ratio_max,
             depth=config.drain3.depth,
             max_clusters=config.drain3.max_clusters,
+            over_merge_span=config.drain3.over_merge_severity_span,
         )
         sim_th = calibration.chosen_sim_th
         # The calibration pass redacted its sample too; those counts are not part of the
@@ -140,7 +147,6 @@ def ingest(
     if scratchpad_path.exists():
         scratchpad_path.unlink()
 
-    rows: list[tuple[LogRecord, int]] = []
     with ScratchpadDB(scratchpad_path) as db:
         db.create_incident(
             incident_id,
@@ -149,6 +155,13 @@ def ingest(
             redaction_mode=config.redaction.mode,
         )
 
+        # Streamed in fixed-size batches rather than buffered whole. Holding every record
+        # until the end cost roughly a kilobyte per line, which is ~16 GB of resident memory
+        # on the Thunderbird corpus the Phase 5 stress test is meant to run -- the pipeline
+        # would die before reaching the thing it was measuring. Peak memory is now the batch
+        # plus the template registry, both bounded.
+        events_loaded = 0
+        batch: list[tuple[LogRecord, int]] = []
         for record in adapter.parse(source_path):
             # Redaction first. Nothing downstream -- templater, snapshot, database, or any
             # model call -- ever sees an unredacted record.
@@ -156,9 +169,14 @@ def ingest(
             result = templater.process(
                 record.message, ts=record.isoformat(), severity=record.severity
             )
-            rows.append((record, result.template_id))
+            batch.append((record, result.template_id))
+            if len(batch) >= EVENT_BATCH_SIZE:
+                events_loaded += db.bulk_insert_events(batch)
+                batch.clear()
+        if batch:
+            events_loaded += db.bulk_insert_events(batch)
+            batch.clear()
 
-        events_loaded = db.bulk_insert_events(rows)
         summaries = templater.summaries()
         db.upsert_templates(summaries)
         templater.snapshot()
@@ -188,7 +206,21 @@ def ingest(
             db.record_metric("redaction", f"redacted_{entity}", count)
         db.record_metric("redaction", "redacted_total", sum(redactor.counts.values()))
 
+        orphans = db.orphan_event_count()
+        coverage = 1.0 - (orphans / events_loaded) if events_loaded else 1.0
+        signal = templater.signal_stats()
+
+        # Coverage is the invariant, not compression. Every event must be reachable through
+        # a template, because an event whose template was dropped is a line the agent can
+        # never find -- and the compression ratio reports that loss as a success.
+        db.record_metric("templating", "template_coverage", round(coverage, 6))
         db.record_metric("templating", "unique_templates", templater.unique_templates)
+        db.record_metric("templating", "reduction_factor", round(signal["reduction_factor"], 2))
+        db.record_metric(
+            "templating", "largest_template_share", round(signal["largest_template_share"], 4)
+        )
+        db.record_metric("templating", "evicted_templates", templater.evicted_templates)
+        # Diagnostic only. Kept because a ratio near 1.0 still means nothing was collapsed.
         db.record_metric("templating", "compression_ratio", round(templater.compression_ratio, 5))
         db.record_metric("templating", "sim_th", sim_th)
         db.record_metric("templating", "depth", config.drain3.depth)
@@ -212,8 +244,16 @@ def ingest(
         if scored:
             db.record_metric("anomaly", "top_template_id", scored[0].template_id)
             db.record_metric("anomaly", "top_score", round(scored[0].score, 4))
+            # Where the most severe template lands in anomaly order. This is the needle
+            # question stated directly: would an agent reading the ranked list from the top
+            # meet the worst thing in the file early, or have to dig for it?
+            worst = max(summaries, key=lambda s: s.max_severity_rank)
+            order = [c.template_id for c in scored]
+            db.record_metric(
+                "anomaly", "max_severity_rank_position", order.index(worst.template_id) + 1
+            )
 
-        db.record_metric("scratchpad", "orphan_events", db.orphan_event_count())
+        db.record_metric("scratchpad", "orphan_events", orphans)
 
         return IngestResult(
             incident_id=incident_id,
@@ -227,5 +267,8 @@ def ingest(
             sim_th=sim_th,
             calibration_status=calibration.status if calibration else "disabled",
             over_merged=len(over_merged),
+            template_coverage=coverage,
+            reduction_factor=signal["reduction_factor"],
+            evicted_templates=templater.evicted_templates,
             redaction_counts=redactor.counts,
         )

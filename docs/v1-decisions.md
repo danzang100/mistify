@@ -185,36 +185,90 @@ written as one it would pass everything.
 Decisions taken during Phase 2 rather than at the outset. They resolve architecture §6.1,
 which called for compression health to be measured but did not say how.
 
-### Drain3 similarity threshold is calibrated, not guessed
+### Compression is not the objective; findability is
 
-A single hardcoded `sim_th` is a guess about a file nobody has looked at yet, and Drain3 fails
-in two opposite directions without raising either way. Under-clustering gives nearly every
-line its own template and no compression at all; over-clustering merges genuinely distinct
-error conditions into one template and destroys the signal the compression exists to preserve.
+**Superseded:** an earlier version of this section described calibration as choosing the
+threshold whose compression ratio landed inside a target band. That was wrong, and wrong in
+the direction that matters.
 
-Several candidate thresholds (`drain3.calibration_candidates`) are now measured against a
-redacted sample, and the one whose compression ratio — unique templates over lines — lands
-inside the target band is chosen. Every candidate and its ratio is recorded, so the choice is
-auditable rather than magic.
+Compression ratio is a proxy, and it breaks in exactly the case the system exists for. A
+threshold that merges a rare FATAL template into a chatty INFO one scores *better* on ratio
+while destroying the only line worth finding. Demonstrated: 200 distinct messages collapse
+into a single `event <*> <*> <*> <*> <*>` template at a loose threshold — a ratio of 0.005,
+the best score any candidate can post, and total loss of every distinction in the file.
 
-Among in-band candidates the **highest** threshold wins. Higher thresholds cluster more
-strictly, so this prefers the least merging that still achieves acceptable compression: the
-two failure modes are not symmetric, since over-clustering silently destroys signal whereas
-under-clustering only costs tokens.
+The real objective is that an LLM handed the compressed representation can find the needle.
+That reframes every part of the templating stage:
 
-When no candidate lands in band, the closest one is used and the run is flagged `out_of_band`
-rather than silently accepted. A pathological file should produce a visibly flagged run, not a
-confident-looking bad one.
+- **Coverage is the invariant.** Every event must be reachable through a template. An event
+  whose template is missing is a line no template search can ever surface.
+- **Reduction is the goal, measured honestly.** `reduction_factor` (lines per template) says
+  how much smaller the agent's search space got. `compression_ratio` is kept as a diagnostic
+  only, because a ratio near 1.0 still means nothing was collapsed.
+- **Ranking is the delivery mechanism.** The template list is ordered by anomaly score, so
+  the rarest, most severe and most concentrated templates are met before the noise. The
+  ranked list *is* the answer to needle-in-a-haystack; compression only makes the list short
+  enough to read.
+
+Calibration became a gate followed by a preference rather than a target band:
+
+1. Reject any candidate that over-merges, however well it compresses.
+2. Among survivors, prefer the fewest templates — a shorter list is strictly easier to search.
+3. If every candidate over-merges, take the strictest threshold and flag `signal_at_risk`,
+   because under-clustering only costs tokens while over-clustering loses the needle.
+
+Statuses are `selected`, `under_clustered`, `signal_at_risk`, `skipped`, `disabled`.
+
+### Drain3 eviction can no longer orphan events
+
+Drain3 evicts clusters on an LRU once `max_clusters` is reached, and evicted clusters vanish
+from its tree. Final statistics were read from that tree, so every event assigned to an
+evicted cluster referenced a template row that was never written.
+
+Measured before the fix, on a 2,000-line high-cardinality file with `max_clusters: 50`:
+**1,950 events (98%) orphaned, while the compression ratio read 0.0250** — mid-band, and
+indistinguishable from an excellent result. Calibration would have accepted it.
+
+`DrainTemplater` now keeps its own registry of every template it has ever seen, so eviction
+is a matching concern only: the tree may forget a shape, but the scratchpad never does.
+Coverage on that same file is now 1.0, and a single FATAL line planted among the 2,000
+unique noise lines ranks **#1** by anomaly score. Eviction is still reported
+(`evicted_templates`) because a shape that reappears after eviction gets a fresh id, which
+splits one condition's counts across several templates.
 
 ### Over-merge detection is separate from the ratio
 
-The compression ratio cannot see over-clustering. A low ratio looks like excellent compression
-right up until you notice one template holds both routine INFO lines and FATAL ones, which
-means two different conditions were merged and one of them is now invisible.
+The compression ratio cannot see over-clustering. A low ratio looks like excellent
+compression right up until you notice one template holds both routine INFO lines and FATAL
+ones, which means two different conditions were merged and one of them is now invisible.
 
-So templates whose members span three or more severity levels
-(`drain3.over_merge_severity_span`) are flagged separately from the ratio check.
+Post-load, templates whose members span three or more severity levels
+(`drain3.over_merge_severity_span`) are flagged. During calibration severity labels are not
+yet available, so the structural stand-in is wildcard density: a template that is mostly
+`<*>` has kept almost none of the original words, which is what absorbing unrelated messages
+looks like.
 
-**Where:** `mistify/templating/calibration.py`. Tests in `tests/test_calibration.py`.
+**Known limit:** neither detector catches two *same-severity* distinct conditions merging.
+That is what Loghub's annotated ground-truth templates measure, and it is the Phase 5 job.
 
-**Amend:** architecture §6.1 — the health metric is two checks, not one.
+### Events stream to SQLite
+
+Records were buffered whole before the first INSERT — roughly a kilobyte each, so ~16 GB
+resident on the 16.6M-line Thunderbird corpus that the Phase 5 stress test is meant to run.
+The pipeline would have died before reaching the thing it was measuring. Events now flush in
+fixed batches (`EVENT_BATCH_SIZE`), bounding peak memory to the batch plus the template
+registry.
+
+### Timestamps are fixed-width
+
+`ts` is stored as TEXT and compared lexicographically, but `datetime.isoformat()` omits
+microseconds when they are zero. `.` sorts before `Z`, so `14:38:00.442000Z` compared as
+*earlier* than `14:38:00Z` — inverted ordering for any second containing both forms, which
+the synthetic incident did. `LogRecord.isoformat()` now always emits microseconds, making
+string order and chronological order the same thing.
+
+**Where:** `mistify/templating/calibration.py`, `mistify/templating/drain_wrapper.py`,
+`mistify/pipeline.py`, `mistify/common/models.py`.
+
+**Amend:** architecture §6.1 — compression ratio is a diagnostic, not the health metric.
+Coverage is the invariant and anomaly ranking is what solves needle-in-a-haystack.

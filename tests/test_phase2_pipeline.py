@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from mistify.common.config import MistifyConfig
 from mistify.common.models import severity_rank
 from mistify.pipeline import IngestResult, ingest
@@ -26,8 +28,8 @@ def _config(tmp_path: Path, tag: str, **sections: dict[str, object]) -> MistifyC
 
 
 def test_calibration_runs_by_default(ingested: IngestResult, config: MistifyConfig) -> None:
-    """A threshold nobody chose by hand, landing in the target compression band."""
-    assert ingested.calibration_status == "in_band"
+    """A threshold nobody chose by hand, selected for collapsing noise without over-merging."""
+    assert ingested.calibration_status == "selected"
     assert ingested.sim_th in config.drain3.calibration_candidates
 
 
@@ -108,3 +110,38 @@ def test_calibration_does_not_inflate_redaction_counts(incident_file: Path, tmp_
     assert calibrated.calibration_status != "disabled"
     assert plain.calibration_status == "disabled"
     assert calibrated.redaction_counts == plain.redaction_counts
+
+
+# --------------------------------------------------------------- signal preservation
+
+
+def test_coverage_is_the_reported_invariant(
+    ingested: IngestResult, loaded_db: ScratchpadDB
+) -> None:
+    """Every event must be reachable through a template, or the agent cannot find it."""
+    assert ingested.template_coverage == 1.0
+    metric = next(m for m in loaded_db.metrics("templating") if m["metric"] == "template_coverage")
+    assert metric["value_num"] == 1.0
+
+
+def test_reduction_factor_describes_the_agent_workload(
+    ingested: IngestResult, loaded_db: ScratchpadDB
+) -> None:
+    """Lines per template — how much smaller the haystack got, stated the honest way."""
+    assert ingested.reduction_factor == pytest.approx(
+        ingested.events_loaded / ingested.unique_templates
+    )
+    metric = next(m for m in loaded_db.metrics("templating") if m["metric"] == "reduction_factor")
+    assert metric["value_num"] == pytest.approx(ingested.reduction_factor, abs=0.01)
+
+
+def test_needle_position_is_recorded(loaded_db: ScratchpadDB) -> None:
+    """Where the most severe template lands in the ranked list the agent reads top-down."""
+    metric = next(
+        m for m in loaded_db.metrics("anomaly") if m["metric"] == "max_severity_rank_position"
+    )
+    assert metric["value_num"] == 1
+
+
+def test_clean_incident_evicts_nothing(ingested: IngestResult) -> None:
+    assert ingested.evicted_templates == 0

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from mistify.common.config import MistifyConfig
+from mistify.common.models import severity_rank
 from mistify.pipeline import IngestResult, UnknownFormatError, derive_incident_id, ingest
 from mistify.scratchpad.db import ScratchpadDB
 from mistify.templating.drain_wrapper import read_snapshot
@@ -200,3 +202,132 @@ def test_derive_incident_id_is_dated_and_slugged() -> None:
 
 def test_derive_incident_id_handles_odd_names() -> None:
     assert derive_incident_id("logs/___.jsonl").endswith("-incident")
+
+
+# --------------------------------------------------------------- template coverage
+
+
+#: A message shape per line, so Drain3 has nothing to merge and must keep allocating clusters.
+HIGH_CARDINALITY_LINES = 2000
+
+#: The one severe line hidden in that noise. Six words, none of them shared with the noise
+#: shapes, so it cannot be absorbed into a neighbouring cluster.
+NEEDLE_MESSAGE = "Storage engine halted after unrecoverable checksum mismatch"
+
+
+@pytest.fixture
+def high_cardinality_file(tmp_path: Path) -> Path:
+    """A file with no repeated structure, carrying one rare FATAL line.
+
+    Every message is a genuinely distinct shape, which is the input Drain3 handles worst:
+    nothing clusters, so the tree fills and starts evicting. The FATAL line is the needle —
+    one line in two thousand, and the only severe thing in the file.
+    """
+    start = datetime(2026, 8, 30, 14, 0, 0, tzinfo=UTC)
+    lines = [
+        {
+            "timestamp": (start + timedelta(seconds=i)).isoformat().replace("+00:00", "Z"),
+            "service": "checkout-service",
+            "level": "INFO",
+            "message": f"shape{i} alpha{i} beta{i} gamma{i}",
+        }
+        for i in range(HIGH_CARDINALITY_LINES)
+    ]
+    lines.insert(
+        HIGH_CARDINALITY_LINES // 2,
+        {
+            "timestamp": (start + timedelta(seconds=1000, milliseconds=500))
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "service": "checkout-service",
+            "level": "FATAL",
+            "message": NEEDLE_MESSAGE,
+        },
+    )
+    path = tmp_path / "high_cardinality.jsonl"
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+    return path
+
+
+@pytest.fixture
+def high_cardinality_ingest(high_cardinality_file: Path, tmp_path: Path) -> IngestResult:
+    """That file ingested with a max_clusters small enough to force eviction.
+
+    Calibration is off so the threshold is the one under test rather than one chosen from a
+    sample, and `max_clusters` is far below the number of shapes in the file.
+    """
+    config = MistifyConfig.model_validate(
+        {
+            "drain3": {
+                "max_clusters": 50,
+                "calibrate": False,
+                "snapshot_path": str(tmp_path / "hc_{incident_id}.json"),
+            },
+            "scratchpad": {"path": str(tmp_path / "hc_{incident_id}.sqlite")},
+        }
+    )
+    return ingest(high_cardinality_file, config, incident_id="high-cardinality")
+
+
+def test_every_event_reaches_a_template(ingested: IngestResult, loaded_db: ScratchpadDB) -> None:
+    """Coverage, not compression, is the load invariant: no event may be unreachable."""
+    assert ingested.template_coverage == 1.0
+    assert loaded_db.orphan_event_count() == 0
+
+
+def test_eviction_does_not_orphan_the_file(high_cardinality_ingest: IngestResult) -> None:
+    """The regression: Drain3's LRU eviction used to take events' templates with it.
+
+    Reading final statistics off Drain3's own tree meant every event assigned to an evicted
+    cluster pointed at a template row that was never written. On this file that orphaned
+    about 98% of the input — while the compression ratio reported a healthy-looking number,
+    because a ratio counts templates it can still see. The templater now keeps its own
+    registry, so eviction costs matching, not reachability.
+    """
+    assert high_cardinality_ingest.template_coverage == 1.0
+    assert high_cardinality_ingest.evicted_templates > 0
+    with ScratchpadDB(high_cardinality_ingest.scratchpad_path) as db:
+        assert db.orphan_event_count() == 0
+        assert db.event_count() == high_cardinality_ingest.events_loaded
+
+
+def test_the_rare_fatal_line_still_ranks_first(high_cardinality_ingest: IngestResult) -> None:
+    """The needle-in-a-haystack guarantee, and the whole point of keeping the registry.
+
+    One FATAL line among two thousand distinct shapes, most of whose clusters were evicted
+    mid-run. It must still be the first thing an agent reading the ranked list would meet.
+    """
+    with ScratchpadDB(high_cardinality_ingest.scratchpad_path) as db:
+        top = db.top_templates(limit=1, order_by="anomaly_score")
+    assert NEEDLE_MESSAGE in top[0]["pattern"]
+    assert top[0]["max_severity_rank"] == severity_rank("FATAL")
+
+
+def test_batching_does_not_change_what_is_loaded(
+    incident_file: Path,
+    config: MistifyConfig,
+    ingested: IngestResult,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Events stream to SQLite in batches, so the batch size must be invisible in the result.
+
+    A tiny batch exercises the flush path on nearly every line, including the trailing
+    partial batch that a `>=` check alone would drop.
+    """
+    monkeypatch.setattr("mistify.pipeline.EVENT_BATCH_SIZE", 7)
+    result = ingest(incident_file, config, incident_id="streamed")
+
+    assert result.events_loaded == ingested.events_loaded
+    with ScratchpadDB(result.scratchpad_path) as db:
+        assert db.event_count() == result.events_loaded
+        assert db.orphan_event_count() == 0
+
+
+def test_reduction_factor_is_lines_per_template(
+    ingested: IngestResult, loaded_db: ScratchpadDB
+) -> None:
+    """How much less the agent reads, which is the number compression was a proxy for."""
+    expected = ingested.events_loaded / ingested.unique_templates
+    metric = next(m for m in loaded_db.metrics("templating") if m["metric"] == "reduction_factor")
+    assert ingested.reduction_factor == pytest.approx(expected)
+    assert metric["value_num"] == pytest.approx(expected, abs=0.01)

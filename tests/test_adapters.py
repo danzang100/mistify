@@ -104,7 +104,7 @@ def test_parse_produces_golden_records(tmp_path: Path) -> None:
 
     assert len(records) == 2
     first = records[0]
-    assert first.isoformat() == "2026-08-30T14:22:01Z"
+    assert first.isoformat() == "2026-08-30T14:22:01.000000Z"
     assert first.severity == "ERROR"
     assert first.source == "checkout"
     assert first.message == "boom"

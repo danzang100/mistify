@@ -148,11 +148,44 @@ def _health_warnings(metrics: list[dict[str, Any]]) -> list[str]:
             "were defaulted to INFO."
         )
 
-    ratio = lookup.get(("templating", "compression_ratio"))
-    if ratio and (ratio["value_num"] or 0) > 0.5:
+    # Coverage first: it is the invariant, and it is the failure the ratio hides.
+    coverage = lookup.get(("templating", "template_coverage"))
+    if coverage and (coverage["value_num"] if coverage["value_num"] is not None else 1.0) < 1.0:
+        lost = 1.0 - float(coverage["value_num"])
         warnings.append(
-            f"Compression ratio is {ratio['value_num']:.2f} — templating achieved little "
-            "compression, so template ranking may be unreliable."
+            f"CRITICAL: {lost:.1%} of events have no reachable template. Those lines cannot "
+            "be found through template search at all, and any conclusion drawn here is "
+            "based on a partial view of the incident."
+        )
+
+    evicted = lookup.get(("templating", "evicted_templates"))
+    if evicted and (evicted["value_num"] or 0) > 0:
+        warnings.append(
+            f"{int(evicted['value_num'])} template(s) were evicted from the matching tree, "
+            "so one condition's occurrences may be split across several templates and its "
+            "counts understated. Raise drain3.max_clusters."
+        )
+
+    reduction = lookup.get(("templating", "reduction_factor"))
+    if reduction and 0 < (reduction["value_num"] or 0) < 2.0:
+        warnings.append(
+            f"Templating reduced the file only {reduction['value_num']:.1f}x — there is "
+            "little repeated structure here, so the agent is searching close to the raw "
+            "haystack and template ranking may be unreliable."
+        )
+
+    dominant = lookup.get(("templating", "largest_template_share"))
+    if dominant and (dominant["value_num"] or 0) > 0.6:
+        warnings.append(
+            f"One template accounts for {dominant['value_num']:.0%} of all events. A "
+            "dominant noisy template crowds attention even after compression."
+        )
+
+    needle = lookup.get(("anomaly", "max_severity_rank_position"))
+    if needle and (needle["value_num"] or 0) > 5:
+        warnings.append(
+            f"The most severe template ranks #{int(needle['value_num'])} by anomaly score. "
+            "The worst thing in the file is not surfacing near the top of the ranked list."
         )
 
     orphans = lookup.get(("scratchpad", "orphan_events"))
@@ -166,10 +199,15 @@ def _health_warnings(metrics: list[dict[str, Any]]) -> list[str]:
         warnings.append("Redaction was disabled for this run.")
 
     calibration = lookup.get(("templating", "calibration_status"))
-    if calibration and calibration["value"] == "out_of_band":
+    if calibration and calibration["value"] in {"signal_at_risk", "under_clustered"}:
         reason = lookup.get(("templating", "calibration_reason"))
         detail = f" {reason['value']}" if reason else ""
-        warnings.append(f"Templating calibration found no threshold in the target band.{detail}")
+        headline = (
+            "Templating calibration could not find a threshold that preserves signal."
+            if calibration["value"] == "signal_at_risk"
+            else "Templating calibration could not collapse much noise."
+        )
+        warnings.append(f"{headline}{detail}")
 
     over_merged = lookup.get(("templating", "over_merged_templates"))
     if over_merged and (over_merged["value_num"] or 0) > 0:

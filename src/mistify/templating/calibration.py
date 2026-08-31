@@ -49,15 +49,29 @@ def calibrate_sim_th(
     target_max: float,
     depth: int = 4,
     max_clusters: int = 2000,
+    over_merge_span: int = 3,
 ) -> CalibrationResult:
-    """Pick a similarity threshold whose compression ratio lands inside the target band.
+    """Pick a similarity threshold that collapses the most noise without losing signal.
 
-    Among in-band candidates the **highest** threshold wins. Higher thresholds cluster more
-    strictly, so this prefers the least merging that still achieves acceptable compression --
-    over-clustering silently destroys signal, whereas under-clustering merely costs tokens.
+    The objective is not compression. Compression is a proxy that breaks in exactly the case
+    that matters: a threshold which merges a rare FATAL template into a chatty INFO one
+    scores *better* on ratio while destroying the only line worth finding. So selection is a
+    gate followed by a preference, not a target band:
 
-    When nothing lands in band the closest candidate is used and the status says so, so a
-    pathological file produces a flagged run rather than a confident-looking bad one.
+    1.  **Gate — signal must survive.** Any candidate that produces an over-merged template
+        (members spanning `over_merge_span` severity levels) is rejected outright, however
+        well it compresses.
+    2.  **Preference — collapse as much noise as possible.** Among candidates that pass, the
+        one yielding the fewest templates wins, because the agent's haystack is the template
+        list and a shorter one is strictly easier to search.
+    3.  **Fallback — prefer signal over tidiness.** If every candidate over-merges, the
+        strictest threshold is used and the run is flagged, since under-clustering only costs
+        tokens whereas over-clustering loses the needle.
+
+    `target_max` is retained purely as an under-clustering alarm: a ratio above it means
+    almost nothing collapsed and the agent has been handed the haystack intact. `target_min`
+    is no longer a selection criterion -- over-merging is now detected directly rather than
+    guessed at from a ratio being suspiciously low.
     """
     if not candidates:
         raise ValueError("at least one candidate sim_th is required")
@@ -71,44 +85,80 @@ def calibrate_sim_th(
         )
 
     measured: list[tuple[float, float]] = []
+    trials: dict[float, tuple[int, int]] = {}
     for sim_th in ordered:
         templater = DrainTemplater(
             sim_th=sim_th, depth=depth, max_clusters=max_clusters, snapshot_path=None
         )
         for message in messages:
+            # Severity is unavailable during calibration, so the over-merge gate below reads
+            # structural spread rather than severity spread -- see `_merge_risk`.
             templater.process(message)
         measured.append((sim_th, templater.compression_ratio))
+        trials[sim_th] = (templater.unique_templates, _merge_risk(templater, over_merge_span))
 
-    in_band = [(th, ratio) for th, ratio in measured if target_min <= ratio <= target_max]
-    if in_band:
-        chosen = max(in_band, key=lambda item: item[0])
+    safe = [(th, ratio) for th, ratio in measured if trials[th][1] == 0]
+    pool = safe or measured
+
+    # Fewest templates = least for the agent to read. Ties break toward the stricter
+    # threshold, which merges less.
+    chosen_th = min(pool, key=lambda item: (trials[item[0]][0], -item[0]))[0]
+    chosen_ratio = dict(measured)[chosen_th]
+    template_count = trials[chosen_th][0]
+
+    if not safe:
+        strictest = max(ordered)
         return CalibrationResult(
-            chosen_sim_th=chosen[0],
-            status="in_band",
+            chosen_sim_th=strictest,
+            status="signal_at_risk",
             candidates=measured,
             reason=(
-                f"compression ratio {chosen[1]:.4f} within "
-                f"[{target_min}, {target_max}]; highest in-band threshold preferred"
+                "every candidate produced a template spanning "
+                f"{over_merge_span}+ severity levels; falling back to the strictest "
+                f"threshold {strictest} because losing signal costs more than extra tokens"
             ),
         )
 
-    def _distance(item: tuple[float, float]) -> float:
-        ratio = item[1]
-        if ratio < target_min:
-            return target_min - ratio
-        return ratio - target_max
+    if chosen_ratio > target_max:
+        return CalibrationResult(
+            chosen_sim_th=chosen_th,
+            status="under_clustered",
+            candidates=measured,
+            reason=(
+                f"best candidate {chosen_th} still leaves {template_count} templates "
+                f"(ratio {chosen_ratio:.4f} above {target_max}); the file has little "
+                "repeated structure, so little noise could be collapsed"
+            ),
+        )
 
-    chosen = min(measured, key=_distance)
-    direction = "over-clustering" if chosen[1] < target_min else "under-clustering"
     return CalibrationResult(
-        chosen_sim_th=chosen[0],
-        status="out_of_band",
+        chosen_sim_th=chosen_th,
+        status="selected",
         candidates=measured,
         reason=(
-            f"no candidate landed in [{target_min}, {target_max}]; closest was "
-            f"{chosen[1]:.4f} at sim_th={chosen[0]}, suggesting {direction}"
+            f"{template_count} templates at sim_th={chosen_th} (ratio {chosen_ratio:.4f}); "
+            "fewest templates among candidates that did not over-merge"
         ),
     )
+
+
+def _merge_risk(templater: DrainTemplater, min_span: int) -> int:
+    """Templates a threshold has merged too aggressively, judged without severity labels.
+
+    Calibration runs before records carry severity into the templater, so the severity-span
+    detector used post-load is unavailable here. The structural stand-in is wildcard density:
+    a template that is mostly `<*>` has kept almost none of the original words, which is what
+    absorbing unrelated messages looks like.
+    """
+    flagged = 0
+    for summary in templater.summaries():
+        tokens = summary.pattern.split()
+        if len(tokens) < min_span:
+            continue
+        wildcards = sum(1 for token in tokens if token in {"<*>", "<REDACTED>"})
+        if wildcards / len(tokens) > 0.6:
+            flagged += 1
+    return flagged
 
 
 @dataclass(slots=True)

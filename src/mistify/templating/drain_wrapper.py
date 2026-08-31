@@ -72,6 +72,17 @@ class DrainTemplater:
 
         self._miner = TemplateMiner(persistence_handler=persistence, config=config)
         self._total_messages = 0
+        # Our own registry of every template ever seen, independent of Drain3's tree.
+        #
+        # Drain3 evicts clusters on an LRU once `max_clusters` is reached, and the evicted
+        # ones vanish from `id_to_cluster`. Reading final statistics off that tree meant
+        # every event assigned to an evicted cluster pointed at a template row that was
+        # never written -- on a high-cardinality file that silently orphaned most of the
+        # input while the compression ratio reported a healthy-looking number. Recording
+        # each template as it is first seen makes eviction a matching concern only: the
+        # tree may forget a shape, but the scratchpad never does.
+        self._patterns: dict[int, str] = {}
+        self._counts: Counter[int] = Counter()
         self._first_seen: dict[int, str] = {}
         self._last_seen: dict[int, str] = {}
         self._severity_mix: dict[int, Counter[str]] = defaultdict(Counter)
@@ -82,7 +93,18 @@ class DrainTemplater:
 
     @property
     def unique_templates(self) -> int:
-        return len(self._miner.drain.id_to_cluster)
+        """Distinct templates seen across the whole stream, including evicted ones."""
+        return len(self._patterns)
+
+    @property
+    def evicted_templates(self) -> int:
+        """Templates Drain3 has dropped from its matching tree.
+
+        Their statistics survive, but a shape that reappears after eviction is assigned a
+        fresh id, which splits one condition's counts across several templates. Non-zero
+        here means template statistics are fragmented and `max_clusters` is too low.
+        """
+        return max(0, len(self._patterns) - len(self._miner.drain.id_to_cluster))
 
     @property
     def compression_ratio(self) -> float:
@@ -104,6 +126,10 @@ class DrainTemplater:
         pattern = str(result["template_mined"])
 
         self._total_messages += 1
+        # Overwrite rather than set-once: Drain3 refines a cluster's template as it sees
+        # more members, so the newest pattern is the accurate one.
+        self._patterns[template_id] = pattern
+        self._counts[template_id] += 1
         if template_id not in self._first_seen or ts < self._first_seen[template_id]:
             self._first_seen[template_id] = ts
         if template_id not in self._last_seen or ts > self._last_seen[template_id]:
@@ -117,27 +143,48 @@ class DrainTemplater:
     def summaries(self) -> list[TemplateSummary]:
         """Final per-template statistics for the whole incident.
 
-        Patterns are read from the finished tree rather than recorded during the stream,
-        because Drain3 refines a cluster's template as it sees more members -- an early
-        occurrence carries a pattern that is no longer current by the end of the file.
+        Built from the registry, so every template an event was ever assigned to appears
+        here whether or not Drain3 still holds it in its matching tree. Patterns come from
+        the last time the cluster was seen, which is the most refined version available.
         """
         summaries: list[TemplateSummary] = []
-        for cluster_id, cluster in self._miner.drain.id_to_cluster.items():
-            mix = self._severity_mix.get(cluster_id, Counter())
+        live = self._miner.drain.id_to_cluster
+        for template_id, pattern in self._patterns.items():
+            mix = self._severity_mix.get(template_id, Counter())
             max_rank = max((severity_rank(s) for s in mix), default=0)
+            cluster = live.get(template_id)
             summaries.append(
                 TemplateSummary(
-                    template_id=int(cluster_id),
-                    pattern=cluster.get_template(),
-                    occurrence_count=int(cluster.size),
-                    first_seen=self._first_seen.get(cluster_id, ""),
-                    last_seen=self._last_seen.get(cluster_id, ""),
+                    template_id=template_id,
+                    pattern=cluster.get_template() if cluster is not None else pattern,
+                    occurrence_count=self._counts[template_id],
+                    first_seen=self._first_seen.get(template_id, ""),
+                    last_seen=self._last_seen.get(template_id, ""),
                     severity_mix=dict(mix),
                     max_severity_rank=max_rank,
                 )
             )
         summaries.sort(key=lambda s: s.template_id)
         return summaries
+
+    def signal_stats(self) -> dict[str, float]:
+        """Numbers describing how findable the signal is, not how small the output got.
+
+        Compression on its own is a vanity number: collapsing a file into a handful of
+        templates looks excellent right up until the one rare severe template is the thing
+        that got collapsed. These describe the haystack the agent is handed.
+        """
+        if self._total_messages == 0:
+            return {"reduction_factor": 0.0, "largest_template_share": 0.0}
+        return {
+            # How much less the agent reads: lines per template.
+            "reduction_factor": self._total_messages / max(1, len(self._patterns)),
+            # Share of the file taken by the single noisiest template. A dominant template
+            # crowds agent attention even after compression (architecture §6.4).
+            "largest_template_share": (
+                max(self._counts.values()) / self._total_messages if self._counts else 0.0
+            ),
+        }
 
     def snapshot(self) -> None:
         """Persist the tree so re-running the pipeline yields stable template ids."""
