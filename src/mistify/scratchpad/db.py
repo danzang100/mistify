@@ -328,8 +328,50 @@ class ScratchpadDB:
         ).fetchone()
         return row["first_ts"], row["last_ts"]
 
-    def top_templates(self, limit: int = 10, order_by: str = "count") -> list[dict[str, Any]]:
-        """Templates ranked by count, severity, recency, or anomaly score."""
+    def known_template_ids(self, ids: Sequence[int]) -> set[int]:
+        """Which of `ids` actually exist. Used to verify citations without loading the table."""
+        if not ids:
+            return set()
+        placeholders = ", ".join("?" for _ in ids)
+        rows = self._conn.execute(
+            f"SELECT template_id FROM templates WHERE template_id IN ({placeholders})",
+            list(ids),
+        )
+        return {int(row["template_id"]) for row in rows}
+
+    def noise_template_ids(
+        self, share_threshold: float = 0.15, anomaly_ceiling: float = 0.35
+    ) -> set[int]:
+        """Templates that are pure volume: a large share of the file, and unremarkable.
+
+        Volume alone does not make a template noise -- a flood can be the incident, which is
+        why the anomaly ceiling is part of the test. What this catches is the heartbeat case
+        from architecture §6.4: a template big enough to crowd out everything else in a time
+        slice while carrying no signal of its own.
+        """
+        total = self.event_count()
+        if total <= 0:
+            return set()
+        rows = self._conn.execute(
+            "SELECT template_id FROM templates"
+            " WHERE anomaly_score < ? AND CAST(occurrence_count AS REAL) / ? >= ?",
+            (anomaly_ceiling, float(total), share_threshold),
+        )
+        return {int(row["template_id"]) for row in rows}
+
+    def top_templates(
+        self,
+        limit: int = 10,
+        order_by: str = "count",
+        exclude_noise: bool = False,
+        noise_share: float = 0.15,
+        noise_ceiling: float = 0.35,
+    ) -> list[dict[str, Any]]:
+        """Templates ranked by count, severity, recency, or anomaly score.
+
+        `exclude_noise` drops high-volume, low-anomaly templates so a dominant heartbeat
+        cannot crowd the ranked list the investigator reads top-down.
+        """
         orderings = {
             "count": "occurrence_count DESC, max_severity_rank DESC",
             "severity": "max_severity_rank DESC, occurrence_count DESC",
@@ -340,11 +382,21 @@ class ScratchpadDB:
             raise ValueError(
                 f"unknown ordering {order_by!r}. Valid: {', '.join(sorted(orderings))}"
             )
+
+        where = ""
+        params: list[Any] = []
+        if exclude_noise:
+            noisy = self.noise_template_ids(noise_share, noise_ceiling)
+            if noisy:
+                where = f" WHERE template_id NOT IN ({', '.join('?' for _ in noisy)})"
+                params.extend(sorted(noisy))
+        params.append(limit)
+
         rows = self._conn.execute(
             "SELECT template_id, pattern, occurrence_count, first_seen, last_seen,"
-            " severity_mix_json, max_severity_rank, anomaly_score FROM templates"
+            f" severity_mix_json, max_severity_rank, anomaly_score FROM templates{where}"
             f" ORDER BY {orderings[order_by]}, template_id LIMIT ?",
-            (limit,),
+            params,
         )
         result = []
         for row in rows:
@@ -361,10 +413,23 @@ class ScratchpadDB:
         severity: str | None = None,
         template_id: int | None = None,
         max_lines: int = 200,
+        exclude_noise: bool = False,
+        noise_share: float = 0.15,
+        noise_ceiling: float = 0.35,
     ) -> list[dict[str, Any]]:
-        """Pull a bounded window of raw lines."""
+        """Pull a bounded window of raw lines.
+
+        `exclude_noise` matters most here. A time slice is exactly where a dominant heartbeat
+        template drowns the lines worth reading: `max_lines` is spent on whatever is most
+        numerous, which is rarely what the investigation is about.
+        """
         clauses: list[str] = []
         params: list[Any] = []
+        if exclude_noise and template_id is None:
+            noisy = self.noise_template_ids(noise_share, noise_ceiling)
+            if noisy:
+                clauses.append(f"template_id NOT IN ({', '.join('?' for _ in noisy)})")
+                params.extend(sorted(noisy))
         if start_ts:
             clauses.append("ts >= ?")
             params.append(start_ts)

@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from mistify.agent.skeleton import run_skeleton_investigation
-from mistify.scratchpad.anomaly import DEFAULT_WEIGHTS, score_templates
+from mistify.scratchpad.anomaly import (
+    DEFAULT_WEIGHTS,
+    AnomalyComponents,
+    score_templates,
+    select_signal_templates,
+)
 from mistify.scratchpad.db import ScratchpadDB
 from tests.fixtures.synthetic_incident import RED_HERRING_MARKER, ROOT_CAUSE_MARKER
 
@@ -218,3 +223,84 @@ def test_report_surfaces_the_anomaly_column(loaded_db: ScratchpadDB) -> None:
     report = generate_report(loaded_db)
     assert "## Templates by anomaly score" in report
     assert "| ID | Anomaly |" in report
+
+
+# --------------------------------------------------------------- uninformative severity
+
+
+def test_uninformative_severity_weight_is_redistributed() -> None:
+    """On a log with no severity field, every line normalises to the same default.
+
+    The severity term then adds an identical constant to every template — the heaviest
+    weight in the formula contributing nothing, silently. Dropping it hands that weight to
+    the two components that still discriminate.
+    """
+    rows = [_row(1, 4, 2, max_per_bucket=4), _row(2, 1000, 2, max_per_bucket=20)]
+    with_severity = {c.template_id: c for c in score_templates(rows, total_buckets=BUCKETS)}
+    without = {
+        c.template_id: c
+        for c in score_templates(rows, total_buckets=BUCKETS, severity_informative=False)
+    }
+
+    assert with_severity[1].severity == with_severity[2].severity, "the constant term"
+    # Separation between needle and noise widens once the constant is removed.
+    assert (without[1].score - without[2].score) > (with_severity[1].score - with_severity[2].score)
+
+
+def test_dropping_severity_leaves_the_components_reported() -> None:
+    """The component is still measured and shown, it just stops contributing to the score."""
+    scored = score_templates(
+        [_row(1, 10, 5, max_per_bucket=10)], total_buckets=BUCKETS, severity_informative=False
+    )
+    assert scored[0].severity == 1.0
+
+
+def test_dropping_severity_still_ranks() -> None:
+    rows = [_row(1, 5, 0, max_per_bucket=5), _row(2, 900, 0, max_per_bucket=20)]
+    scored = score_templates(rows, total_buckets=BUCKETS, severity_informative=False)
+    assert scored[0].template_id == 1
+    assert scored[0].score > 0.0
+
+
+# --------------------------------------------------------------- signal selection
+
+
+def _component(template_id: int, score: float) -> AnomalyComponents:
+    return AnomalyComponents(template_id, score, 0.0, 0.0, 0.0)
+
+
+def test_signal_set_cuts_at_the_largest_gap() -> None:
+    """No magic threshold: the distribution decides where unusual stops."""
+    scored = [
+        _component(1, 0.90),
+        _component(2, 0.88),
+        _component(3, 0.85),
+        _component(4, 0.20),
+        _component(5, 0.19),
+        _component(6, 0.18),
+    ]
+    assert [c.template_id for c in select_signal_templates(scored)] == [1, 2, 3]
+
+
+def test_signal_set_respects_the_lower_bound() -> None:
+    """There must always be something for the adversarial check to test against."""
+    flat = [_component(i, 0.5 - i * 0.001) for i in range(1, 21)]
+    assert len(select_signal_templates(flat, min_templates=3)) >= 3
+
+
+def test_signal_set_respects_the_upper_bound() -> None:
+    flat = [_component(i, 0.5 - i * 0.001) for i in range(1, 41)]
+    assert len(select_signal_templates(flat, max_templates=6)) <= 6
+
+
+def test_signal_set_handles_fewer_templates_than_the_floor() -> None:
+    assert [c.template_id for c in select_signal_templates([_component(1, 0.9)])] == [1]
+
+
+def test_signal_set_of_nothing_is_empty() -> None:
+    assert select_signal_templates([]) == []
+
+
+def test_signal_set_is_ranked_regardless_of_input_order() -> None:
+    scrambled = [_component(3, 0.1), _component(1, 0.9), _component(2, 0.5)]
+    assert [c.template_id for c in select_signal_templates(scrambled)] == [1, 2, 3]

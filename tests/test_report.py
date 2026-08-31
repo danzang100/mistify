@@ -4,10 +4,29 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from mistify.agent.skeleton import INVESTIGATOR_NAME, run_skeleton_investigation
-from mistify.report.generator import generate_report, verify_citations, write_report
+from mistify.report.generator import (
+    TOP_TEMPLATE_LIMIT,
+    generate_report,
+    verify_citations,
+    write_report,
+)
 from mistify.scratchpad.db import ScratchpadDB
 from tests.fixtures.synthetic_incident import PLANTED_API_KEY, PLANTED_EMAILS, ROOT_CAUSE_MARKER
+
+TRUNCATED_LIMIT = 3
+
+
+def _template_rows(report: str) -> list[str]:
+    """The data rows of the templates table, without its header or rule."""
+    section = report.split("## Templates by anomaly score")[1].split("## Pipeline health")[0]
+    return [
+        line
+        for line in section.splitlines()
+        if line.startswith("|") and not line.startswith(("| ID |", "|---"))
+    ]
 
 
 def test_report_names_the_planted_root_cause(loaded_db: ScratchpadDB) -> None:
@@ -236,3 +255,40 @@ def test_clean_run_has_no_signal_warnings(loaded_db: ScratchpadDB) -> None:
         "The most severe template ranks",
     ):
         assert phrase not in report
+
+
+# --------------------------------------------------------------- template list truncation
+
+
+def test_truncated_template_list_states_how_many_of_how_many(
+    loaded_db: ScratchpadDB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A partial ranking read as a complete one is a silent failure, so it must say so.
+
+    The synthetic incident has fewer templates than the shipped limit, so truncation is forced
+    by lowering the limit rather than by inventing a second fixture.
+    """
+    monkeypatch.setattr("mistify.report.generator.TOP_TEMPLATE_LIMIT", TRUNCATED_LIMIT)
+    total = loaded_db.template_count()
+    assert total > TRUNCATED_LIMIT
+
+    report = generate_report(loaded_db)
+    assert f"Showing the {TRUNCATED_LIMIT} highest-scoring templates of {total}." in report
+
+
+def test_untruncated_template_list_says_nothing(loaded_db: ScratchpadDB) -> None:
+    """The common case is a complete list, and a complete list needs no disclaimer."""
+    assert loaded_db.template_count() <= TOP_TEMPLATE_LIMIT
+    assert "highest-scoring templates of" not in generate_report(loaded_db)
+
+
+def test_the_number_of_rows_shown_matches_the_limit(
+    loaded_db: ScratchpadDB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stated count is the rendered count, not a number the template asserts on its own."""
+    monkeypatch.setattr("mistify.report.generator.TOP_TEMPLATE_LIMIT", TRUNCATED_LIMIT)
+    assert len(_template_rows(generate_report(loaded_db))) == TRUNCATED_LIMIT
+
+
+def test_every_template_is_listed_when_they_all_fit(loaded_db: ScratchpadDB) -> None:
+    assert len(_template_rows(generate_report(loaded_db))) == loaded_db.template_count()

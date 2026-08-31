@@ -11,6 +11,7 @@ from mistify import __version__
 from mistify.agent.skeleton import run_skeleton_investigation
 from mistify.common.config import load_config
 from mistify.pipeline import UnknownFormatError, derive_incident_id, ingest
+from mistify.redaction.vault import RedactionVault
 from mistify.report.generator import write_report
 from mistify.scratchpad.db import ScratchpadDB
 
@@ -95,6 +96,69 @@ def report_command(incident_id: str, report_format: str | None, config_path: Pat
     with ScratchpadDB(path) as db:
         output = write_report(db, config.report.output_dir, incident_id)
     click.echo(f"report {output}")
+
+
+_VAULT_DISABLED = (
+    "redaction.vault is disabled for this incident, so no mapping was kept. "
+    "Placeholders are truncated hashes and the hash is one-way -- the original values "
+    "cannot be recovered after the fact. Enable redaction.vault in config.yaml and "
+    "re-ingest before you need to reveal anything."
+)
+
+
+@cli.command(name="reveal")
+@click.option("--incident-id", required=True)
+@click.option("--token", default=None, help='One placeholder, e.g. "[EMAIL:a7f2]".')
+@click.option("--all", "reveal_all", is_flag=True, help="Dump every mapping, tab-separated.")
+@_config_option
+def reveal_command(
+    incident_id: str, token: str | None, reveal_all: bool, config_path: Path | None
+) -> None:
+    """Reveal original values from the redaction vault.
+
+    Only useful when `redaction.vault` was on during ingest: the mapping is captured as
+    redaction happens and cannot be reconstructed afterwards.
+    """
+    if (token is None) == (not reveal_all):
+        raise click.ClickException("pass exactly one of --token or --all.")
+
+    config = load_config(config_path)
+    path = config.vault_path(incident_id)
+    if path is None:
+        raise click.ClickException(_VAULT_DISABLED)
+    if not path.exists():
+        raise click.ClickException(
+            f"no vault for incident {incident_id!r} at {path}. "
+            "It is written during ingest, only when redaction.vault is enabled -- "
+            "the mapping cannot be reconstructed afterwards, because the placeholder hash "
+            "is one-way. Enable it and re-ingest."
+        )
+
+    with RedactionVault(path) as vault:
+        if token is not None:
+            value = vault.reveal(token)
+            if value is None:
+                raise click.ClickException(f"token {token!r} is not in the vault at {path}")
+            _warn_unredacted()
+            click.echo(value)
+            return
+
+        rows = vault.entries()
+        if not rows:
+            click.echo("vault is empty", err=True)
+            return
+        _warn_unredacted()
+        for row in rows:
+            click.echo(f"{row['entity']}\t{row['token']}\t{row['value']}")
+
+
+def _warn_unredacted() -> None:
+    """Say out loud what is about to be printed.
+
+    On stderr so a redirected dump stays machine-readable, and so the warning is still seen
+    when stdout is piped somewhere the operator is not watching.
+    """
+    click.echo("warning: output below contains unredacted sensitive values", err=True)
 
 
 @cli.command(name="run")

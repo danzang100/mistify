@@ -60,7 +60,10 @@ class BootstrapConfig(_Strict):
 class Drain3Config(_Strict):
     sim_th: float = Field(default=0.4, ge=0.0, le=1.0)
     depth: int = Field(default=4, ge=3)
-    max_clusters: int = Field(default=2000, ge=1)
+    #: Generous by design. Eviction no longer orphans events, but a shape that reappears
+    #: after eviction gets a fresh id, which splits one condition's counts across several
+    #: templates. Templates are cheap; fragmented statistics are not.
+    max_clusters: int = Field(default=10000, ge=1)
     persistence: Literal["file", "none"] = "file"
     snapshot_path: str = ".cache/drain3_{incident_id}.json"
 
@@ -106,6 +109,24 @@ class AnomalyConfig(_Strict):
     #: Width of the time bucket burstiness is measured over, in minutes.
     bucket_minutes: int = Field(default=1, ge=1)
 
+    #: Above this share of unmapped severities, the severity component is treated as
+    #: uninformative and its weight is redistributed. On a log with no severity field every
+    #: line defaults to INFO, so severity contributes an identical constant to every
+    #: template -- half the scoring weight doing nothing, silently.
+    severity_unmapped_ceiling: float = Field(default=0.9, ge=0.0, le=1.0)
+
+    #: A template is noise when it takes at least this share of the file *and* scores below
+    #: `noise_anomaly_ceiling`. Volume alone is not noise: a flood can be the incident
+    #: (architecture §6.4).
+    noise_share_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
+    noise_anomaly_ceiling: float = Field(default=0.35, ge=0.0, le=1.0)
+
+    #: Bounds on the "high anomaly" set handed to the adversarial check. The cut itself is
+    #: found at the largest score gap rather than a fixed threshold, which would be tuned on
+    #: whatever fixture happened to be at hand.
+    signal_min_templates: int = Field(default=3, ge=1)
+    signal_max_templates: int = Field(default=15, ge=1)
+
     @model_validator(mode="after")
     def _at_least_one_positive_weight(self) -> AnomalyConfig:
         if self.severity + self.burstiness + self.rarity <= 0:
@@ -129,6 +150,15 @@ class RedactionConfig(_Strict):
     #: Mixed into the entity hash so redaction tokens are not reversible via a rainbow table
     #: of common values. Correlation is preserved within a run regardless.
     salt: str = ""
+
+    #: Keep a local mapping from placeholder back to original value, so an operator can
+    #: reveal values in their own logs. Off by default: the vault is plaintext on disk and
+    #: turning it on trades away part of what redaction buys. It is written to a separate
+    #: file from the scratchpad, and never to the scratchpad itself -- the investigator's
+    #: read-only SQL channel can read any table in the database it is pointed at, so a vault
+    #: table living there would be readable by the model.
+    vault: bool = False
+    vault_path: str = ".cache/vault_{incident_id}.sqlite"
 
     @field_validator("entities")
     @classmethod
@@ -179,6 +209,11 @@ class MistifyConfig(_Strict):
 
     def scratchpad_path(self, incident_id: str) -> Path:
         return Path(self.scratchpad.path.format(incident_id=incident_id))
+
+    def vault_path(self, incident_id: str) -> Path | None:
+        if not self.redaction.vault:
+            return None
+        return Path(self.redaction.vault_path.format(incident_id=incident_id))
 
     def snapshot_path(self, incident_id: str) -> Path | None:
         if self.drain3.persistence == "none":

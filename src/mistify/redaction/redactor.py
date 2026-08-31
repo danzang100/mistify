@@ -24,6 +24,7 @@ from mistify.redaction.patterns import (
     ENTITY_ORDER,
     PATTERNS,
 )
+from mistify.redaction.vault import RedactionVault
 
 __all__ = ["Redactor"]
 
@@ -33,11 +34,21 @@ _HASH_LENGTH = 4
 class Redactor:
     """Replaces detected entities with stable `[ENTITY:hash]` placeholders."""
 
-    def __init__(self, mode: str = "strict", entities: list[str] | None = None, salt: str = ""):
+    def __init__(
+        self,
+        mode: str = "strict",
+        entities: list[str] | None = None,
+        salt: str = "",
+        vault: RedactionVault | None = None,
+    ):
         if mode not in {"strict", "permissive", "off"}:
             raise ValueError(f"unknown redaction mode: {mode!r}")
         self.mode = mode
         self.salt = salt
+        # A side-channel, never an input. Redaction output is byte-for-byte identical with a
+        # vault attached and without one -- if the vault could change what the log looks
+        # like, enabling it would silently change every downstream template and token.
+        self.vault = vault
         # Falls back to DEFAULT_ENTITIES, not to every pattern in the library. Opting a
         # caller into `phone` -- and its known collision with numeric identifiers -- simply
         # because they did not name a list would make the opt-in guarantee in
@@ -74,6 +85,18 @@ class Redactor:
         ).hexdigest()[:_HASH_LENGTH]
         return f"[{entity.upper()}:{digest}]"
 
+    def _token_and_record(self, entity: str, value: str) -> str:
+        """Build the placeholder and, when a vault is attached, remember what it replaced.
+
+        Every replacement goes through here so the vault cannot drift out of step with the
+        placeholders actually emitted -- a mapping that covers only some branches is worse
+        than none, because a missing token looks identical to a value that was never logged.
+        """
+        token = self._token(entity, value)
+        if self.vault is not None:
+            self.vault.record(token, entity, value)
+        return token
+
     def redact(self, text: str) -> str:
         """Redact every configured entity in `text`."""
         if not self.enabled or not text:
@@ -100,11 +123,11 @@ class Redactor:
                     start, end = match.span("value")
                     return (
                         match.group(0)[: start - match.start()]
-                        + self._token(_entity, value)
+                        + self._token_and_record(_entity, value)
                         + match.group(0)[end - match.start() :]
                     )
                 self._counts[_entity] += 1
-                return self._token(_entity, match.group(0))
+                return self._token_and_record(_entity, match.group(0))
 
             text = pattern.sub(_replace, text)
         return text

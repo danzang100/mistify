@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mistify.common.models import TemplateSummary
+from mistify.common.models import LogRecord, TemplateSummary, parse_timestamp
 from mistify.scratchpad.db import MIGRATIONS, ReadOnlyViolation, ScratchpadDB
 
 # --------------------------------------------------------------- migrations
@@ -246,3 +246,113 @@ def test_top_templates_rejects_unknown_ordering(db: ScratchpadDB) -> None:
 def test_top_templates_supports_every_documented_ordering(populated: ScratchpadDB) -> None:
     for ordering in ("count", "severity", "recency", "anomaly_score"):
         assert populated.top_templates(order_by=ordering)
+
+
+# --------------------------------------------------------------- noise suppression
+
+
+@pytest.fixture
+def noisy(tmp_path: Path) -> ScratchpadDB:
+    """One dominant, unremarkable template alongside a rare severe one."""
+    with ScratchpadDB(tmp_path / "noise.sqlite") as database:
+        database.upsert_templates(
+            [
+                TemplateSummary(
+                    template_id=1,
+                    pattern="Heartbeat ok, uptime <*>",
+                    occurrence_count=900,
+                    first_seen="2026-08-30T14:00:00.000000Z",
+                    last_seen="2026-08-30T14:59:00.000000Z",
+                    severity_mix={"DEBUG": 900},
+                    max_severity_rank=1,
+                    anomaly_score=0.10,
+                ),
+                TemplateSummary(
+                    template_id=2,
+                    pattern="Database connection pool exhausted",
+                    occurrence_count=6,
+                    first_seen="2026-08-30T14:38:00.000000Z",
+                    last_seen="2026-08-30T14:40:00.000000Z",
+                    severity_mix={"FATAL": 6},
+                    max_severity_rank=5,
+                    anomaly_score=0.90,
+                ),
+            ]
+        )
+        records = [
+            (
+                LogRecord(
+                    ts=parse_timestamp("2026-08-30T14:10:00Z"),
+                    source="svc",
+                    severity="DEBUG",
+                    raw="hb",
+                    message="Heartbeat ok, uptime 1",
+                ),
+                1,
+            )
+        ] * 900
+        records += [
+            (
+                LogRecord(
+                    ts=parse_timestamp("2026-08-30T14:38:00Z"),
+                    source="svc",
+                    severity="FATAL",
+                    raw="boom",
+                    message="Database connection pool exhausted",
+                ),
+                2,
+            )
+        ] * 6
+        database.bulk_insert_events(records)
+        yield database
+
+
+def test_dominant_unremarkable_template_is_noise(noisy: ScratchpadDB) -> None:
+    assert noisy.noise_template_ids() == {1}
+
+
+def test_volume_alone_does_not_make_a_template_noise(noisy: ScratchpadDB) -> None:
+    """A flood can be the incident, so the anomaly ceiling is part of the test."""
+    assert noisy.noise_template_ids(anomaly_ceiling=0.0) == set()
+
+
+def test_rare_severe_template_is_never_noise(noisy: ScratchpadDB) -> None:
+    assert 2 not in noisy.noise_template_ids()
+
+
+def test_suppressed_ranking_omits_the_noise(noisy: ScratchpadDB) -> None:
+    ranked = noisy.top_templates(limit=10, order_by="count", exclude_noise=True)
+    assert [t["template_id"] for t in ranked] == [2]
+
+
+def test_unsuppressed_ranking_still_returns_everything(noisy: ScratchpadDB) -> None:
+    ranked = noisy.top_templates(limit=10, order_by="count")
+    assert {t["template_id"] for t in ranked} == {1, 2}
+
+
+def test_slice_without_suppression_drowns_in_heartbeats(noisy: ScratchpadDB) -> None:
+    """The needle-in-a-haystack failure stated as a test: max_lines spent on the loudest."""
+    rows = noisy.get_slice(max_lines=10)
+    assert {r["template_id"] for r in rows} == {1}
+
+
+def test_slice_with_suppression_returns_the_signal(noisy: ScratchpadDB) -> None:
+    rows = noisy.get_slice(max_lines=10, exclude_noise=True)
+    assert {r["template_id"] for r in rows} == {2}
+
+
+def test_explicit_template_slice_ignores_suppression(noisy: ScratchpadDB) -> None:
+    """Asking for a template by id is a deliberate act; do not second-guess it."""
+    rows = noisy.get_slice(template_id=1, max_lines=5, exclude_noise=True)
+    assert len(rows) == 5
+
+
+# --------------------------------------------------------------- citation existence
+
+
+def test_known_template_ids_returns_only_those_present(noisy: ScratchpadDB) -> None:
+    assert noisy.known_template_ids([1, 2, 999]) == {1, 2}
+
+
+def test_known_template_ids_of_nothing_is_empty(noisy: ScratchpadDB) -> None:
+    assert noisy.known_template_ids([]) == set()

@@ -272,3 +272,72 @@ string order and chronological order the same thing.
 
 **Amend:** architecture §6.1 — compression ratio is a diagnostic, not the health metric.
 Coverage is the invariant and anomaly ranking is what solves needle-in-a-haystack.
+
+## Post-review fixes
+
+Changes made after the Phase 2 architecture review. Issues found in the same review but
+deliberately deferred are recorded in [`Issue.md`](../Issue.md).
+
+### Severity stops voting when it has nothing to say
+
+Severity carries the heaviest weight in the anomaly score (0.5), which is right when the
+source labels its lines and actively harmful when it does not. On a log with no severity
+field every line normalises to the same default, so the term adds an identical constant to
+every template: the largest single input to the ranking, contributing nothing, silently.
+That is not an edge case — it is most of Loghub, the corpus Phase 5 grades against.
+
+When the share of unmapped severities exceeds `anomaly.severity_unmapped_ceiling` (0.9) the
+severity weight is dropped and redistributed across burstiness and rarity. Measured on an
+HDFS-shaped file with four planted exception lines among a thousand block reports, the
+separation between needle and noise widened from 0.512/0.097 to 0.873/0.044. The component
+is still computed and reported; it just stops contributing to the ranking, and
+`anomaly.severity_informative` records which mode the run used.
+
+### "High anomaly" is a gap, not a threshold
+
+The adversarial check's one mechanical test is whether a high-scoring template was left out
+of the conclusion, which needs a definition of high. A constant is the wrong shape: scores
+are relative to each incident's own distribution, so any fixed value is tuned to whichever
+fixture was on hand, and a quiet incident where nothing clears the bar yields an empty set
+instead of its own best candidates.
+
+`select_signal_templates` places the cut at the largest gap between consecutive scores in the
+ranked list — the point where the distribution itself separates unusual from ordinary —
+bounded by `signal_min_templates` and `signal_max_templates` so there is always something to
+check against and never more than can be reasoned about. The chosen set is recorded as
+`anomaly.signal_template_ids`.
+
+### Noise suppression at the slice level
+
+Architecture §6.4 calls for capping or suppressing templates above an occurrence threshold
+unless the anomaly score flags them as relevant. Volume alone is not noise — a flood can be
+the incident — so the test is both: at least `noise_share_threshold` of the file *and* below
+`noise_anomaly_ceiling`.
+
+This matters most in `get_slice`, where it is the needle problem in miniature: on a file
+whose heartbeat template is 99% of the lines, an eight-line slice returned eight heartbeats
+and no signal. With suppression the same call returns the four lines the investigation is
+about. `top_templates` and `get_slice` both take `exclude_noise`; asking for a template by id
+explicitly overrides it, since that is a deliberate act rather than a default.
+
+### Reversible redaction, opt in
+
+The hash is one-way, so an engineer investigating their own production incident could not
+recover the address behind `[IPV4:a7f2]`. `redaction.vault` records the mapping, and
+`mistify reveal` reads it back.
+
+Off by default, because the vault is plaintext on disk and enabling it trades away part of
+what redaction buys. It is written to its **own file**, never the scratchpad: the
+investigator's read-only SQL channel can read any table in the database it is pointed at, so
+a vault table living there would be directly readable by the model. `ATTACH` is already
+denied by the authorizer, which is what makes a separate file genuinely isolated.
+
+### Smaller
+
+- `drain3.max_clusters` raised from 2,000 to 10,000. Eviction no longer orphans events, but
+  a shape that reappears after eviction gets a fresh id, splitting one condition's counts
+  across several templates. Templates are cheap; fragmented statistics are not.
+- `verify_citations` resolves template ids with an existence query rather than loading the
+  whole templates table to build a set.
+- The report states how many templates it is showing out of how many exist, instead of
+  presenting a truncated list as complete.

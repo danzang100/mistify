@@ -34,7 +34,12 @@ from typing import Any
 
 from mistify.common.models import SEVERITIES
 
-__all__ = ["DEFAULT_WEIGHTS", "AnomalyComponents", "score_templates"]
+__all__ = [
+    "DEFAULT_WEIGHTS",
+    "AnomalyComponents",
+    "score_templates",
+    "select_signal_templates",
+]
 
 #: Relative contribution of each component. Normalised before use, so these are ratios
 #: rather than values that must sum to one.
@@ -117,6 +122,7 @@ def score_templates(
     rows: Sequence[Mapping[str, Any]],
     total_buckets: int,
     weights: Mapping[str, float] | None = None,
+    severity_informative: bool = True,
 ) -> list[AnomalyComponents]:
     """Score templates from their aggregate statistics.
 
@@ -124,11 +130,20 @@ def score_templates(
     `max_per_bucket`. `total_buckets` is the number of time buckets the whole incident spans,
     which is what burstiness is measured against. Pure function of its input, so it is
     testable without a database.
+
+    `severity_informative` is False when the source carried no usable severity field. Every
+    line then normalises to the same default, so the severity term adds an identical constant
+    to every template -- the heaviest weight in the formula doing nothing at all, and doing it
+    silently. Dropping it redistributes that weight across the two components that still
+    discriminate rather than diluting them. This is the common case on unlabelled corpora,
+    which is most of Loghub.
     """
     if not rows:
         return []
 
     resolved = dict(DEFAULT_WEIGHTS if weights is None else weights)
+    if not severity_informative:
+        resolved["severity"] = 0.0
     total_weight = sum(resolved.values())
     if total_weight <= 0:
         raise ValueError("anomaly weights must sum to a positive value")
@@ -160,3 +175,42 @@ def score_templates(
 
     scored.sort(key=lambda c: (-c.score, c.template_id))
     return scored
+
+
+def select_signal_templates(
+    scored: Sequence[AnomalyComponents],
+    min_templates: int = 3,
+    max_templates: int = 15,
+) -> list[AnomalyComponents]:
+    """The templates an investigation is expected to account for.
+
+    The adversarial check's one mechanical test is "was a high-scoring template left out of
+    the conclusion?", which needs a definition of high. A fixed threshold is the wrong shape
+    for it: scores are relative to the incident's own distribution, so any constant is tuned
+    to whichever fixture was on hand when it was picked, and a quiet incident where nothing
+    clears the bar would produce an empty set rather than its own top candidates.
+
+    Instead the cut is placed at the **largest gap** between consecutive scores in the ranked
+    list -- the point where the distribution itself separates the unusual from the ordinary.
+    A file whose templates all score alike has no large gap, and the bounds then decide: never
+    fewer than `min_templates`, so there is always something to check against, and never more
+    than `max_templates`, so the set stays small enough to reason about.
+    """
+    if not scored:
+        return []
+
+    ranked = sorted(scored, key=lambda c: (-c.score, c.template_id))
+    lower = max(1, min(min_templates, len(ranked)))
+    upper = max(lower, min(max_templates, len(ranked)))
+    if lower == upper:
+        return ranked[:upper]
+
+    # Only gaps that would produce a cut inside [lower, upper] are candidates.
+    best_cut = lower
+    best_gap = -1.0
+    for cut in range(lower, upper):
+        gap = ranked[cut - 1].score - ranked[cut].score
+        if gap > best_gap:
+            best_gap = gap
+            best_cut = cut
+    return ranked[:best_cut]

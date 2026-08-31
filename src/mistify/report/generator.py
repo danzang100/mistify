@@ -22,7 +22,18 @@ from mistify.agent.skeleton import INVESTIGATOR_NAME
 from mistify.common.models import SEVERITIES
 from mistify.scratchpad.db import ScratchpadDB
 
-__all__ = ["ReportData", "generate_report", "verify_citations", "write_report"]
+__all__ = [
+    "TOP_TEMPLATE_LIMIT",
+    "ReportData",
+    "generate_report",
+    "verify_citations",
+    "write_report",
+]
+
+#: How many templates the report lists. The scratchpad keeps the full ranking; the report
+#: shows the head of it, and says so whenever it is showing less than all of it. A truncated
+#: list presented as the complete one is a partial view of the incident read as a whole one.
+TOP_TEMPLATE_LIMIT = 15
 
 _INVESTIGATOR_CAVEATS = {
     INVESTIGATOR_NAME: (
@@ -41,7 +52,6 @@ def verify_citations(db: ScratchpadDB) -> tuple[dict[int, list[dict[str, Any]]],
     Returns `(cited_events_by_note_id, warnings)`. A citation naming a row that does not
     exist produces a warning rather than a silent omission.
     """
-    known_templates = {t["template_id"] for t in db.top_templates(limit=1_000_000)}
     cited_events: dict[int, list[dict[str, Any]]] = {}
     warnings: list[str] = []
 
@@ -59,7 +69,8 @@ def verify_citations(db: ScratchpadDB) -> tuple[dict[int, list[dict[str, Any]]],
             )
 
         template_ids = [int(i) for i in note.evidence.get("template_ids", [])]
-        missing_templates = sorted(set(template_ids) - known_templates)
+        # Existence query rather than loading the whole templates table to build a set.
+        missing_templates = sorted(set(template_ids) - db.known_template_ids(template_ids))
         if missing_templates:
             warnings.append(
                 f"Note {note_id} cites templates that do not exist: "
@@ -93,7 +104,7 @@ def collect(db: ScratchpadDB) -> ReportData:
         )
 
     top_templates = []
-    for template in db.top_templates(limit=15, order_by="anomaly_score"):
+    for template in db.top_templates(limit=TOP_TEMPLATE_LIMIT, order_by="anomaly_score"):
         item = dict(template)
         item["max_severity"] = SEVERITIES[int(item["max_severity_rank"])]
         top_templates.append(item)
@@ -120,6 +131,7 @@ def collect(db: ScratchpadDB) -> ReportData:
         "warnings": warnings,
         "event_count": db.event_count(),
         "template_count": db.template_count(),
+        "shown_template_count": len(top_templates),
         "first_ts": first_ts,
         "last_ts": last_ts,
         "investigator": investigator,

@@ -21,7 +21,8 @@ from mistify.adapters.registry import detect_format, get_adapter, read_sample
 from mistify.common.config import MistifyConfig
 from mistify.common.models import LogRecord
 from mistify.redaction.redactor import Redactor
-from mistify.scratchpad.anomaly import score_templates
+from mistify.redaction.vault import RedactionVault
+from mistify.scratchpad.anomaly import score_templates, select_signal_templates
 from mistify.scratchpad.db import ScratchpadDB
 from mistify.templating.calibration import calibrate_sim_th, find_over_merged
 from mistify.templating.drain_wrapper import DrainTemplater
@@ -105,10 +106,22 @@ def ingest(
                 "The unknown-format bootstrapper arrives in Phase 4."
             )
 
+    # Opt-in reversible redaction. The vault is its own file, never a table in the
+    # scratchpad: the investigator's read-only SQL channel can read any table in the database
+    # it is pointed at, so a vault living there would be one SELECT away from undoing
+    # redaction entirely.
+    vault_path = config.vault_path(incident_id)
+    vault: RedactionVault | None = None
+    if vault_path is not None:
+        if vault_path.exists():
+            vault_path.unlink()
+        vault = RedactionVault(vault_path)
+
     redactor = Redactor(
         mode=config.redaction.mode,
         entities=config.redaction.entities,
         salt=config.redaction.salt,
+        vault=vault,
     )
     # Calibration reads a sample through the same parse-then-redact path the real load
     # uses, so the thresholds are measured against the text Drain3 will actually cluster --
@@ -181,15 +194,22 @@ def ingest(
         db.upsert_templates(summaries)
         templater.snapshot()
 
+        stats = adapter.stats
+
+        # Severity carries the heaviest weight, so a source with no severity field would
+        # otherwise spend half the score on a constant. Detect that and redistribute.
+        unmapped_share = stats.unmapped_severity / stats.lines_read if stats.lines_read else 0.0
+        severity_informative = unmapped_share <= config.anomaly.severity_unmapped_ceiling
+
         scored = score_templates(
             db.template_burst_stats(config.anomaly.bucket_minutes),
             total_buckets=db.bucket_count(config.anomaly.bucket_minutes),
             weights=config.anomaly.weights(),
+            severity_informative=severity_informative,
         )
         db.update_anomaly_scores([(c.template_id, c.score) for c in scored])
         over_merged = find_over_merged(summaries, config.drain3.over_merge_severity_span)
 
-        stats = adapter.stats
         db.record_metric("ingest", "format", adapter.format_name)
         db.record_metric(
             "ingest", "detect_confidence", round(scores.get(adapter.format_name, 0.0), 3)
@@ -205,6 +225,11 @@ def ingest(
         for entity, count in sorted(redactor.counts.items()):
             db.record_metric("redaction", f"redacted_{entity}", count)
         db.record_metric("redaction", "redacted_total", sum(redactor.counts.values()))
+        db.record_metric("redaction", "vault", vault is not None)
+        if vault is not None:
+            vault.flush()
+            db.record_metric("redaction", "vault_entries", vault.count())
+            db.record_metric("redaction", "vault_path", str(vault_path))
 
         orphans = db.orphan_event_count()
         coverage = 1.0 - (orphans / events_loaded) if events_loaded else 1.0
@@ -238,7 +263,27 @@ def ingest(
                 ",".join(str(t.template_id) for t in over_merged),
             )
 
+        signal_templates = select_signal_templates(
+            scored,
+            min_templates=config.anomaly.signal_min_templates,
+            max_templates=config.anomaly.signal_max_templates,
+        )
+        noisy = db.noise_template_ids(
+            config.anomaly.noise_share_threshold, config.anomaly.noise_anomaly_ceiling
+        )
+
         db.record_metric("anomaly", "scored_templates", len(scored))
+        db.record_metric("anomaly", "severity_informative", severity_informative)
+        db.record_metric("anomaly", "unmapped_severity_share", round(unmapped_share, 4))
+        # The set the Phase 3 adversarial check must account for, cut at the largest score
+        # gap rather than at a threshold picked from whatever fixture was to hand.
+        db.record_metric("anomaly", "signal_templates", len(signal_templates))
+        db.record_metric(
+            "anomaly",
+            "signal_template_ids",
+            ",".join(str(c.template_id) for c in signal_templates),
+        )
+        db.record_metric("anomaly", "suppressed_noise_templates", len(noisy))
         db.record_metric("anomaly", "weights", str(config.anomaly.weights()))
         db.record_metric("anomaly", "bucket_minutes", config.anomaly.bucket_minutes)
         if scored:
@@ -254,6 +299,9 @@ def ingest(
             )
 
         db.record_metric("scratchpad", "orphan_events", orphans)
+
+        if vault is not None:
+            vault.close()
 
         return IngestResult(
             incident_id=incident_id,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -145,3 +146,78 @@ def test_needle_position_is_recorded(loaded_db: ScratchpadDB) -> None:
 
 def test_clean_incident_evicts_nothing(ingested: IngestResult) -> None:
     assert ingested.evicted_templates == 0
+
+
+# --------------------------------------------------------------- scoring adaptation
+
+
+def _severityless_file(tmp_path: Path) -> Path:
+    """A log with no severity field at all — most of Loghub looks like this."""
+    src = tmp_path / "nosev.jsonl"
+    with src.open("w", encoding="utf-8") as handle:
+        for i in range(600):
+            handle.write(
+                json.dumps(
+                    {
+                        "timestamp": f"2026-08-30T14:{(i // 60) % 60:02d}:{i % 60:02d}Z",
+                        "message": f"Received block blk_{i} of size {i * 17}",
+                    }
+                )
+                + "\n"
+            )
+        for i in range(4):
+            handle.write(
+                json.dumps(
+                    {
+                        "timestamp": f"2026-08-30T14:30:{i:02d}Z",
+                        "message": "Exception in namenode: lease recovery failed",
+                    }
+                )
+                + "\n"
+            )
+    return src
+
+
+def test_severity_is_dropped_when_no_log_carries_one(tmp_path: Path) -> None:
+    """Half the scoring weight would otherwise be an identical constant on every template."""
+    result = ingest(_severityless_file(tmp_path), _config(tmp_path, "nosev"), incident_id="nosev")
+    with ScratchpadDB(result.scratchpad_path) as db:
+        metrics = {m["metric"]: m["value"] for m in db.metrics("anomaly")}
+    assert metrics["severity_informative"] == "False"
+    assert float(metrics["unmapped_severity_share"]) == 1.0
+
+
+def test_the_rare_exception_still_ranks_first_without_severity(tmp_path: Path) -> None:
+    result = ingest(_severityless_file(tmp_path), _config(tmp_path, "nosev2"), incident_id="nosev2")
+    with ScratchpadDB(result.scratchpad_path) as db:
+        top = db.top_templates(limit=1, order_by="anomaly_score")[0]
+    assert "Exception in namenode" in top["pattern"]
+
+
+def test_labelled_logs_keep_the_severity_component(ingested: IngestResult) -> None:
+    with ScratchpadDB(ingested.scratchpad_path) as db:
+        metrics = {m["metric"]: m["value"] for m in db.metrics("anomaly")}
+    assert metrics["severity_informative"] == "True"
+
+
+# --------------------------------------------------------------- signal set
+
+
+def test_signal_template_set_is_recorded(loaded_db: ScratchpadDB) -> None:
+    """The set the Phase 3 adversarial check must account for."""
+    metrics = {m["metric"]: m for m in loaded_db.metrics("anomaly")}
+    count = int(metrics["signal_templates"]["value_num"])
+    ids = metrics["signal_template_ids"]["value"].split(",")
+    assert count >= 1
+    assert len(ids) == count
+
+
+def test_signal_set_leads_with_the_top_ranked_template(loaded_db: ScratchpadDB) -> None:
+    metrics = {m["metric"]: m["value"] for m in loaded_db.metrics("anomaly")}
+    first = metrics["signal_template_ids"].split(",")[0]
+    assert first == metrics["top_template_id"]
+
+
+def test_noise_suppression_count_is_recorded(loaded_db: ScratchpadDB) -> None:
+    metrics = {m["metric"]: m for m in loaded_db.metrics("anomaly")}
+    assert metrics["suppressed_noise_templates"]["value_num"] is not None

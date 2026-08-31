@@ -18,7 +18,7 @@ bootstrap:            # consumed from Phase 4
 drain3:
   sim_th: 0.4                  # used directly when calibrate is false
   depth: 4
-  max_clusters: 2000
+  max_clusters: 10000            # generous: eviction fragments template statistics
   persistence: file
   snapshot_path: .cache/drain3_{incident_id}.json
   # Try each candidate against a sample and keep the one whose compression ratio lands in
@@ -36,6 +36,18 @@ anomaly:
   burstiness: 0.3
   rarity: 0.2
   bucket_minutes: 1
+  # Above this share of unmapped severities the severity term is treated as uninformative
+  # and its weight is redistributed -- on an unlabelled log every line defaults to INFO, so
+  # the heaviest component would otherwise be a constant.
+  severity_unmapped_ceiling: 0.9
+  # A template is noise when it is this share of the file AND scores below the ceiling.
+  # Volume alone is not noise: a flood can be the incident.
+  noise_share_threshold: 0.15
+  noise_anomaly_ceiling: 0.35
+  # Bounds on the "high anomaly" set the adversarial check must account for. The cut is
+  # placed at the largest score gap, not at a fixed threshold.
+  signal_min_templates: 3
+  signal_max_templates: 15
 
 redaction:
   mode: strict
@@ -44,6 +56,11 @@ redaction:
   # both collide with numeric identifiers and neither has a checksum (decision G5).
   entities: [api_key, email, ipv6, ipv4, ssn]
   salt: ""
+  # Keep a reversible mapping so an operator can reveal values in their own logs. Off by
+  # default: the vault is plaintext on disk. Written to its own file, never the scratchpad,
+  # because the investigator's read-only SQL channel can read any table it is pointed at.
+  vault: false
+  vault_path: .cache/vault_{incident_id}.sqlite
 
 scratchpad:
   path: .cache/incident_{incident_id}.sqlite

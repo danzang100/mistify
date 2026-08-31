@@ -116,3 +116,39 @@ def test_repo_config_loads_the_phase_2_sections() -> None:
     assert config.drain3.target_ratio_min < config.drain3.target_ratio_max
     assert config.anomaly.weights() == {"severity": 0.5, "burstiness": 0.3, "rarity": 0.2}
     assert config.anomaly.bucket_minutes == 1
+
+
+def test_max_clusters_default_is_generous() -> None:
+    """Eviction no longer orphans events, but it still fragments template statistics."""
+    assert MistifyConfig().drain3.max_clusters >= 10000
+
+
+def test_vault_is_off_by_default() -> None:
+    """The vault is plaintext on disk; enabling it trades away part of what redaction buys."""
+    config = MistifyConfig()
+    assert config.redaction.vault is False
+    assert config.vault_path("abc") is None
+
+
+def test_vault_path_resolves_when_enabled() -> None:
+    config = MistifyConfig.model_validate({"redaction": {"vault": True}})
+    path = config.vault_path("abc-123")
+    assert path is not None and "abc-123" in path.name
+
+
+def test_noise_thresholds_are_bounded() -> None:
+    with pytest.raises(ValidationError):
+        MistifyConfig.model_validate({"anomaly": {"noise_share_threshold": 1.5}})
+
+
+def test_signal_bounds_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        MistifyConfig.model_validate({"anomaly": {"signal_min_templates": 0}})
+
+
+def test_repo_config_loads_the_new_sections() -> None:
+    config = load_config(Path(__file__).parent.parent / "config.yaml")
+    assert config.drain3.max_clusters == 10000
+    assert config.redaction.vault is False
+    assert config.anomaly.severity_unmapped_ceiling == 0.9
+    assert config.anomaly.signal_max_templates == 15

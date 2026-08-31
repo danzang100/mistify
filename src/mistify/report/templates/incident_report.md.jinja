@@ -54,6 +54,12 @@ None recorded.
 
 ## Templates by anomaly score
 
+{% if shown_template_count < template_count %}
+Showing the {{ shown_template_count }} highest-scoring templates of {{ template_count }}. The
+rest are in the scratchpad and not in this report, so the list below is the head of the
+ranking rather than the whole incident.
+
+{% endif %}
 Scored deterministically from severity, burstiness and rarity — no model involvement, so a
 high score here is independent of whatever narrative the investigation settled on. The ranking
 is the search order: the rarest, most severe, most concentrated templates come first so the
