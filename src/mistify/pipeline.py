@@ -20,51 +20,17 @@ from mistify.adapters.base import LogAdapter
 from mistify.adapters.registry import detect_format, get_adapter, read_sample
 from mistify.common.config import MistifyConfig
 from mistify.common.models import LogRecord
-from mistify.metrics import (
-    ANOMALY_BUCKET_MINUTES,
-    ANOMALY_NEEDLE_POSITION,
-    ANOMALY_SCORED_TEMPLATES,
-    ANOMALY_SEVERITY_INFORMATIVE,
-    ANOMALY_SIGNAL_TEMPLATE_IDS,
-    ANOMALY_SIGNAL_TEMPLATES,
-    ANOMALY_SUPPRESSED_NOISE,
-    ANOMALY_TOP_SCORE,
-    ANOMALY_TOP_TEMPLATE_ID,
-    ANOMALY_UNMAPPED_SEVERITY_SHARE,
-    ANOMALY_WEIGHTS,
-    INGEST_DETECT_CONFIDENCE,
-    INGEST_EVENTS_LOADED,
-    INGEST_FORMAT,
-    INGEST_LINES_READ,
-    INGEST_PARSE_ERRORS,
-    INGEST_UNMAPPED_SEVERITY,
-    INGEST_UNPARSEABLE_TIMESTAMP,
-    REDACTED_BY_ENTITY,
-    REDACTION_ENTITIES,
-    REDACTION_MODE,
-    REDACTION_TOTAL,
-    REDACTION_VAULT,
-    REDACTION_VAULT_ENTRIES,
-    REDACTION_VAULT_PATH,
-    SCRATCHPAD_ORPHAN_EVENTS,
-    TEMPLATING_CALIBRATION_CANDIDATES,
-    TEMPLATING_CALIBRATION_REASON,
-    TEMPLATING_CALIBRATION_STATUS,
-    TEMPLATING_COMPRESSION_RATIO,
-    TEMPLATING_COVERAGE,
-    TEMPLATING_DEPTH,
-    TEMPLATING_EVICTED,
-    TEMPLATING_LARGEST_SHARE,
-    TEMPLATING_OVER_MERGED,
-    TEMPLATING_OVER_MERGED_IDS,
-    TEMPLATING_REDUCTION_FACTOR,
-    TEMPLATING_SIM_TH,
-    TEMPLATING_UNIQUE_TEMPLATES,
-)
+from mistify.metrics import SCRATCHPAD_ORPHAN_EVENTS
 from mistify.redaction.redactor import Redactor
 from mistify.redaction.vault import RedactionVault
 from mistify.scratchpad.anomaly import score_templates, select_signal_templates
 from mistify.scratchpad.db import ScratchpadDB
+from mistify.stage_metrics import (
+    anomaly_metrics,
+    ingest_metrics,
+    redaction_metrics,
+    templating_metrics,
+)
 from mistify.templating.calibration import calibrate_sim_th, find_over_merged
 from mistify.templating.drain_wrapper import DrainTemplater
 
@@ -261,53 +227,8 @@ def ingest(
         db.update_anomaly_scores([(c.template_id, c.score) for c in scored])
         over_merged = find_over_merged(summaries, config.drain3.over_merge_severity_span)
 
-        db.record(INGEST_FORMAT, adapter.format_name)
-        db.record(INGEST_DETECT_CONFIDENCE, round(scores.get(adapter.format_name, 0.0), 3))
-        db.record(INGEST_LINES_READ, stats.lines_read)
-        db.record(INGEST_EVENTS_LOADED, events_loaded)
-        db.record(INGEST_PARSE_ERRORS, stats.parse_errors)
-        db.record(INGEST_UNMAPPED_SEVERITY, stats.unmapped_severity)
-        db.record(INGEST_UNPARSEABLE_TIMESTAMP, stats.unparseable_timestamp)
-
-        db.record(REDACTION_MODE, config.redaction.mode)
-        db.record(REDACTION_ENTITIES, ",".join(config.redaction.entities))
-        for entity, count in sorted(redactor.counts.items()):
-            db.record(REDACTED_BY_ENTITY.member(entity), count)
-        db.record(REDACTION_TOTAL, sum(redactor.counts.values()))
-        db.record(REDACTION_VAULT, vault is not None)
-        if vault is not None:
-            vault.flush()
-            db.record(REDACTION_VAULT_ENTRIES, vault.count())
-            db.record(REDACTION_VAULT_PATH, str(vault_path))
-
         orphans = db.orphan_event_count()
         coverage = 1.0 - (orphans / events_loaded) if events_loaded else 1.0
-        signal = templater.signal_stats()
-
-        # Coverage is the invariant, not compression. Every event must be reachable through
-        # a template, because an event whose template was dropped is a line the agent can
-        # never find -- and the compression ratio reports that loss as a success.
-        db.record(TEMPLATING_COVERAGE, round(coverage, 6))
-        db.record(TEMPLATING_UNIQUE_TEMPLATES, templater.unique_templates)
-        db.record(TEMPLATING_REDUCTION_FACTOR, round(signal["reduction_factor"], 2))
-        db.record(TEMPLATING_LARGEST_SHARE, round(signal["largest_template_share"], 4))
-        db.record(TEMPLATING_EVICTED, templater.evicted_templates)
-        # Diagnostic only. Kept because a ratio near 1.0 still means nothing was collapsed.
-        db.record(TEMPLATING_COMPRESSION_RATIO, round(templater.compression_ratio, 5))
-        db.record(TEMPLATING_SIM_TH, sim_th)
-        db.record(TEMPLATING_DEPTH, config.drain3.depth)
-        if calibration is not None:
-            db.record(TEMPLATING_CALIBRATION_STATUS, calibration.status)
-            db.record(TEMPLATING_CALIBRATION_CANDIDATES, calibration.as_metric())
-            db.record(TEMPLATING_CALIBRATION_REASON, calibration.reason)
-        else:
-            db.record(TEMPLATING_CALIBRATION_STATUS, "disabled")
-        db.record(TEMPLATING_OVER_MERGED, len(over_merged))
-        if over_merged:
-            db.record(
-                TEMPLATING_OVER_MERGED_IDS,
-                ",".join(str(t.template_id) for t in over_merged),
-            )
 
         signal_templates = select_signal_templates(
             scored,
@@ -317,34 +238,32 @@ def ingest(
         noisy = db.noise_template_ids(
             config.anomaly.noise_share_threshold, config.anomaly.noise_anomaly_ceiling
         )
+        if vault is not None:
+            vault.flush()
 
-        db.record(ANOMALY_SCORED_TEMPLATES, len(scored))
-        db.record(ANOMALY_SEVERITY_INFORMATIVE, severity_informative)
-        db.record(ANOMALY_UNMAPPED_SEVERITY_SHARE, round(unmapped_share, 4))
-        # The set the Phase 3 adversarial check must account for, cut at the largest score
-        # gap rather than at a threshold picked from whatever fixture was to hand.
-        db.record(ANOMALY_SIGNAL_TEMPLATES, len(signal_templates))
-        db.record(
-            ANOMALY_SIGNAL_TEMPLATE_IDS,
-            ",".join(str(c.template_id) for c in signal_templates),
+        # Each stage describes its own run; the pipeline only decides when they are written.
+        db.record_many(
+            [
+                *ingest_metrics(adapter, scores, events_loaded),
+                *redaction_metrics(config, redactor, vault, vault_path),
+                *templating_metrics(config, templater, sim_th, coverage, calibration, over_merged),
+                *anomaly_metrics(
+                    config,
+                    scored,
+                    summaries,
+                    signal_templates,
+                    len(noisy),
+                    severity_informative,
+                    unmapped_share,
+                ),
+                (SCRATCHPAD_ORPHAN_EVENTS, orphans),
+            ]
         )
-        db.record(ANOMALY_SUPPRESSED_NOISE, len(noisy))
-        db.record(ANOMALY_WEIGHTS, str(config.anomaly.weights()))
-        db.record(ANOMALY_BUCKET_MINUTES, config.anomaly.bucket_minutes)
-        if scored:
-            db.record(ANOMALY_TOP_TEMPLATE_ID, scored[0].template_id)
-            db.record(ANOMALY_TOP_SCORE, round(scored[0].score, 4))
-            # Where the most severe template lands in anomaly order. This is the needle
-            # question stated directly: would an agent reading the ranked list from the top
-            # meet the worst thing in the file early, or have to dig for it?
-            worst = max(summaries, key=lambda s: s.max_severity_rank)
-            order = [c.template_id for c in scored]
-            db.record(ANOMALY_NEEDLE_POSITION, order.index(worst.template_id) + 1)
-
-        db.record(SCRATCHPAD_ORPHAN_EVENTS, orphans)
 
         if vault is not None:
             vault.close()
+
+        signal = templater.signal_stats()
 
         return IngestResult(
             incident_id=incident_id,
