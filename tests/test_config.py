@@ -19,10 +19,24 @@ def test_defaults_load_without_a_file(tmp_path: Path, monkeypatch: pytest.Monkey
 
 
 def test_repo_config_is_valid() -> None:
-    """The shipped config.yaml must actually validate against the model."""
+    """The shipped config.yaml must validate, and carry every section the code reads.
+
+    One test rather than three: the fact being asserted is that this file loads, and three
+    loads of the same file proved it three times.
+    """
     config = load_config(Path(__file__).parent.parent / "config.yaml")
+
     assert config.redaction.mode == "strict"
+    assert config.redaction.vault is False
     assert config.drain3.sim_th == 0.4
+    assert config.drain3.max_clusters == 10000
+    assert config.drain3.calibrate is True
+    assert config.drain3.calibration_candidates == [0.3, 0.4, 0.5]
+    assert config.drain3.target_ratio_min < config.drain3.target_ratio_max
+    assert config.anomaly.weights() == {"severity": 0.5, "burstiness": 0.3, "rarity": 0.2}
+    assert config.anomaly.bucket_minutes == 1
+    assert config.anomaly.severity_unmapped_ceiling == 0.9
+    assert config.anomaly.signal_max_templates == 15
 
 
 def test_round_trips_through_yaml(tmp_path: Path) -> None:
@@ -108,16 +122,6 @@ def test_anomaly_weights_expose_the_three_components() -> None:
     assert set(AnomalyConfig().weights()) == {"severity", "burstiness", "rarity"}
 
 
-def test_repo_config_loads_the_phase_2_sections() -> None:
-    """The shipped config.yaml must carry the calibration and anomaly settings too."""
-    config = load_config(Path(__file__).parent.parent / "config.yaml")
-    assert config.drain3.calibrate is True
-    assert config.drain3.calibration_candidates == [0.3, 0.4, 0.5]
-    assert config.drain3.target_ratio_min < config.drain3.target_ratio_max
-    assert config.anomaly.weights() == {"severity": 0.5, "burstiness": 0.3, "rarity": 0.2}
-    assert config.anomaly.bucket_minutes == 1
-
-
 def test_max_clusters_default_is_generous() -> None:
     """Eviction no longer orphans events, but it still fragments template statistics."""
     assert MistifyConfig().drain3.max_clusters >= 10000
@@ -144,11 +148,3 @@ def test_noise_thresholds_are_bounded() -> None:
 def test_signal_bounds_must_be_positive() -> None:
     with pytest.raises(ValidationError):
         MistifyConfig.model_validate({"anomaly": {"signal_min_templates": 0}})
-
-
-def test_repo_config_loads_the_new_sections() -> None:
-    config = load_config(Path(__file__).parent.parent / "config.yaml")
-    assert config.drain3.max_clusters == 10000
-    assert config.redaction.vault is False
-    assert config.anomaly.severity_unmapped_ceiling == 0.9
-    assert config.anomaly.signal_max_templates == 15

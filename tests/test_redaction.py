@@ -1,8 +1,19 @@
-"""Redaction entity detection, hash consistency, and false-positive resistance."""
+"""Redaction entity detection, hash consistency, and false-positive resistance.
+
+Organised property-first: `ENTITY_CASES` lists one sample per supported entity and the block
+below it asserts the properties every entity must hold, once each. A seventh entity is then a
+row in that table, not a new section.
+
+What deliberately stays outside the table is the false-positive corpora further down. Those
+are regression tests for specific bugs (decision G5 and the clock-time collision), not
+examples of a shared property -- collapsing them would trade a documented bug for a smaller
+file.
+"""
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 import pytest
 
@@ -12,6 +23,7 @@ from mistify.redaction.patterns import (
     ENTITY_ORDER,
     PATTERNS,
     SUPPORTED_ENTITIES,
+    placeholder_pattern,
 )
 from mistify.redaction.redactor import Redactor
 
@@ -28,23 +40,163 @@ def _record(raw: str, message: str | None = None, **fields: object) -> LogRecord
     )
 
 
-# --------------------------------------------------------------- detection
+# --------------------------------------------------------------- entity table
 
 
-def test_email_is_redacted() -> None:
-    out = Redactor().redact("Session opened for ana.silva@northwind-retail.com")
-    assert "ana.silva@northwind-retail.com" not in out
-    assert "[EMAIL:" in out
+@dataclass(frozen=True)
+class EntityCase:
+    """One entity's worth of evidence for the shared property tests."""
+
+    entity: str
+    sample: str
+    value: str
+    other: str
+    on_by_default: bool
 
 
-def test_ipv4_is_redacted() -> None:
-    out = Redactor().redact("upstream 10.42.7.19 refused connection")
-    assert "10.42.7.19" not in out
-    assert "[IPV4:" in out
+ENTITY_CASES: tuple[EntityCase, ...] = (
+    EntityCase(
+        entity="api_key",
+        sample="refresh failed api_key=sk_live_9f3ba71c4d2e8a06b5c1",
+        value="sk_live_9f3ba71c4d2e8a06b5c1",
+        other="sk_live_0c1d2e3f4a5b6c7d8e9f",
+        on_by_default=True,
+    ),
+    EntityCase(
+        entity="email",
+        sample="session opened for ana.silva@northwind-retail.com",
+        value="ana.silva@northwind-retail.com",
+        other="bruno.costa@northwind-retail.com",
+        on_by_default=True,
+    ),
+    EntityCase(
+        entity="ipv6",
+        sample="peer fe80::1 unreachable",
+        value="fe80::1",
+        other="2001:db8::1",
+        on_by_default=True,
+    ),
+    EntityCase(
+        entity="ipv4",
+        sample="upstream 10.42.7.19 refused connection",
+        value="10.42.7.19",
+        other="192.168.14.203",
+        on_by_default=True,
+    ),
+    EntityCase(
+        entity="ssn",
+        sample="claim filed for 123-45-6789 yesterday",
+        value="123-45-6789",
+        other="987-65-4321",
+        on_by_default=True,
+    ),
+    EntityCase(
+        entity="phone",
+        sample="callback to 555-123-4567 scheduled",
+        value="555-123-4567",
+        other="555-987-6543",
+        on_by_default=False,
+    ),
+)
+
+_BRACKETED = re.compile(r"\[[^\[\]]*\]")
+
+
+def _redactor(case: EntityCase, mode: str = "strict") -> Redactor:
+    """A redactor with the case's entity enabled alongside the shipped defaults.
+
+    Enabling the entity next to the default set rather than alone keeps the interaction
+    visible: patterns run in `ENTITY_ORDER` and an earlier one can swallow a later one's
+    value, which a single-entity redactor would never show.
+    """
+    entities = [e for e in ENTITY_ORDER if e in DEFAULT_ENTITIES or e == case.entity]
+    return Redactor(mode=mode, entities=entities)
+
+
+def _tokens(text: str, entity: str) -> list[str]:
+    return re.findall(rf"\[{entity.upper()}:[0-9a-f]{{4}}\]", text)
+
+
+def _by_entity(case: EntityCase) -> str:
+    return case.entity
+
+
+# -------------------------------------------------- properties of every entity
+
+
+def test_every_supported_entity_has_a_table_row() -> None:
+    """The table is only a substitute for per-entity sections while it stays complete: a
+    pattern with no row would silently hold none of the properties below."""
+    assert {case.entity for case in ENTITY_CASES} == SUPPORTED_ENTITIES
+
+
+@pytest.mark.parametrize("case", ENTITY_CASES, ids=_by_entity)
+def test_value_is_replaced_by_a_placeholder(case: EntityCase) -> None:
+    out = _redactor(case).redact(case.sample)
+    assert case.value not in out
+    assert f"[{case.entity.upper()}:" in out
+
+
+@pytest.mark.parametrize("case", ENTITY_CASES, ids=_by_entity)
+def test_placeholder_has_the_documented_shape(case: EntityCase) -> None:
+    """The templater masks `placeholder_pattern()`, so a placeholder off that shape would
+    leak one template per distinct source value instead of collapsing into one."""
+    out = _redactor(case).redact(case.sample)
+    emitted = _BRACKETED.findall(out)
+    assert len(emitted) == 1
+    assert re.fullmatch(r"\[[A-Z0-9_]+:[0-9a-f]{4}\]", emitted[0])
+    assert re.fullmatch(placeholder_pattern(), emitted[0])
+
+
+@pytest.mark.parametrize("case", ENTITY_CASES, ids=_by_entity)
+def test_same_value_yields_the_same_placeholder(case: EntityCase) -> None:
+    """Correlation must survive redaction, or the investigator loses the join key."""
+    redactor = _redactor(case)
+    first = _tokens(redactor.redact(f"first call, {case.sample}"), case.entity)
+    second = _tokens(redactor.redact(f"second call, {case.sample}"), case.entity)
+    assert first == second != []
+
+
+@pytest.mark.parametrize("case", ENTITY_CASES, ids=_by_entity)
+def test_different_values_yield_different_placeholders(case: EntityCase) -> None:
+    other_sample = case.sample.replace(case.value, case.other)
+    out = _redactor(case).redact(f"{case.sample} then {other_sample}")
+    assert len(set(_tokens(out, case.entity))) == 2
+
+
+@pytest.mark.parametrize("case", ENTITY_CASES, ids=_by_entity)
+def test_entity_is_redacted_inside_nested_fields(case: EntityCase) -> None:
+    """JSON logs routinely carry the value in a nested field and never in the message."""
+    record = _redactor(case).redact_record(
+        _record("checkout failed", user={"trace": [case.sample]}, attempt=3)
+    )
+    nested = record.fields["user"]["trace"][0]
+    assert case.value not in nested
+    assert f"[{case.entity.upper()}:" in nested
+    assert record.fields["attempt"] == 3
+
+
+@pytest.mark.parametrize("case", ENTITY_CASES, ids=_by_entity)
+def test_mode_off_is_a_no_op(case: EntityCase) -> None:
+    redactor = _redactor(case, mode="off")
+    assert redactor.redact(case.sample) == case.sample
+    assert redactor.counts == {}
+
+
+@pytest.mark.parametrize("case", ENTITY_CASES, ids=_by_entity)
+def test_default_entity_membership_matches_the_table(case: EntityCase) -> None:
+    assert (case.entity in DEFAULT_ENTITIES) is case.on_by_default
+
+
+# ------------------------------------------------- per-pattern shape coverage
 
 
 def test_api_key_is_redacted_but_key_name_survives() -> None:
-    """The log should still say what was redacted, so the line stays diagnostic."""
+    """The log should still say what was redacted, so the line stays diagnostic.
+
+    Kept out of the entity table because this is the named-group branch of the redactor:
+    only part of the match is swapped, unlike every other entity.
+    """
     out = Redactor().redact("refresh failed api_key=sk_live_9f3ba71c4d2e8a06b5c1")
     assert "sk_live_9f3ba71c4d2e8a06b5c1" not in out
     assert "api_key=" in out
@@ -64,23 +216,44 @@ def test_token_variants_are_redacted(text: str) -> None:
     assert "[API_KEY:" in out
 
 
-# --------------------------------------------------------------- consistency
+@pytest.mark.parametrize(
+    "address",
+    [
+        "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+        "fe80::1",
+        "::1",
+        "::",
+        "2001:db8::8a2e:370:7334",
+    ],
+)
+def test_ipv6_addresses_are_redacted(address: str) -> None:
+    """Both accepted shapes: the full eight-group form and anything containing `::`."""
+    out = Redactor().redact(f"peer {address} unreachable")
+    assert address not in out
+    assert "[IPV6:" in out
 
 
-def test_same_value_yields_same_token_across_lines() -> None:
-    """Correlation must survive redaction, or the investigator loses the join key."""
-    redactor = Redactor()
-    first = redactor.redact("login from 10.42.7.19")
-    second = redactor.redact("timeout talking to 10.42.7.19")
-    token = first.split("login from ")[1]
-    assert token in second
+@pytest.mark.parametrize(
+    "number",
+    [
+        "+1 555 123 4567",
+        "(555) 123-4567",
+        "555-123-4567",
+        "+44 555.123.4567",
+    ],
+)
+def test_phone_numbers_are_redacted_when_explicitly_enabled(number: str) -> None:
+    out = Redactor(entities=["phone"]).redact(f"callback to {number} scheduled")
+    assert number not in out
+    assert "[PHONE:" in out
 
 
-def test_different_values_yield_different_tokens() -> None:
-    redactor = Redactor()
-    out = redactor.redact("hop 10.42.7.19 then 192.168.14.203")
-    tokens = {part for part in out.split() if part.startswith("[IPV4:")}
-    assert len(tokens) == 2
+def test_valid_address_at_string_boundaries_is_still_caught() -> None:
+    assert Redactor().redact("10.42.7.19") == Redactor().redact("10.42.7.19")
+    assert "[IPV4:" in Redactor().redact("10.42.7.19")
+
+
+# ------------------------------------------------------ correlation and counts
 
 
 def test_token_is_stable_between_raw_and_structured_fields() -> None:
@@ -98,35 +271,17 @@ def test_salt_changes_the_token() -> None:
     assert plain != salted
 
 
-# --------------------------------------------------------------- coverage
-
-
-def test_structured_fields_are_redacted_recursively() -> None:
-    """JSON logs routinely carry the address in a nested field and never in the message."""
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("a@b.com and c@d.com from 10.0.0.1", {"email": 2, "ipv4": 1}),
+        ("peer fe80::1 ssn 123-45-6789 host 10.0.0.1", {"ipv6": 1, "ssn": 1, "ipv4": 1}),
+    ],
+)
+def test_counts_are_reported_for_health_metrics(text: str, expected: dict[str, int]) -> None:
     redactor = Redactor()
-    record = redactor.redact_record(
-        _record(
-            "checkout failed",
-            user={"email": "ana.silva@northwind-retail.com", "ips": ["10.42.7.19"]},
-            attempt=3,
-        )
-    )
-    assert record.fields["user"]["email"].startswith("[EMAIL:")
-    assert record.fields["user"]["ips"][0].startswith("[IPV4:")
-    assert record.fields["attempt"] == 3
-
-
-def test_counts_are_reported_for_health_metrics() -> None:
-    redactor = Redactor()
-    redactor.redact("a@b.com and c@d.com from 10.0.0.1")
-    assert redactor.counts == {"email": 2, "ipv4": 1}
-
-
-def test_mode_off_is_a_no_op() -> None:
-    redactor = Redactor(mode="off")
-    text = "ana.silva@northwind-retail.com from 10.42.7.19"
-    assert redactor.redact(text) == text
-    assert redactor.counts == {}
+    redactor.redact(text)
+    assert redactor.counts == expected
 
 
 def test_only_configured_entities_are_redacted() -> None:
@@ -166,77 +321,6 @@ def test_version_and_code_strings_are_not_mistaken_for_addresses(text: str) -> N
     assert Redactor().redact(text) == text
 
 
-def test_valid_address_at_string_boundaries_is_still_caught() -> None:
-    assert Redactor().redact("10.42.7.19") == Redactor().redact("10.42.7.19")
-    assert "[IPV4:" in Redactor().redact("10.42.7.19")
-
-
-# --------------------------------------------------------------- configuration
-
-
-def test_credit_card_pattern_is_absent() -> None:
-    """Decision G5: explicitly out of scope for v1."""
-    assert "credit_card" not in PATTERNS
-    assert "credit_card" not in SUPPORTED_ENTITIES
-
-
-def test_unknown_entity_is_rejected() -> None:
-    with pytest.raises(ValueError, match="unknown redaction entities"):
-        Redactor(entities=["email", "retina_scan"])
-
-
-def test_unknown_mode_is_rejected() -> None:
-    with pytest.raises(ValueError, match="unknown redaction mode"):
-        Redactor(mode="occasionally")
-
-
-def test_version_guard_does_not_suppress_a_real_address() -> None:
-    """Guards the guard: the context rule must not blanket-disable ipv4 redaction."""
-    out = Redactor().redact("service v2 talking to 10.42.7.19 failed")
-    assert "10.42.7.19" not in out
-    assert "[IPV4:" in out
-
-
-def test_version_guard_is_context_scoped() -> None:
-    redactor = Redactor()
-    out = redactor.redact("upgraded to version 1.2.3.4 then called 1.2.3.4")
-    assert out.count("1.2.3.4") == 1
-    assert "[IPV4:" in out
-
-
-# --------------------------------------------------------- ipv6 detection
-
-
-@pytest.mark.parametrize(
-    "address",
-    [
-        "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
-        "fe80::1",
-        "::1",
-        "::",
-        "2001:db8::8a2e:370:7334",
-    ],
-)
-def test_ipv6_addresses_are_redacted(address: str) -> None:
-    """Both accepted shapes: the full eight-group form and anything containing `::`."""
-    out = Redactor().redact(f"peer {address} unreachable")
-    assert address not in out
-    assert "[IPV6:" in out
-
-
-def test_ipv6_placeholder_has_the_expected_shape() -> None:
-    assert re.fullmatch(r"\[IPV6:[0-9a-f]{4}\]", Redactor().redact("fe80::1"))
-
-
-def test_ipv6_is_redacted_in_structured_fields() -> None:
-    redactor = Redactor()
-    record = redactor.redact_record(_record("peer down", peer={"addr": "fe80::1"}))
-    assert record.fields["peer"]["addr"].startswith("[IPV6:")
-
-
-# --------------------------------------------------- ipv6 false positives
-
-
 @pytest.mark.parametrize(
     "text",
     [
@@ -264,19 +348,6 @@ def test_timestamp_survives_alongside_a_real_address_on_the_same_line() -> None:
     assert "00:00:02" in out
 
 
-# ---------------------------------------------------------- ssn detection
-
-
-def test_ssn_is_redacted() -> None:
-    out = Redactor().redact("claim filed for 123-45-6789 yesterday")
-    assert "123-45-6789" not in out
-    assert "[SSN:" in out
-
-
-def test_ssn_placeholder_has_the_expected_shape() -> None:
-    assert re.fullmatch(r"\[SSN:[0-9a-f]{4}\]", Redactor().redact("123-45-6789"))
-
-
 @pytest.mark.parametrize(
     "text",
     [
@@ -294,30 +365,6 @@ def test_bare_digit_runs_are_not_mistaken_for_ssns(text: str) -> None:
     assert Redactor().redact(text) == text
 
 
-# -------------------------------------------------------- phone detection
-
-
-@pytest.mark.parametrize(
-    "number",
-    [
-        "+1 555 123 4567",
-        "(555) 123-4567",
-        "555-123-4567",
-        "+44 555.123.4567",
-    ],
-)
-def test_phone_numbers_are_redacted_when_explicitly_enabled(number: str) -> None:
-    out = Redactor(entities=["phone"]).redact(f"callback to {number} scheduled")
-    assert number not in out
-    assert "[PHONE:" in out
-
-
-def test_phone_placeholder_has_the_expected_shape() -> None:
-    assert re.fullmatch(
-        r"\[PHONE:[0-9a-f]{4}\]", Redactor(entities=["phone"]).redact("555-123-4567")
-    )
-
-
 def test_phone_has_a_known_false_positive_on_numeric_ranges() -> None:
     """Documents a known limitation rather than asserting correctness.
 
@@ -333,49 +380,27 @@ def test_phone_has_a_known_false_positive_on_numeric_ranges() -> None:
     assert redactor.counts == {"phone": 1}
 
 
-# ----------------------------------------------- new-entity consistency
+def test_version_guard_does_not_suppress_a_real_address() -> None:
+    """Guards the guard: the context rule must not blanket-disable ipv4 redaction."""
+    out = Redactor().redact("service v2 talking to 10.42.7.19 failed")
+    assert "10.42.7.19" not in out
+    assert "[IPV4:" in out
 
 
-def test_ipv6_value_yields_the_same_token_across_lines() -> None:
+def test_version_guard_is_context_scoped() -> None:
     redactor = Redactor()
-    first = redactor.redact("session opened from fe80::1")
-    second = redactor.redact("session closed from fe80::1")
-    token = first.split("from ")[1]
-    assert token.startswith("[IPV6:")
-    assert token in second
+    out = redactor.redact("upgraded to version 1.2.3.4 then called 1.2.3.4")
+    assert out.count("1.2.3.4") == 1
+    assert "[IPV4:" in out
 
 
-def test_different_ipv6_values_yield_different_tokens() -> None:
-    out = Redactor().redact("hop fe80::1 then 2001:db8::1")
-    tokens = {part for part in out.split() if part.startswith("[IPV6:")}
-    assert len(tokens) == 2
+# ----------------------------------------------------------------- configuration
 
 
-def test_ssn_value_yields_the_same_token_across_lines() -> None:
-    redactor = Redactor()
-    first = redactor.redact("lookup 123-45-6789 started")
-    second = redactor.redact("lookup 123-45-6789 finished")
-    token = first.split("lookup ")[1].split(" ")[0]
-    assert token.startswith("[SSN:")
-    assert token in second
-
-
-def test_phone_value_yields_the_same_token_across_lines() -> None:
-    redactor = Redactor(entities=["phone"])
-    first = redactor.redact("dialled 555-123-4567 once")
-    second = redactor.redact("dialled 555-123-4567 twice")
-    token = first.split("dialled ")[1].split(" ")[0]
-    assert token.startswith("[PHONE:")
-    assert token in second
-
-
-def test_counts_cover_the_new_entities() -> None:
-    redactor = Redactor()
-    redactor.redact("peer fe80::1 ssn 123-45-6789 host 10.0.0.1")
-    assert redactor.counts == {"ipv6": 1, "ssn": 1, "ipv4": 1}
-
-
-# ------------------------------------------------ new-entity configuration
+def test_credit_card_pattern_is_absent() -> None:
+    """Decision G5: explicitly out of scope for v1."""
+    assert "credit_card" not in PATTERNS
+    assert "credit_card" not in SUPPORTED_ENTITIES
 
 
 def test_default_entities_exclude_phone() -> None:
@@ -415,3 +440,13 @@ def test_bare_redactor_falls_back_to_defaults_not_every_pattern() -> None:
     assert Redactor().entities == [e for e in ENTITY_ORDER if e in DEFAULT_ENTITIES]
     assert "phone" not in Redactor().entities
     assert Redactor().redact("call 555-123-4567") == "call 555-123-4567"
+
+
+def test_unknown_entity_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown redaction entities"):
+        Redactor(entities=["email", "retina_scan"])
+
+
+def test_unknown_mode_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown redaction mode"):
+        Redactor(mode="occasionally")

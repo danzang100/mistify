@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import shutil
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
 from mistify.common.config import MistifyConfig
 from mistify.pipeline import IngestResult, ingest
@@ -16,15 +19,21 @@ from tests.fixtures.synthetic_incident import write_incident
 INCIDENT_ID = "test-incident"
 
 
-def _scratch_config(directory: Path) -> MistifyConfig:
-    """Config with every output pointed inside `directory`, so runs never touch the repo."""
-    return MistifyConfig.model_validate(
-        {
-            "scratchpad": {"path": str(directory / "incident_{incident_id}.sqlite")},
-            "drain3": {"snapshot_path": str(directory / "drain3_{incident_id}.json")},
-            "report": {"output_dir": str(directory / "reports")},
-        }
-    )
+def _scratch_config(directory: Path, **sections: dict[str, Any]) -> MistifyConfig:
+    """Config with every output pointed inside `directory`, so runs never touch the repo.
+
+    `sections` are merged over the scratch paths, so a caller overriding `drain3` keeps the
+    snapshot path it did not mention. Six test modules used to build this triple by hand;
+    each new config field meant editing all of them.
+    """
+    raw: dict[str, dict[str, Any]] = {
+        "scratchpad": {"path": str(directory / "incident_{incident_id}.sqlite")},
+        "drain3": {"snapshot_path": str(directory / "drain3_{incident_id}.json")},
+        "report": {"output_dir": str(directory / "reports")},
+    }
+    for name, values in sections.items():
+        raw.setdefault(name, {}).update(values)
+    return MistifyConfig.model_validate(raw)
 
 
 @pytest.fixture(scope="session")
@@ -38,6 +47,33 @@ def incident_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def config(tmp_path: Path) -> MistifyConfig:
     """Config pointed at a scratch directory so runs never touch the repo."""
     return _scratch_config(tmp_path)
+
+
+@pytest.fixture
+def make_config(tmp_path: Path) -> Callable[..., MistifyConfig]:
+    """Build a scratch config with section overrides, for tests needing more than the default.
+
+    Use `config` when the defaults will do; reach for this when a test needs redaction off,
+    calibration disabled, or a different `max_clusters`.
+    """
+
+    def build(**sections: dict[str, Any]) -> MistifyConfig:
+        return _scratch_config(tmp_path, **sections)
+
+    return build
+
+
+@pytest.fixture
+def make_config_file(tmp_path: Path) -> Callable[..., Path]:
+    """The same config, written to YAML, for tests that drive the CLI through --config."""
+
+    def build(**sections: dict[str, Any]) -> Path:
+        config = _scratch_config(tmp_path, **sections)
+        path = tmp_path / "config.yaml"
+        path.write_text(yaml.safe_dump(config.model_dump(mode="json")), encoding="utf-8")
+        return path
+
+    return build
 
 
 @pytest.fixture

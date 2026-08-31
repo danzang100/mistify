@@ -24,7 +24,7 @@ def test_migrations_apply_on_first_open(tmp_path: Path) -> None:
         assert db.apply_migrations() == []  # already applied during __init__
         tables = {
             row["name"]
-            for row in db._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            for row in db.run_readonly_sql("SELECT name FROM sqlite_master WHERE type='table'")
         }
     assert {
         "incidents",
@@ -48,7 +48,7 @@ def test_migrations_are_idempotent(tmp_path: Path) -> None:
 
 def test_migration_versions_are_recorded(tmp_path: Path) -> None:
     with ScratchpadDB(tmp_path / "a.sqlite") as db:
-        rows = db._conn.execute("SELECT version FROM schema_migrations").fetchall()
+        rows = db.run_readonly_sql("SELECT version FROM schema_migrations")
     assert {r["version"] for r in rows} == set(MIGRATIONS)
 
 

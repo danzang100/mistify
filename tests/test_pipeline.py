@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -70,16 +71,17 @@ def test_planted_root_cause_survives_templating(loaded_db: ScratchpadDB) -> None
 @pytest.mark.parametrize("secret", [*PLANTED_EMAILS, *PLANTED_IPS, PLANTED_API_KEY])
 def test_no_planted_secret_reaches_the_scratchpad(loaded_db: ScratchpadDB, secret: str) -> None:
     """Redaction runs immediately after parse(), so nothing downstream ever sees a value."""
+    # Asked through the read-only channel rather than the private connection: this is the
+    # surface an investigator queries, so a leak is checked where a leak would be found.
     for table, columns in (
         ("log_events", ("raw", "message", "fields_json")),
         ("templates", ("pattern",)),
     ):
         for column in columns:
-            row = loaded_db._conn.execute(
-                f"SELECT COUNT(*) AS n FROM {table} WHERE {column} LIKE ?",
-                (f"%{secret}%",),
-            ).fetchone()
-            assert row["n"] == 0, f"{secret!r} leaked into {table}.{column}"
+            rows = loaded_db.run_readonly_sql(
+                f"SELECT COUNT(*) AS n FROM {table} WHERE {column} LIKE '%{secret}%'"
+            )
+            assert rows[0]["n"] == 0, f"{secret!r} leaked into {table}.{column}"
 
 
 def test_redaction_actually_fired(ingested: IngestResult) -> None:
@@ -90,17 +92,17 @@ def test_redaction_actually_fired(ingested: IngestResult) -> None:
 
 
 def test_placeholders_are_present_in_stored_events(loaded_db: ScratchpadDB) -> None:
-    row = loaded_db._conn.execute(
+    rows = loaded_db.run_readonly_sql(
         "SELECT COUNT(*) AS n FROM log_events WHERE raw LIKE '%[IPV4:%'"
-    ).fetchone()
-    assert row["n"] > 0
+    )
+    assert rows[0]["n"] > 0
 
 
 def test_correlation_survives_redaction(loaded_db: ScratchpadDB) -> None:
     """The same address must map to one token, or the investigator loses the join key."""
-    rows = loaded_db._conn.execute(
+    rows = loaded_db.run_readonly_sql(
         "SELECT DISTINCT fields_json FROM log_events WHERE fields_json LIKE '%client_ip%'"
-    ).fetchall()
+    )
     tokens = {json.loads(r["fields_json"])["client_ip"] for r in rows}
     assert 0 < len(tokens) <= len(PLANTED_IPS)
 
@@ -191,21 +193,16 @@ def test_forced_format_skips_detection(incident_file: Path, config: MistifyConfi
     assert result.format_name == "json_lines"
 
 
-def test_redaction_off_leaves_values_intact(incident_file: Path, tmp_path: Path) -> None:
-    config = MistifyConfig.model_validate(
-        {
-            "redaction": {"mode": "off"},
-            "scratchpad": {"path": str(tmp_path / "off_{incident_id}.sqlite")},
-            "drain3": {"snapshot_path": str(tmp_path / "d_{incident_id}.json")},
-        }
-    )
+def test_redaction_off_leaves_values_intact(
+    incident_file: Path, make_config: Callable[..., MistifyConfig]
+) -> None:
+    config = make_config(redaction={"mode": "off"})
     result = ingest(incident_file, config, incident_id="off")
     with ScratchpadDB(result.scratchpad_path) as db:
-        row = db._conn.execute(
-            "SELECT COUNT(*) AS n FROM log_events WHERE raw LIKE ?",
-            (f"%{PLANTED_API_KEY}%",),
-        ).fetchone()
-    assert row["n"] > 0
+        rows = db.run_readonly_sql(
+            f"SELECT COUNT(*) AS n FROM log_events WHERE raw LIKE '%{PLANTED_API_KEY}%'"
+        )
+    assert rows[0]["n"] > 0
 
 
 def test_reingesting_replaces_the_scratchpad(incident_file: Path, config: MistifyConfig) -> None:

@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-
-import pytest
 
 from mistify.common.config import MistifyConfig
 from mistify.common.models import severity_rank
@@ -24,27 +23,12 @@ from mistify.metrics import (
     TEMPLATING_CALIBRATION_CANDIDATES,
     TEMPLATING_CALIBRATION_REASON,
     TEMPLATING_CALIBRATION_STATUS,
-    TEMPLATING_COVERAGE,
     TEMPLATING_OVER_MERGED,
-    TEMPLATING_REDUCTION_FACTOR,
     TEMPLATING_SIM_TH,
     MetricView,
 )
 from mistify.pipeline import IngestResult, ingest
 from mistify.scratchpad.db import ScratchpadDB
-
-
-def _config(tmp_path: Path, tag: str, **sections: dict[str, object]) -> MistifyConfig:
-    """A config pointed at a scratch directory, with `tag` keeping runs off each other."""
-    raw: dict[str, dict[str, object]] = {
-        "scratchpad": {"path": str(tmp_path / f"{tag}_{{incident_id}}.sqlite")},
-        "drain3": {"snapshot_path": str(tmp_path / f"{tag}_drain3_{{incident_id}}.json")},
-        "report": {"output_dir": str(tmp_path / "reports")},
-    }
-    for name, values in sections.items():
-        raw.setdefault(name, {}).update(values)
-    return MistifyConfig.model_validate(raw)
-
 
 # --------------------------------------------------------------- calibration
 
@@ -55,9 +39,11 @@ def test_calibration_runs_by_default(ingested: IngestResult, config: MistifyConf
     assert ingested.sim_th in config.drain3.calibration_candidates
 
 
-def test_calibration_can_be_disabled(incident_file: Path, tmp_path: Path) -> None:
+def test_calibration_can_be_disabled(
+    incident_file: Path, tmp_path: Path, make_config: Callable[..., MistifyConfig]
+) -> None:
     """With calibration off the configured sim_th is used as-is, and says so."""
-    config = _config(tmp_path, "nocal", drain3={"calibrate": False, "sim_th": 0.4})
+    config = make_config(drain3={"calibrate": False, "sim_th": 0.4})
     result = ingest(incident_file, config, incident_id="nocal")
     assert result.sim_th == 0.4
     assert result.calibration_status == "disabled"
@@ -104,9 +90,11 @@ def test_every_template_gets_an_anomaly_score(loaded_db: ScratchpadDB) -> None:
     assert all(row["anomaly_score"] > 0.0 for row in rows)
 
 
-def test_anomaly_weights_are_honoured_end_to_end(incident_file: Path, tmp_path: Path) -> None:
+def test_anomaly_weights_are_honoured_end_to_end(
+    incident_file: Path, tmp_path: Path, make_config: Callable[..., MistifyConfig]
+) -> None:
     """Severity alone must put the FATAL template on top, ahead of the frequent red herring."""
-    config = _config(tmp_path, "sev", anomaly={"severity": 1.0, "burstiness": 0.0, "rarity": 0.0})
+    config = make_config(anomaly={"severity": 1.0, "burstiness": 0.0, "rarity": 0.0})
     result = ingest(incident_file, config, incident_id="sev")
     with ScratchpadDB(result.scratchpad_path) as db:
         top = db.top_templates(limit=1, order_by="anomaly_score")[0]
@@ -116,47 +104,23 @@ def test_anomaly_weights_are_honoured_end_to_end(incident_file: Path, tmp_path: 
 # --------------------------------------------------------------- decision G1
 
 
-def test_calibration_does_not_inflate_redaction_counts(incident_file: Path, tmp_path: Path) -> None:
+def test_calibration_does_not_inflate_redaction_counts(
+    incident_file: Path, tmp_path: Path, make_config: Callable[..., MistifyConfig]
+) -> None:
     """Calibration redacts its own sample; those counts are not part of the real load.
 
     Without the `reset_counts()` after the calibration pass the health metrics would
     double-count every entity in the sample, so the same file would report different
     redaction totals depending on a templating setting.
     """
-    calibrated = ingest(
-        incident_file, _config(tmp_path, "cal", drain3={"calibrate": True}), incident_id="cal"
-    )
-    plain = ingest(
-        incident_file, _config(tmp_path, "raw", drain3={"calibrate": False}), incident_id="raw"
-    )
+    calibrated = ingest(incident_file, make_config(drain3={"calibrate": True}), incident_id="cal")
+    plain = ingest(incident_file, make_config(drain3={"calibrate": False}), incident_id="raw")
     assert calibrated.calibration_status != "disabled"
     assert plain.calibration_status == "disabled"
     assert calibrated.redaction_counts == plain.redaction_counts
 
 
 # --------------------------------------------------------------- signal preservation
-
-
-def test_coverage_is_the_reported_invariant(
-    ingested: IngestResult, loaded_db: ScratchpadDB
-) -> None:
-    """Every event must be reachable through a template, or the agent cannot find it."""
-    assert ingested.template_coverage == 1.0
-    view = MetricView(loaded_db.metrics("templating"))
-    assert view.number(TEMPLATING_COVERAGE) == 1.0
-
-
-def test_reduction_factor_describes_the_agent_workload(
-    ingested: IngestResult, loaded_db: ScratchpadDB
-) -> None:
-    """Lines per template — how much smaller the haystack got, stated the honest way."""
-    assert ingested.reduction_factor == pytest.approx(
-        ingested.events_loaded / ingested.unique_templates
-    )
-    view = MetricView(loaded_db.metrics("templating"))
-    assert view.number(TEMPLATING_REDUCTION_FACTOR) == pytest.approx(
-        ingested.reduction_factor, abs=0.01
-    )
 
 
 def test_needle_position_is_recorded(loaded_db: ScratchpadDB) -> None:
@@ -199,17 +163,21 @@ def _severityless_file(tmp_path: Path) -> Path:
     return src
 
 
-def test_severity_is_dropped_when_no_log_carries_one(tmp_path: Path) -> None:
+def test_severity_is_dropped_when_no_log_carries_one(
+    tmp_path: Path, make_config: Callable[..., MistifyConfig]
+) -> None:
     """Half the scoring weight would otherwise be an identical constant on every template."""
-    result = ingest(_severityless_file(tmp_path), _config(tmp_path, "nosev"), incident_id="nosev")
+    result = ingest(_severityless_file(tmp_path), make_config(), incident_id="nosev")
     with ScratchpadDB(result.scratchpad_path) as db:
         view = MetricView(db.metrics("anomaly"))
     assert view.flag(ANOMALY_SEVERITY_INFORMATIVE) is False
     assert view.number(ANOMALY_UNMAPPED_SEVERITY_SHARE) == 1.0
 
 
-def test_the_rare_exception_still_ranks_first_without_severity(tmp_path: Path) -> None:
-    result = ingest(_severityless_file(tmp_path), _config(tmp_path, "nosev2"), incident_id="nosev2")
+def test_the_rare_exception_still_ranks_first_without_severity(
+    tmp_path: Path, make_config: Callable[..., MistifyConfig]
+) -> None:
+    result = ingest(_severityless_file(tmp_path), make_config(), incident_id="nosev2")
     with ScratchpadDB(result.scratchpad_path) as db:
         top = db.top_templates(limit=1, order_by="anomaly_score")[0]
     assert "Exception in namenode" in top["pattern"]

@@ -8,6 +8,7 @@ investigator's read-only SQL channel.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -274,27 +275,30 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
-def _write_config(tmp_path: Path, *, vault: bool) -> Path:
-    config = MistifyConfig.model_validate(
-        {
-            "scratchpad": {"path": str(tmp_path / "incident_{incident_id}.sqlite")},
-            "drain3": {"snapshot_path": str(tmp_path / "drain3_{incident_id}.json")},
-            "report": {"output_dir": str(tmp_path / "reports")},
-            "redaction": {
+@pytest.fixture
+def write_config(make_config_file: Callable[..., Path], tmp_path: Path) -> Callable[..., Path]:
+    """The shared scratch config plus a vault, with the switch left as a parameter.
+
+    Both settings are load-bearing here: half these tests exercise the enabled path and half
+    the disabled one, and the vault file has to land in the scratch directory rather than the
+    `.cache` the default names.
+    """
+
+    def build(*, vault: bool) -> Path:
+        return make_config_file(
+            redaction={
                 "vault": vault,
                 "vault_path": str(tmp_path / "vault_{incident_id}.sqlite"),
-            },
-        }
-    )
-    path = tmp_path / f"config-{'on' if vault else 'off'}.yaml"
-    path.write_text(yaml.safe_dump(config.model_dump(mode="json")), encoding="utf-8")
-    return path
+            }
+        )
+
+    return build
 
 
 @pytest.fixture
-def vault_config(tmp_path: Path) -> Path:
+def vault_config(write_config: Callable[..., Path]) -> Path:
     """A config with the vault enabled, and a populated vault at the path it names."""
-    config_path = _write_config(tmp_path, vault=True)
+    config_path = write_config(vault=True)
     store_path = MistifyConfig.model_validate(
         yaml.safe_load(config_path.read_text(encoding="utf-8"))
     ).vault_path(INCIDENT)
@@ -371,9 +375,9 @@ def test_reveal_of_an_unknown_token_fails_clearly(runner: CliRunner, vault_confi
 
 
 def test_reveal_with_the_vault_disabled_explains_the_one_way_hash(
-    runner: CliRunner, tmp_path: Path
+    runner: CliRunner, write_config: Callable[..., Path]
 ) -> None:
-    config_path = _write_config(tmp_path, vault=False)
+    config_path = write_config(vault=False)
     result = runner.invoke(
         cli, ["reveal", "--incident-id", INCIDENT, "--all", "--config", str(config_path)]
     )
@@ -383,8 +387,10 @@ def test_reveal_with_the_vault_disabled_explains_the_one_way_hash(
     assert "re-ingest" in result.output
 
 
-def test_reveal_without_an_ingested_vault_fails_clearly(runner: CliRunner, tmp_path: Path) -> None:
-    config_path = _write_config(tmp_path, vault=True)
+def test_reveal_without_an_ingested_vault_fails_clearly(
+    runner: CliRunner, write_config: Callable[..., Path]
+) -> None:
+    config_path = write_config(vault=True)
     result = runner.invoke(
         cli, ["reveal", "--incident-id", "never-ingested", "--all", "--config", str(config_path)]
     )
@@ -419,8 +425,10 @@ def test_reveal_refuses_both_selections(runner: CliRunner, vault_config: Path) -
     assert "exactly one of --token or --all" in result.output
 
 
-def test_reveal_of_an_empty_vault_says_so(runner: CliRunner, tmp_path: Path) -> None:
-    config_path = _write_config(tmp_path, vault=True)
+def test_reveal_of_an_empty_vault_says_so(
+    runner: CliRunner, write_config: Callable[..., Path]
+) -> None:
+    config_path = write_config(vault=True)
     config = MistifyConfig.model_validate(yaml.safe_load(config_path.read_text("utf-8")))
     store_path = config.vault_path(INCIDENT)
     assert store_path is not None

@@ -2,30 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-import yaml
 from click.testing import CliRunner
 
 from mistify.cli import cli
-from mistify.common.config import MistifyConfig
 from tests.fixtures.synthetic_incident import ROOT_CAUSE_MARKER
 
 
 @pytest.fixture
-def config_file(tmp_path: Path) -> Path:
-    """A config on disk pointing every output at a scratch directory."""
-    config = MistifyConfig.model_validate(
-        {
-            "scratchpad": {"path": str(tmp_path / "incident_{incident_id}.sqlite")},
-            "drain3": {"snapshot_path": str(tmp_path / "drain3_{incident_id}.json")},
-            "report": {"output_dir": str(tmp_path / "reports")},
-        }
-    )
-    path = tmp_path / "config.yaml"
-    path.write_text(yaml.safe_dump(config.model_dump(mode="json")), encoding="utf-8")
-    return path
+def config_file(make_config_file: Callable[..., Path]) -> Path:
+    """The shared scratch config on disk, under the name every test here already uses."""
+    return make_config_file()
 
 
 @pytest.fixture
