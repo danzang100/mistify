@@ -93,7 +93,7 @@ def collect(db: ScratchpadDB) -> ReportData:
         )
 
     top_templates = []
-    for template in db.top_templates(limit=15, order_by="severity"):
+    for template in db.top_templates(limit=15, order_by="anomaly_score"):
         item = dict(template)
         item["max_severity"] = SEVERITIES[int(item["max_severity_rank"])]
         top_templates.append(item)
@@ -164,6 +164,21 @@ def _health_warnings(metrics: list[dict[str, Any]]) -> list[str]:
     mode = lookup.get(("redaction", "mode"))
     if mode and mode["value"] == "off":
         warnings.append("Redaction was disabled for this run.")
+
+    calibration = lookup.get(("templating", "calibration_status"))
+    if calibration and calibration["value"] == "out_of_band":
+        reason = lookup.get(("templating", "calibration_reason"))
+        detail = f" {reason['value']}" if reason else ""
+        warnings.append(f"Templating calibration found no threshold in the target band.{detail}")
+
+    over_merged = lookup.get(("templating", "over_merged_templates"))
+    if over_merged and (over_merged["value_num"] or 0) > 0:
+        ids = lookup.get(("templating", "over_merged_ids"))
+        detail = f" (templates {ids['value']})" if ids else ""
+        warnings.append(
+            f"{int(over_merged['value_num'])} template(s) span a wide severity range"
+            f"{detail} — distinct conditions may have been merged into one template."
+        )
 
     return warnings
 

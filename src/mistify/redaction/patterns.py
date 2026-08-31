@@ -8,16 +8,30 @@ Scope note: `credit_card` is deliberately absent. The pattern proposed for it in
 scaffolding matched any 13-16 digit run, which shreds epoch-millisecond timestamps, request
 IDs and trace IDs -- the correlation keys an investigation depends on. It is out of scope for
 v1 (decision G5); if it returns it needs a Luhn checksum and the false-positive corpus.
+
+`phone` is implemented but off by default for the same reason, one step milder: the canonical
+`NNN-NNN-NNNN` shape is structurally identical to a numeric identifier or a range, and unlike
+a card number it carries no checksum to disambiguate. Tightening it to require a `+` country
+code or parenthesised area code would miss the most common written form, so the honest choice
+is to leave it available and let a deployment that actually logs phone numbers turn it on.
 """
 
 from __future__ import annotations
 
 import re
 
-__all__ = ["ENTITY_ORDER", "PATTERNS", "SUPPORTED_ENTITIES", "placeholder_pattern"]
+__all__ = [
+    "CONTEXT_GUARDS",
+    "DEFAULT_ENTITIES",
+    "ENTITY_ORDER",
+    "PATTERNS",
+    "SUPPORTED_ENTITIES",
+    "placeholder_pattern",
+]
 
-#: Order matters -- see module docstring.
-ENTITY_ORDER: tuple[str, ...] = ("api_key", "email", "ipv4")
+#: Order matters -- see module docstring. Longer/structured entities precede the ones whose
+#: matches could otherwise be found inside them.
+ENTITY_ORDER: tuple[str, ...] = ("api_key", "email", "ipv6", "ipv4", "ssn", "phone")
 
 PATTERNS: dict[str, re.Pattern[str]] = {
     # Key/token assignments: capture the value, keep the key name visible so the log still
@@ -28,6 +42,17 @@ PATTERNS: dict[str, re.Pattern[str]] = {
         r"(?P<value>[A-Za-z0-9_\-\.]{16,})"
     ),
     "email": re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]*[A-Za-z]\b"),
+    # Full eight-group form, or any form containing "::". Requiring one of those two shapes
+    # is what keeps clock times out: "14:22:01" has colons but neither eight groups nor a
+    # double colon, and a timestamp swallowed by the address pattern would misalign every
+    # time slice downstream.
+    "ipv6": re.compile(
+        r"(?<![\w:.])(?:"
+        r"(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}"
+        r"|(?:[0-9A-Fa-f]{1,4}:){1,7}:(?:[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4}){0,6})?"
+        r"|::(?:[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4}){0,6})?"
+        r")(?![\w:.])"
+    ),
     # Bounded by non-digit/non-dot so version strings like 1.2.3.4-rc and longer dotted
     # sequences are not mistaken for addresses.
     "ipv4": re.compile(
@@ -35,9 +60,20 @@ PATTERNS: dict[str, re.Pattern[str]] = {
         r"(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
         r"(?![\d.])"
     ),
+    # Dashes are required. A bare nine-digit run is the credit-card mistake again.
+    "ssn": re.compile(r"(?<![\d-])\d{3}-\d{2}-\d{4}(?![\d-])"),
+    # Off by default -- see module docstring.
+    "phone": re.compile(
+        r"(?<![\d.\-])(?:\+\d{1,3}[ .-]?)?(?:\(\d{3}\)[ .-]?|\d{3}[ .-])"
+        r"\d{3}[ .-]\d{4}(?![\d.\-])"
+    ),
 }
 
 SUPPORTED_ENTITIES: frozenset[str] = frozenset(PATTERNS)
+
+#: Entities enabled unless a config says otherwise. Everything here survives the
+#: false-positive corpus in `tests/test_redaction.py` with no known collisions.
+DEFAULT_ENTITIES: tuple[str, ...] = ("api_key", "email", "ipv6", "ipv4", "ssn")
 
 #: Per-entity context guards, matched against the text immediately preceding a candidate.
 #: A hit means the match is a false positive and is left alone.

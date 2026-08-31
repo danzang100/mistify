@@ -125,3 +125,35 @@ def test_orphan_events_are_called_out(loaded_db: ScratchpadDB) -> None:
 def test_clean_run_has_no_warnings_section(loaded_db: ScratchpadDB) -> None:
     run_skeleton_investigation(loaded_db)
     assert "### Warnings" not in generate_report(loaded_db)
+
+
+# --------------------------------------------------------------- Phase 2 health warnings
+
+
+def test_out_of_band_calibration_is_called_out(loaded_db: ScratchpadDB) -> None:
+    """A pathological file must produce a flagged report, not a confident-looking one."""
+    loaded_db.record_metric("templating", "calibration_status", "out_of_band")
+    loaded_db.record_metric("templating", "calibration_reason", "closest was 0.9800 at sim_th=0.5")
+    report = generate_report(loaded_db)
+    assert "no threshold in the target band" in report
+    assert "closest was 0.9800" in report
+
+
+def test_in_band_calibration_produces_no_warning(loaded_db: ScratchpadDB) -> None:
+    run_skeleton_investigation(loaded_db)
+    report = generate_report(loaded_db)
+    assert "no threshold in the target band" not in report
+
+
+def test_over_merged_templates_are_called_out(loaded_db: ScratchpadDB) -> None:
+    """Over-clustering is invisible in the compression ratio, so it needs its own line."""
+    loaded_db.record_metric("templating", "over_merged_templates", 2)
+    loaded_db.record_metric("templating", "over_merged_ids", "4,7")
+    report = generate_report(loaded_db)
+    assert "span a wide severity range" in report
+    assert "templates 4,7" in report
+
+
+def test_clean_run_reports_no_over_merging(loaded_db: ScratchpadDB) -> None:
+    run_skeleton_investigation(loaded_db)
+    assert "span a wide severity range" not in generate_report(loaded_db)

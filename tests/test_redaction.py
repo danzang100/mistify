@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from mistify.common.models import LogRecord, parse_timestamp
-from mistify.redaction.patterns import PATTERNS, SUPPORTED_ENTITIES
+from mistify.redaction.patterns import (
+    DEFAULT_ENTITIES,
+    ENTITY_ORDER,
+    PATTERNS,
+    SUPPORTED_ENTITIES,
+)
 from mistify.redaction.redactor import Redactor
 
 
@@ -195,3 +202,216 @@ def test_version_guard_is_context_scoped() -> None:
     out = redactor.redact("upgraded to version 1.2.3.4 then called 1.2.3.4")
     assert out.count("1.2.3.4") == 1
     assert "[IPV4:" in out
+
+
+# --------------------------------------------------------- ipv6 detection
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+        "fe80::1",
+        "::1",
+        "::",
+        "2001:db8::8a2e:370:7334",
+    ],
+)
+def test_ipv6_addresses_are_redacted(address: str) -> None:
+    """Both accepted shapes: the full eight-group form and anything containing `::`."""
+    out = Redactor().redact(f"peer {address} unreachable")
+    assert address not in out
+    assert "[IPV6:" in out
+
+
+def test_ipv6_placeholder_has_the_expected_shape() -> None:
+    assert re.fullmatch(r"\[IPV6:[0-9a-f]{4}\]", Redactor().redact("fe80::1"))
+
+
+def test_ipv6_is_redacted_in_structured_fields() -> None:
+    redactor = Redactor()
+    record = redactor.redact_record(_record("peer down", peer={"addr": "fe80::1"}))
+    assert record.fields["peer"]["addr"].startswith("[IPV6:")
+
+
+# --------------------------------------------------- ipv6 false positives
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "14:22:01",
+        "2026-08-30T14:22:01Z",
+        "elapsed 01:30:45",
+        "at 9:05:33.221",
+        "took 00:00:02",
+        "cache 1:2:3",
+        "sha 3f2a:9b1c",
+    ],
+)
+def test_clock_times_are_not_mistaken_for_addresses(text: str) -> None:
+    """The critical regression: a timestamp eaten by the address pattern misaligns every
+    downstream time slice, so colon-separated clock values must survive untouched."""
+    assert Redactor().redact(text) == text
+
+
+def test_timestamp_survives_alongside_a_real_address_on_the_same_line() -> None:
+    """Guards the guard: keeping clock times out must not disable ipv6 detection."""
+    out = Redactor().redact("2026-08-30T14:22:01Z peer fe80::1 down after 00:00:02")
+    assert "fe80::1" not in out
+    assert "[IPV6:" in out
+    assert "2026-08-30T14:22:01Z" in out
+    assert "00:00:02" in out
+
+
+# ---------------------------------------------------------- ssn detection
+
+
+def test_ssn_is_redacted() -> None:
+    out = Redactor().redact("claim filed for 123-45-6789 yesterday")
+    assert "123-45-6789" not in out
+    assert "[SSN:" in out
+
+
+def test_ssn_placeholder_has_the_expected_shape() -> None:
+    assert re.fullmatch(r"\[SSN:[0-9a-f]{4}\]", Redactor().redact("123-45-6789"))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "id 123456789 ok",
+        "request_id 1772461321000 completed",
+        "acct 12-345-6789 reopened",
+        "batch 1234-56-7890 queued",
+        "ref 123-45-67890 rejected",
+        "ref 0123-45-6789 rejected",
+    ],
+)
+def test_bare_digit_runs_are_not_mistaken_for_ssns(text: str) -> None:
+    """Dashes in the 3-2-4 shape are required -- a bare nine-digit run is the credit-card
+    mistake again, and it would shred epoch-millisecond identifiers (decision G5)."""
+    assert Redactor().redact(text) == text
+
+
+# -------------------------------------------------------- phone detection
+
+
+@pytest.mark.parametrize(
+    "number",
+    [
+        "+1 555 123 4567",
+        "(555) 123-4567",
+        "555-123-4567",
+        "+44 555.123.4567",
+    ],
+)
+def test_phone_numbers_are_redacted_when_explicitly_enabled(number: str) -> None:
+    out = Redactor(entities=["phone"]).redact(f"callback to {number} scheduled")
+    assert number not in out
+    assert "[PHONE:" in out
+
+
+def test_phone_placeholder_has_the_expected_shape() -> None:
+    assert re.fullmatch(
+        r"\[PHONE:[0-9a-f]{4}\]", Redactor(entities=["phone"]).redact("555-123-4567")
+    )
+
+
+def test_phone_has_a_known_false_positive_on_numeric_ranges() -> None:
+    """Documents a known limitation rather than asserting correctness.
+
+    `100-200-3000` is a dashed numeric range, not a number to call, but it is structurally
+    identical to `NNN-NNN-NNNN` and unlike a card number a phone number carries no checksum
+    to tell the two apart. This unfixable collision is precisely why `phone` ships off by
+    default: a deployment that actually logs phone numbers opts in and accepts the cost.
+    """
+    redactor = Redactor(entities=["phone"])
+    out = redactor.redact("sharding rows 100-200-3000 across replicas")
+    assert "100-200-3000" not in out
+    assert "[PHONE:" in out
+    assert redactor.counts == {"phone": 1}
+
+
+# ----------------------------------------------- new-entity consistency
+
+
+def test_ipv6_value_yields_the_same_token_across_lines() -> None:
+    redactor = Redactor()
+    first = redactor.redact("session opened from fe80::1")
+    second = redactor.redact("session closed from fe80::1")
+    token = first.split("from ")[1]
+    assert token.startswith("[IPV6:")
+    assert token in second
+
+
+def test_different_ipv6_values_yield_different_tokens() -> None:
+    out = Redactor().redact("hop fe80::1 then 2001:db8::1")
+    tokens = {part for part in out.split() if part.startswith("[IPV6:")}
+    assert len(tokens) == 2
+
+
+def test_ssn_value_yields_the_same_token_across_lines() -> None:
+    redactor = Redactor()
+    first = redactor.redact("lookup 123-45-6789 started")
+    second = redactor.redact("lookup 123-45-6789 finished")
+    token = first.split("lookup ")[1].split(" ")[0]
+    assert token.startswith("[SSN:")
+    assert token in second
+
+
+def test_phone_value_yields_the_same_token_across_lines() -> None:
+    redactor = Redactor(entities=["phone"])
+    first = redactor.redact("dialled 555-123-4567 once")
+    second = redactor.redact("dialled 555-123-4567 twice")
+    token = first.split("dialled ")[1].split(" ")[0]
+    assert token.startswith("[PHONE:")
+    assert token in second
+
+
+def test_counts_cover_the_new_entities() -> None:
+    redactor = Redactor()
+    redactor.redact("peer fe80::1 ssn 123-45-6789 host 10.0.0.1")
+    assert redactor.counts == {"ipv6": 1, "ssn": 1, "ipv4": 1}
+
+
+# ------------------------------------------------ new-entity configuration
+
+
+def test_default_entities_exclude_phone() -> None:
+    """Decision G5, one step milder than credit_card: available, but opt-in."""
+    assert "phone" not in DEFAULT_ENTITIES
+    assert "phone" in SUPPORTED_ENTITIES
+    assert "phone" in PATTERNS
+
+
+def test_default_entities_include_the_new_ipv6_and_ssn_patterns() -> None:
+    assert DEFAULT_ENTITIES == ("api_key", "email", "ipv6", "ipv4", "ssn")
+
+
+@pytest.mark.parametrize(
+    "number",
+    [
+        "+1 555 123 4567",
+        "(555) 123-4567",
+        "555-123-4567",
+        "+44 555.123.4567",
+    ],
+)
+def test_phone_survives_the_default_entity_set(number: str) -> None:
+    """The shipped default config enables `DEFAULT_ENTITIES`, which leaves phone alone."""
+    redactor = Redactor(entities=list(DEFAULT_ENTITIES))
+    text = f"callback to {number} scheduled"
+    assert redactor.redact(text) == text
+    assert redactor.counts == {}
+
+
+def test_bare_redactor_falls_back_to_defaults_not_every_pattern() -> None:
+    """The opt-in guarantee must hold at the library level, not only via config.
+
+    Falling back to the whole pattern library opted any direct `Redactor()` caller into
+    `phone`, and with it the `100-200-3000` collision, without them ever asking for it.
+    """
+    assert Redactor().entities == [e for e in ENTITY_ORDER if e in DEFAULT_ENTITIES]
+    assert "phone" not in Redactor().entities
+    assert Redactor().redact("call 555-123-4567") == "call 555-123-4567"

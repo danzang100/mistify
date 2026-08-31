@@ -52,12 +52,15 @@ ingestion produced an empty scratchpad — check the ingest health metrics below
 None recorded.
 {% endif %}
 
-## Top templates by severity
+## Templates by anomaly score
 
-| ID | Max severity | Count | First seen | Last seen | Pattern |
-|---|---|---|---|---|---|
+Scored deterministically from severity, burstiness and rarity — no model involvement, so a
+high score here is independent of whatever narrative the investigation settled on.
+
+| ID | Anomaly | Max severity | Count | First seen | Last seen | Pattern |
+|---|---|---|---|---|---|---|
 {% for t in top_templates -%}
-| {{ t.template_id }} | {{ t.max_severity }} | {{ t.occurrence_count }} | {{ t.first_seen }} | {{ t.last_seen }} | {{ t.pattern | replace("|", "\\|") }} |
+| {{ t.template_id }} | {{ "%.3f" | format(t.anomaly_score) }} | {{ t.max_severity }} | {{ t.occurrence_count }} | {{ t.first_seen }} | {{ t.last_seen }} | {{ t.pattern | replace("|", "\\|") }} |
 {% endfor %}
 
 ## Pipeline health

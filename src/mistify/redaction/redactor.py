@@ -18,7 +18,12 @@ from dataclasses import replace
 from typing import Any
 
 from mistify.common.models import LogRecord
-from mistify.redaction.patterns import CONTEXT_GUARDS, ENTITY_ORDER, PATTERNS
+from mistify.redaction.patterns import (
+    CONTEXT_GUARDS,
+    DEFAULT_ENTITIES,
+    ENTITY_ORDER,
+    PATTERNS,
+)
 
 __all__ = ["Redactor"]
 
@@ -33,7 +38,11 @@ class Redactor:
             raise ValueError(f"unknown redaction mode: {mode!r}")
         self.mode = mode
         self.salt = salt
-        requested = list(PATTERNS) if entities is None else list(entities)
+        # Falls back to DEFAULT_ENTITIES, not to every pattern in the library. Opting a
+        # caller into `phone` -- and its known collision with numeric identifiers -- simply
+        # because they did not name a list would make the opt-in guarantee in
+        # `redaction/patterns.py` hold only for callers that route through config.
+        requested = list(DEFAULT_ENTITIES) if entities is None else list(entities)
         unknown = sorted(set(requested) - set(PATTERNS))
         if unknown:
             raise ValueError(f"unknown redaction entities: {', '.join(unknown)}")
@@ -49,6 +58,15 @@ class Redactor:
     def counts(self) -> dict[str, int]:
         """Redactions performed per entity, for the run's health metrics."""
         return dict(self._counts)
+
+    def reset_counts(self) -> None:
+        """Clear the tally.
+
+        Used when a redactor is reused across a preparatory pass and the real load -- the
+        preparatory redactions are not part of the run being reported on, and leaving them in
+        would inflate the health metric.
+        """
+        self._counts.clear()
 
     def _token(self, entity: str, value: str) -> str:
         digest = hashlib.blake2s(

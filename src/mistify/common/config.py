@@ -11,12 +11,13 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from mistify.redaction.patterns import SUPPORTED_ENTITIES
+from mistify.redaction.patterns import DEFAULT_ENTITIES, SUPPORTED_ENTITIES
 
 __all__ = [
     "AdaptersConfig",
+    "AnomalyConfig",
     "BootstrapConfig",
     "Drain3Config",
     "LLMConfig",
@@ -63,13 +64,68 @@ class Drain3Config(_Strict):
     persistence: Literal["file", "none"] = "file"
     snapshot_path: str = ".cache/drain3_{incident_id}.json"
 
+    #: Try several thresholds against a sample and keep the one whose compression ratio
+    #: lands in the target band, instead of trusting one hardcoded guess (architecture
+    #: §6.1). When disabled, `sim_th` above is used as-is.
+    calibrate: bool = True
+    calibration_candidates: list[float] = Field(default_factory=lambda: [0.3, 0.4, 0.5])
+    calibration_sample_size: int = Field(default=2000, ge=1)
+    #: Unique templates over lines. Above the maximum is under-clustering (no compression);
+    #: below the minimum suggests distinct conditions were merged.
+    target_ratio_min: float = Field(default=0.002, ge=0.0, le=1.0)
+    target_ratio_max: float = Field(default=0.30, ge=0.0, le=1.0)
+    #: A template spanning this many severity levels is flagged as probably over-merged.
+    over_merge_severity_span: int = Field(default=3, ge=2)
+
+    @field_validator("calibration_candidates")
+    @classmethod
+    def _candidates_are_thresholds(cls, value: list[float]) -> list[float]:
+        if not value:
+            raise ValueError("calibration_candidates must not be empty")
+        if any(not 0.0 <= v <= 1.0 for v in value):
+            raise ValueError("calibration_candidates must all be between 0.0 and 1.0")
+        return value
+
+    @model_validator(mode="after")
+    def _band_is_ordered(self) -> Drain3Config:
+        if self.target_ratio_min > self.target_ratio_max:
+            raise ValueError("target_ratio_min must not exceed target_ratio_max")
+        return self
+
+
+class AnomalyConfig(_Strict):
+    """Weights for the deterministic template anomaly score (decision G3).
+
+    Relative contributions, normalised before use -- they do not need to sum to one. Phase 5
+    sweeps these against the eval corpus.
+    """
+
+    severity: float = Field(default=0.5, ge=0.0)
+    burstiness: float = Field(default=0.3, ge=0.0)
+    rarity: float = Field(default=0.2, ge=0.0)
+    #: Width of the time bucket burstiness is measured over, in minutes.
+    bucket_minutes: int = Field(default=1, ge=1)
+
+    @model_validator(mode="after")
+    def _at_least_one_positive_weight(self) -> AnomalyConfig:
+        if self.severity + self.burstiness + self.rarity <= 0:
+            raise ValueError("at least one anomaly weight must be greater than zero")
+        return self
+
+    def weights(self) -> dict[str, float]:
+        return {
+            "severity": self.severity,
+            "burstiness": self.burstiness,
+            "rarity": self.rarity,
+        }
+
 
 class RedactionConfig(_Strict):
     mode: Literal["strict", "permissive", "off"] = "strict"
-    #: Phase 1 ships the three entities the walking skeleton needs. The remaining entities
-    #: land in Phase 2 with the false-positive corpus that keeps them honest. `credit_card`
-    #: is deliberately out of scope for v1 (decision G5).
-    entities: list[str] = Field(default_factory=lambda: ["email", "ipv4", "api_key"])
+    #: `credit_card` is out of scope for v1 and `phone` is available but off by default --
+    #: both shapes collide with numeric identifiers and neither carries a checksum to tell
+    #: the difference (decision G5). See `redaction/patterns.py`.
+    entities: list[str] = Field(default_factory=lambda: list(DEFAULT_ENTITIES))
     #: Mixed into the entity hash so redaction tokens are not reversible via a rainbow table
     #: of common values. Correlation is preserved within a run regardless.
     salt: str = ""
@@ -115,6 +171,7 @@ class MistifyConfig(_Strict):
     adapters: AdaptersConfig = Field(default_factory=AdaptersConfig)
     bootstrap: BootstrapConfig = Field(default_factory=BootstrapConfig)
     drain3: Drain3Config = Field(default_factory=Drain3Config)
+    anomaly: AnomalyConfig = Field(default_factory=AnomalyConfig)
     redaction: RedactionConfig = Field(default_factory=RedactionConfig)
     scratchpad: ScratchpadConfig = Field(default_factory=ScratchpadConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)

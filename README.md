@@ -10,15 +10,16 @@ are in [`docs/log-agent-v1-build-plan.html`](docs/log-agent-v1-build-plan.html) 
 
 ## Status
 
-**Phase 1 of 6 — walking skeleton.** The full path from a JSON Lines file to a rendered
-markdown report runs end to end, but the investigation step is a hardcoded heuristic, not a
-model-driven loop. See the build plan for what each remaining phase adds.
+**Phase 2 of 6 complete.** The full path from a JSON Lines file to a rendered markdown report
+runs end to end, and templates carry a deterministic anomaly score. The investigation step is
+still a hardcoded heuristic rather than a model-driven loop — that arrives in Phase 3. See the
+build plan for what each remaining phase adds.
 
 | Phase | Scope | State |
 |-------|-------|-------|
 | 0 | Decisions, repo skeleton, config | done |
 | 1 | Walking skeleton: JSONL → redact → Drain3 → SQLite → report | done |
-| 2 | Read-only SQL hardening, `anomaly_score`, full redaction set | not started |
+| 2 | `anomaly_score`, Drain3 threshold calibration, over-merge detection, full redaction set | done |
 | 3 | Real agent loop, adversarial pass, rebuttal | not started |
 | 4 | Elastic / Loki / OTLP adapters, unknown-format bootstrapper | not started |
 | 5 | Evaluation harness (Loghub, LogDx-CI, baselines) | not started |

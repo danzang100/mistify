@@ -168,6 +168,67 @@ class ScratchpadDB:
         self._conn.commit()
         return len(summaries)
 
+    def template_burst_stats(self, bucket_minutes: int = 1) -> list[dict[str, Any]]:
+        """Per-template aggregates the anomaly scorer needs (decision G3).
+
+        Buckets on an ISO minute prefix, which works because timestamps are normalised to
+        UTC at ingestion -- a raw local-time string would bucket two services differently.
+        """
+        if bucket_minutes < 1:
+            raise ValueError("bucket_minutes must be at least 1")
+        bucket = self._bucket_expr(bucket_minutes)
+        rows = self._conn.execute(
+            "WITH per_bucket AS ("
+            f"  SELECT template_id, {bucket} AS bucket, COUNT(*) AS n"
+            "   FROM log_events GROUP BY template_id, bucket"
+            "), burst AS ("
+            "  SELECT template_id, MAX(n) AS max_per_bucket, COUNT(*) AS active_buckets"
+            "   FROM per_bucket GROUP BY template_id"
+            ")"
+            " SELECT t.template_id, t.occurrence_count, t.max_severity_rank,"
+            "        COALESCE(b.max_per_bucket, 0) AS max_per_bucket,"
+            "        COALESCE(b.active_buckets, 0) AS active_buckets"
+            " FROM templates t LEFT JOIN burst b ON b.template_id = t.template_id"
+            " ORDER BY t.template_id"
+        )
+        return [dict(row) for row in rows]
+
+    def bucket_count(self, bucket_minutes: int = 1) -> int:
+        """Number of distinct time buckets the incident spans.
+
+        Burstiness is measured against this, not against the buckets an individual template
+        occupies -- see `scratchpad.anomaly`.
+        """
+        if bucket_minutes < 1:
+            raise ValueError("bucket_minutes must be at least 1")
+        row = self._conn.execute(
+            f"SELECT COUNT(DISTINCT {self._bucket_expr(bucket_minutes)}) AS n FROM log_events"
+        ).fetchone()
+        return int(row["n"])
+
+    @staticmethod
+    def _bucket_expr(bucket_minutes: int) -> str:
+        """SQL expression bucketing `ts` into `bucket_minutes`-wide slots.
+
+        substr(ts, 1, 16) is "YYYY-MM-DDTHH:MM"; wider buckets divide the minute field.
+        This works because timestamps are normalised to UTC at ingestion -- bucketing raw
+        local-time strings would place two services in different slots for the same instant.
+        """
+        if bucket_minutes == 1:
+            return "substr(ts, 1, 16)"
+        return (
+            "substr(ts, 1, 14) || "
+            f"CAST(CAST(substr(ts, 15, 2) AS INTEGER) / {bucket_minutes} AS TEXT)"
+        )
+
+    def update_anomaly_scores(self, scores: Sequence[tuple[int, float]]) -> int:
+        self._conn.executemany(
+            "UPDATE templates SET anomaly_score = ? WHERE template_id = ?",
+            [(score, template_id) for template_id, score in scores],
+        )
+        self._conn.commit()
+        return len(scores)
+
     def record_metric(self, stage: str, metric: str, value: object) -> None:
         """Record one per-stage health metric, replacing any prior value for the same key."""
         numeric = float(value) if isinstance(value, (bool, int, float)) else None

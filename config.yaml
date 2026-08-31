@@ -16,17 +16,33 @@ bootstrap:            # consumed from Phase 4
   min_match_rate: 0.85
 
 drain3:
-  sim_th: 0.4
+  sim_th: 0.4                  # used directly when calibrate is false
   depth: 4
   max_clusters: 2000
   persistence: file
   snapshot_path: .cache/drain3_{incident_id}.json
+  # Try each candidate against a sample and keep the one whose compression ratio lands in
+  # the band, rather than trusting one guess about an unseen file (architecture §6.1).
+  calibrate: true
+  calibration_candidates: [0.3, 0.4, 0.5]
+  calibration_sample_size: 2000
+  target_ratio_min: 0.002      # below this, distinct conditions may have been merged
+  target_ratio_max: 0.30       # above this, almost no compression was achieved
+  over_merge_severity_span: 3
+
+anomaly:
+  # Relative weights for the deterministic template score. Normalised before use.
+  severity: 0.5
+  burstiness: 0.3
+  rarity: 0.2
+  bucket_minutes: 1
 
 redaction:
   mode: strict
   # Runs immediately after adapter parse(), before templating and before any model call.
-  # Phase 2 adds ipv6, ssn and phone alongside their false-positive corpus.
-  entities: [email, ipv4, api_key]
+  # `phone` is supported but off by default, and `credit_card` is out of scope for v1 --
+  # both collide with numeric identifiers and neither has a checksum (decision G5).
+  entities: [api_key, email, ipv6, ipv4, ssn]
   salt: ""
 
 scratchpad:

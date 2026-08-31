@@ -21,7 +21,9 @@ from mistify.adapters.registry import detect_format, get_adapter, read_sample
 from mistify.common.config import MistifyConfig
 from mistify.common.models import LogRecord
 from mistify.redaction.redactor import Redactor
+from mistify.scratchpad.anomaly import score_templates
 from mistify.scratchpad.db import ScratchpadDB
+from mistify.templating.calibration import calibrate_sim_th, find_over_merged
 from mistify.templating.drain_wrapper import DrainTemplater
 
 __all__ = ["IngestResult", "derive_incident_id", "ingest"]
@@ -44,6 +46,9 @@ class IngestResult:
     unique_templates: int
     compression_ratio: float
     parse_errors: int
+    sim_th: float
+    calibration_status: str
+    over_merged: int
     redaction_counts: dict[str, int] = field(default_factory=dict)
 
 
@@ -99,8 +104,33 @@ def ingest(
         entities=config.redaction.entities,
         salt=config.redaction.salt,
     )
+    # Calibration reads a sample through the same parse-then-redact path the real load
+    # uses, so the thresholds are measured against the text Drain3 will actually cluster --
+    # calibrating on unredacted lines would tune for a different input than the one used.
+    calibration = None
+    sim_th = config.drain3.sim_th
+    if config.drain3.calibrate:
+        sample_adapter = get_adapter(adapter.format_name)
+        sample_messages: list[str] = []
+        for record in sample_adapter.parse(source_path):
+            sample_messages.append(redactor.redact(record.message))
+            if len(sample_messages) >= config.drain3.calibration_sample_size:
+                break
+        calibration = calibrate_sim_th(
+            sample_messages,
+            candidates=config.drain3.calibration_candidates,
+            target_min=config.drain3.target_ratio_min,
+            target_max=config.drain3.target_ratio_max,
+            depth=config.drain3.depth,
+            max_clusters=config.drain3.max_clusters,
+        )
+        sim_th = calibration.chosen_sim_th
+        # The calibration pass redacted its sample too; those counts are not part of the
+        # real load and would double-count in the health metrics.
+        redactor.reset_counts()
+
     templater = DrainTemplater(
-        sim_th=config.drain3.sim_th,
+        sim_th=sim_th,
         depth=config.drain3.depth,
         max_clusters=config.drain3.max_clusters,
         snapshot_path=config.snapshot_path(incident_id),
@@ -133,6 +163,14 @@ def ingest(
         db.upsert_templates(summaries)
         templater.snapshot()
 
+        scored = score_templates(
+            db.template_burst_stats(config.anomaly.bucket_minutes),
+            total_buckets=db.bucket_count(config.anomaly.bucket_minutes),
+            weights=config.anomaly.weights(),
+        )
+        db.update_anomaly_scores([(c.template_id, c.score) for c in scored])
+        over_merged = find_over_merged(summaries, config.drain3.over_merge_severity_span)
+
         stats = adapter.stats
         db.record_metric("ingest", "format", adapter.format_name)
         db.record_metric(
@@ -152,8 +190,28 @@ def ingest(
 
         db.record_metric("templating", "unique_templates", templater.unique_templates)
         db.record_metric("templating", "compression_ratio", round(templater.compression_ratio, 5))
-        db.record_metric("templating", "sim_th", config.drain3.sim_th)
+        db.record_metric("templating", "sim_th", sim_th)
         db.record_metric("templating", "depth", config.drain3.depth)
+        if calibration is not None:
+            db.record_metric("templating", "calibration_status", calibration.status)
+            db.record_metric("templating", "calibration_candidates", calibration.as_metric())
+            db.record_metric("templating", "calibration_reason", calibration.reason)
+        else:
+            db.record_metric("templating", "calibration_status", "disabled")
+        db.record_metric("templating", "over_merged_templates", len(over_merged))
+        if over_merged:
+            db.record_metric(
+                "templating",
+                "over_merged_ids",
+                ",".join(str(t.template_id) for t in over_merged),
+            )
+
+        db.record_metric("anomaly", "scored_templates", len(scored))
+        db.record_metric("anomaly", "weights", str(config.anomaly.weights()))
+        db.record_metric("anomaly", "bucket_minutes", config.anomaly.bucket_minutes)
+        if scored:
+            db.record_metric("anomaly", "top_template_id", scored[0].template_id)
+            db.record_metric("anomaly", "top_score", round(scored[0].score, 4))
 
         db.record_metric("scratchpad", "orphan_events", db.orphan_event_count())
 
@@ -166,5 +224,8 @@ def ingest(
             unique_templates=templater.unique_templates,
             compression_ratio=templater.compression_ratio,
             parse_errors=stats.parse_errors,
+            sim_th=sim_th,
+            calibration_status=calibration.status if calibration else "disabled",
+            over_merged=len(over_merged),
             redaction_counts=redactor.counts,
         )

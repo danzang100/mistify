@@ -45,10 +45,37 @@ including a control test proving the leak check can actually fail.
 `query_templates` ordering enum, and step 3 of the adversarial check.
 
 **Now:** the column ships in `0001_init.sql` and `top_templates(order_by="anomaly_score")`
-works. Computation lands in **Phase 2** as a deterministic post-load SQL pass:
-`rarity` (inverse log frequency) × `severity_weight` × `burstiness` (max events in any
-one-minute bucket ÷ mean). No model call, no baseline corpus. Cross-incident novelty waits
-for reusable template trees.
+works. Scoring shipped in Phase 2 as a deterministic post-load pass over the scratchpad. No
+model call, no baseline corpus — the score comes from the incident's own distribution, so it
+works on the first file from a service nobody has ingested before. Cross-incident novelty
+still waits for reusable template trees.
+
+**Correction:** this document previously recorded the score as
+`rarity × severity_weight × burstiness`. That was wrong and the implementation deliberately
+differs. It is a **weighted sum** — severity 0.5, burstiness 0.3, rarity 0.2, normalised.
+A product zeroes the entire score whenever any single component is zero, and the most frequent
+template in any incident has rarity exactly 0 by construction. Under a product the loudest
+template in the file would score zero no matter how severe it was.
+
+The three components:
+
+- **severity** — a non-linear weight per level, TRACE `0.0` through FATAL `1.0`. The step from
+  WARN to ERROR should count for more than the step from TRACE to DEBUG.
+- **burstiness** — max events in any one-minute bucket against the mean over the *whole
+  incident span*, mapped through `1 - 1/ratio` so extreme peaks saturate instead of running
+  away. The denominator is the subtlety found during implementation: measuring against the
+  buckets a template itself occupies is wrong, because a template firing 40 times inside one
+  minute occupies that single bucket uniformly and scores as perfectly even — exactly
+  inverting the signal the component exists to capture.
+- **rarity** — inverse log frequency, scaled against the most common template in the incident.
+
+The weights are config-driven (`anomaly:` in `config.yaml`) rather than constants, so the
+Phase 5 evaluation harness can sweep them instead of requiring a code change per experiment.
+Components are retained alongside the score, not collapsed into it, so a report or the
+adversarial pass can say *why* a template ranked where it did rather than quoting an
+unexplained number.
+
+**Where:** `mistify/scratchpad/anomaly.py`. Tests in `tests/test_anomaly.py`.
 
 **Amend:** architecture §4 — move anomaly scoring out of "future".
 
@@ -82,6 +109,18 @@ false-positive corpus first.
 A related fix shipped alongside: `1.2.3.4` is a valid address shape, so version strings were
 being redacted as IPs. Handled with a context guard (`CONTEXT_GUARDS` in
 `redaction/patterns.py`) rather than by loosening the address pattern.
+
+**Phase 2 addition:** `phone` is implemented but **off by default**, for the same reason as
+credit_card one step milder. The canonical `NNN-NNN-NNNN` shape is structurally identical to a
+numeric identifier or a range, and unlike a card number it carries no checksum to
+disambiguate. Tightening it to require a `+` country code or a parenthesised area code would
+miss the most common written form, so it is available and opt-in rather than silently
+destroying identifiers in every deployment that never logs a phone number. Default entities
+are now `api_key`, `email`, `ipv6`, `ipv4`, `ssn`.
+
+`ipv6` was written to require either a full eight-group form or a `::`. That requirement is
+what keeps clock times out: `14:22:01` has colons but neither eight groups nor a double colon,
+and a timestamp swallowed by the address pattern would misalign every time slice downstream.
 
 **Amend:** scaffolding §6; architecture §2.3a entity list.
 
@@ -138,3 +177,44 @@ written as one it would pass everything.
 | Entailment judge model | `claude-opus-5` — distinct from the adversarial model. |
 | `LogRecord.message` | Added alongside `raw`. `raw` stays the unmodified source line; `message` is the free-text portion the templater clusters on. Templating a whole JSON line produces templates full of key names. |
 | Phase 1 redaction entities | `email`, `ipv4`, `api_key`. The rest arrive in Phase 2 with their false-positive corpus. |
+
+---
+
+## Phase 2 additions
+
+Decisions taken during Phase 2 rather than at the outset. They resolve architecture §6.1,
+which called for compression health to be measured but did not say how.
+
+### Drain3 similarity threshold is calibrated, not guessed
+
+A single hardcoded `sim_th` is a guess about a file nobody has looked at yet, and Drain3 fails
+in two opposite directions without raising either way. Under-clustering gives nearly every
+line its own template and no compression at all; over-clustering merges genuinely distinct
+error conditions into one template and destroys the signal the compression exists to preserve.
+
+Several candidate thresholds (`drain3.calibration_candidates`) are now measured against a
+redacted sample, and the one whose compression ratio — unique templates over lines — lands
+inside the target band is chosen. Every candidate and its ratio is recorded, so the choice is
+auditable rather than magic.
+
+Among in-band candidates the **highest** threshold wins. Higher thresholds cluster more
+strictly, so this prefers the least merging that still achieves acceptable compression: the
+two failure modes are not symmetric, since over-clustering silently destroys signal whereas
+under-clustering only costs tokens.
+
+When no candidate lands in band, the closest one is used and the run is flagged `out_of_band`
+rather than silently accepted. A pathological file should produce a visibly flagged run, not a
+confident-looking bad one.
+
+### Over-merge detection is separate from the ratio
+
+The compression ratio cannot see over-clustering. A low ratio looks like excellent compression
+right up until you notice one template holds both routine INFO lines and FATAL ones, which
+means two different conditions were merged and one of them is now invisible.
+
+So templates whose members span three or more severity levels
+(`drain3.over_merge_severity_span`) are flagged separately from the ratio check.
+
+**Where:** `mistify/templating/calibration.py`. Tests in `tests/test_calibration.py`.
+
+**Amend:** architecture §6.1 — the health metric is two checks, not one.
