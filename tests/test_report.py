@@ -11,6 +11,7 @@ from mistify.metrics import (
     ANOMALY_NEEDLE_POSITION,
     INGEST_PARSE_ERRORS,
     REDACTION_MODE,
+    REDACTION_VAULT,
     SCRATCHPAD_ORPHAN_EVENTS,
     TEMPLATING_CALIBRATION_REASON,
     TEMPLATING_CALIBRATION_STATUS,
@@ -466,15 +467,40 @@ def test_the_glance_counts_severities_and_sources_from_the_events(
 
 
 def test_placeholders_are_explained_when_redaction_ran(loaded_db: ScratchpadDB) -> None:
-    """A responder seeing `[API_KEY:700b]` needs to know the value is recoverable."""
+    """A responder seeing `[API_KEY:700b]` needs to know what it is and whether it resolves."""
+    report = generate_report(loaded_db)
+
+    assert "redacted placeholders" in report
+    assert "correlated across lines" in report
+
+
+def test_no_reveal_pointer_when_no_vault_was_kept(loaded_db: ScratchpadDB) -> None:
+    """`reveal` reads the vault, and the vault is off by default.
+
+    Printing the command on a run that kept nothing sends the reader to a failure and teaches
+    them the report's advice is not worth following.
+    """
+    loaded_db.record(REDACTION_VAULT, False)
+
+    report = generate_report(loaded_db)
+
+    assert "mistify reveal" not in report
+    assert "kept no vault" in report
+
+
+def test_the_reveal_pointer_appears_when_a_vault_was_kept(loaded_db: ScratchpadDB) -> None:
+    """Control for the test above: the pointer is suppressed by the vault being absent, not
+    removed outright."""
+    loaded_db.record(REDACTION_VAULT, True)
+
     assert "mistify reveal" in generate_report(loaded_db)
 
 
-def test_no_reveal_pointer_when_redaction_was_off(loaded_db: ScratchpadDB) -> None:
-    """Control for the note above: it describes what this run did, it is not boilerplate."""
+def test_nothing_about_placeholders_when_redaction_was_off(loaded_db: ScratchpadDB) -> None:
+    """No placeholders exist to explain."""
     loaded_db.record(REDACTION_MODE, "off")
 
-    assert "mistify reveal" not in generate_report(loaded_db)
+    assert "redacted placeholders" not in generate_report(loaded_db)
 
 
 def test_the_machinery_is_below_the_incident(loaded_db: ScratchpadDB) -> None:

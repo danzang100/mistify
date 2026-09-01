@@ -33,6 +33,7 @@ from mistify.metrics import (
     INVESTIGATE_INVESTIGATOR,
     INVESTIGATE_TOOL_CALLS,
     REDACTION_MODE,
+    REDACTION_VAULT,
     SCRATCHPAD_ORPHAN_EVENTS,
     TEMPLATING_CALIBRATION_REASON,
     TEMPLATING_CALIBRATION_STATUS,
@@ -292,6 +293,10 @@ def collect(db: ScratchpadDB) -> ReportData:
     # that redaction was disabled and point at a vault that was never written.
     mode = view.text(REDACTION_MODE) or incident.get("redaction_mode")
     redaction_on = bool(mode) and mode != "off"
+    # `reveal` reads the vault, and the vault is off by default. Telling every reader to run a
+    # command that will fail on most runs teaches them the report's advice is not worth
+    # following, so the pointer appears only when there is something to point at.
+    vault_kept = bool(view.flag(REDACTION_VAULT))
 
     investigator = view.text(INVESTIGATE_INVESTIGATOR)
     if investigator is None:
@@ -328,6 +333,7 @@ def collect(db: ScratchpadDB) -> ReportData:
         "objections": objections,
         "conceded_count": sum(1 for o in objections if o["conceded"]),
         "redaction_on": redaction_on,
+        "vault_kept": vault_kept,
         "version": __version__,
     }
 

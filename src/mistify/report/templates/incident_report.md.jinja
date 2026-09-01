@@ -195,8 +195,16 @@ signal is met before the noise.
 {% if redaction_on %}
 Values like `[IPV4:a7f2]` are redacted placeholders. The same source value always produces the
 same placeholder within this incident, so they can be correlated across lines — but the hash is
-one-way. `mistify reveal --incident-id {{ incident.incident_id }}` resolves them back when the
-run was made with `redaction.vault` enabled.
+one-way.
+{% if vault_kept %}
+This run kept a reversible vault:
+`mistify reveal --incident-id {{ incident.incident_id }} --token "[IPV4:a7f2]"` resolves one
+back to the original.
+{% else %}
+This run kept no vault, so the originals cannot be recovered from it. Re-run with
+`redaction.vault: true` if an investigation needs the real values — the vault is plaintext on
+disk, which is why it is off by default.
+{% endif %}
 {% endif %}
 
 ---
