@@ -36,7 +36,7 @@ TRUNCATED_LIMIT = 3
 
 def _template_rows(report: str) -> list[str]:
     """The data rows of the templates table, without its header or rule."""
-    section = report.split("## Templates by anomaly score")[1].split("## Pipeline health")[0]
+    section = report.split("## Templates by anomaly score")[1].split("# Appendix")[0]
     return [
         line
         for line in section.splitlines()
@@ -59,11 +59,29 @@ def test_report_declares_which_investigator_produced_it(loaded_db: ScratchpadDB)
 
 
 def test_report_includes_the_health_block(loaded_db: ScratchpadDB) -> None:
+    """Health metrics survive the appendix split -- both halves of it."""
     run_skeleton_investigation(loaded_db)
     report = generate_report(loaded_db)
-    assert "## Pipeline health" in report
+    assert "## Run signals" in report
+    assert "## Pipeline configuration and counters" in report
     assert "compression_ratio" in report
     assert "redacted_total" in report
+
+
+def test_the_metrics_a_reader_acts_on_are_separated_from_the_knobs(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """`template_coverage` invalidates the report when it slips; `depth` is a tuning choice.
+
+    Alphabetised into one table they sat next to each other, which gave a knob the same weight
+    as an invariant.
+    """
+    run_skeleton_investigation(loaded_db)
+    signals, detail = generate_report(loaded_db).split("## Pipeline configuration and counters")
+
+    assert "template_coverage" in signals
+    assert "| templating | depth |" not in signals
+    assert "| templating | depth |" in detail
 
 
 def test_report_includes_the_investigation_trail(loaded_db: ScratchpadDB) -> None:
@@ -128,7 +146,7 @@ def test_citation_check_flags_a_fabricated_template_id(loaded_db: ScratchpadDB) 
 def test_fabricated_citations_surface_in_the_report(loaded_db: ScratchpadDB) -> None:
     loaded_db.write_note(1, "invented claim", {"log_event_ids": [10**9]}, "high")
     report = generate_report(loaded_db)
-    assert "### Warnings" in report
+    assert "## Read this first" in report
     assert "do not exist" in report
 
 
@@ -316,3 +334,160 @@ def test_the_number_of_rows_shown_matches_the_limit(
 
 def test_every_template_is_listed_when_they_all_fit(loaded_db: ScratchpadDB) -> None:
     assert len(_template_rows(generate_report(loaded_db))) == loaded_db.template_count()
+
+
+# ------------------------------------------------ the verdict and what it leads with
+
+
+def _ranked_template_ids(db: ScratchpadDB) -> list[int]:
+    """Template ids most anomalous first, which is the ranking the headline is chosen on."""
+    return [int(t["template_id"]) for t in db.top_templates(limit=99, order_by="anomaly_score")]
+
+
+def test_the_verdict_is_the_note_explaining_the_most_anomalous_template(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """Not the first note and not the last one.
+
+    The loop is told to conclude last and does not reliably comply; the final note is often a
+    deliberate aside. The anomaly ranking is model-free, so choosing on it makes the verdict
+    stable across runs that reasoned differently but landed on the same template.
+    """
+    ranked = _ranked_template_ids(loaded_db)
+    loaded_db.write_note(1, "an early narrow guess", {"template_ids": [ranked[-1]]}, "high")
+    loaded_db.write_note(2, "the real conclusion", {"template_ids": [ranked[0]]}, "high")
+    loaded_db.write_note(3, "a separate pre-existing issue", {"template_ids": [ranked[-2]]}, "high")
+
+    verdict = generate_report(loaded_db).split("## Verdict")[1].split("##")[0]
+
+    assert "the real conclusion" in verdict
+    assert "an early narrow guess" not in verdict
+    assert "a separate pre-existing issue" not in verdict
+
+
+def test_a_single_note_is_the_verdict_whatever_it_cites(loaded_db: ScratchpadDB) -> None:
+    """Control for the selection above: it ranks candidates, it does not filter them.
+
+    A lone note citing the dullest template in the file is still the only conclusion there is,
+    and a report that led with nothing would be worse than one that led with that.
+    """
+    ranked = _ranked_template_ids(loaded_db)
+    loaded_db.write_note(1, "the only note", {"template_ids": [ranked[-1]]}, "low")
+
+    assert "the only note" in generate_report(loaded_db).split("## Verdict")[1].split("##")[0]
+
+
+def test_every_note_still_appears_under_findings(loaded_db: ScratchpadDB) -> None:
+    """Choosing a headline decides reading order, not what the report is allowed to say."""
+    ranked = _ranked_template_ids(loaded_db)
+    loaded_db.write_note(1, "an early narrow guess", {"template_ids": [ranked[-1]]}, "high")
+    loaded_db.write_note(2, "the real conclusion", {"template_ids": [ranked[0]]}, "high")
+
+    findings = generate_report(loaded_db).split("## Findings")[1].split("## The challenge")[0]
+
+    assert "an early narrow guess" in findings
+    assert "the real conclusion" in findings
+
+
+# -------------------------------------------------------- the incident at a glance
+
+
+def test_the_incident_window_is_narrower_than_the_log_window(loaded_db: ScratchpadDB) -> None:
+    """The header's window is where the file starts and stops.
+
+    Reporting that as the incident duration overstates it by however much quiet log surrounds
+    the event -- an hour of heartbeats around a six-minute outage reads as an hour-long outage.
+    """
+    run_skeleton_investigation(loaded_db)
+    glance = (
+        generate_report(loaded_db).split("## The incident at a glance")[1].split("## Findings")[0]
+    )
+
+    file_first, file_last = loaded_db.time_bounds()
+    window = glance.split("### Signal templates")[0]
+
+    assert "Incident window" in window
+    assert file_first not in window
+    assert file_last not in window
+
+
+def test_a_chronic_template_is_kept_out_of_the_incident_window(loaded_db: ScratchpadDB) -> None:
+    """The failure the first version of this section had.
+
+    One signal template active across the whole log dragged the union back out to the file's
+    own bounds, so a six-minute outage was reported as sixty minutes. The window is measured
+    across the templates the verdict cites; chronic ones are listed separately and labelled.
+    """
+    run_skeleton_investigation(loaded_db)
+    glance = (
+        generate_report(loaded_db).split("## The incident at a glance")[1].split("## Findings")[0]
+    )
+
+    log_minutes = 60.0
+    window_minutes = float(
+        glance.split("| Duration |")[1].split("min")[0].strip().lstrip("| ").strip()
+    )
+
+    assert window_minutes < log_minutes
+    assert "chronic" in glance
+
+
+def test_every_signal_template_is_timed_individually(loaded_db: ScratchpadDB) -> None:
+    """Control for the window above: narrowing it must not hide the templates left out of it."""
+    run_skeleton_investigation(loaded_db)
+    glance = (
+        generate_report(loaded_db).split("## The incident at a glance")[1].split("## Findings")[0]
+    )
+
+    from mistify.metrics import ANOMALY_SIGNAL_TEMPLATE_IDS, MetricView
+
+    raw = MetricView(loaded_db.metrics()).text(ANOMALY_SIGNAL_TEMPLATE_IDS) or ""
+    signal_ids = [part for part in raw.split(",") if part.strip()]
+
+    assert signal_ids
+    spans = glance.split("### Signal templates")[1]
+    for template_id in signal_ids:
+        assert f"| {template_id} |" in spans
+
+
+def test_the_glance_counts_severities_and_sources_from_the_events(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """Computed, not narrated: the same numbers whatever route the investigation took."""
+    run_skeleton_investigation(loaded_db)
+    glance = (
+        generate_report(loaded_db).split("## The incident at a glance")[1].split("## Findings")[0]
+    )
+
+    counts = loaded_db.severity_counts()
+    assert "| FATAL | {:,} |".format(counts["FATAL"]) in glance
+    for row in loaded_db.source_activity():
+        assert str(row["source"]) in glance
+
+
+def test_placeholders_are_explained_when_redaction_ran(loaded_db: ScratchpadDB) -> None:
+    """A responder seeing `[API_KEY:700b]` needs to know the value is recoverable."""
+    assert "mistify reveal" in generate_report(loaded_db)
+
+
+def test_no_reveal_pointer_when_redaction_was_off(loaded_db: ScratchpadDB) -> None:
+    """Control for the note above: it describes what this run did, it is not boilerplate."""
+    loaded_db.record(REDACTION_MODE, "off")
+
+    assert "mistify reveal" not in generate_report(loaded_db)
+
+
+def test_the_machinery_is_below_the_incident(loaded_db: ScratchpadDB) -> None:
+    """Section order is the point of the restructure: act first, audit second.
+
+    The warnings used to sit under sixty rows of pipeline internals, which is where a reader
+    stops looking.
+    """
+    run_skeleton_investigation(loaded_db)
+    report = generate_report(loaded_db)
+
+    assert report.index("## Verdict") < report.index("## The incident at a glance")
+    assert report.index("## The incident at a glance") < report.index("## Findings")
+    assert report.index("## Findings") < report.index("# Appendix")
+    assert report.index("# Appendix") < report.index("## Token usage")
+    assert report.index("# Appendix") < report.index("## Investigation trail")

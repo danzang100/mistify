@@ -50,7 +50,7 @@ INVESTIGATOR_NAME = "agent-loop"
 CAVEAT = (
     "A model drove this investigation through the scratchpad tools. Every claim below cites "
     "rows that were checked to exist; whether those rows support the claim is the adversarial "
-    "pass's job, and its outcome is in the health block."
+    "pass's job, and its argument is under The challenge."
 )
 
 SYSTEM_PROMPT = """You are investigating one incident from its logs.

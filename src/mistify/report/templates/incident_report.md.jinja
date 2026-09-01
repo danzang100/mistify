@@ -7,24 +7,103 @@
 | Source | `{{ incident.source }}` |
 | Format | {{ incident.format or "unknown" }} |
 | Ingested | {{ incident.created_at }} |
-| Events | {{ event_count }} |
+| Events | {{ "{:,}".format(event_count) }} |
 | Templates | {{ template_count }} |
-| Window | {{ first_ts or "n/a" }} → {{ last_ts or "n/a" }} |
+| Log window | {{ first_ts or "n/a" }} → {{ last_ts or "n/a" }} |
 
-## Summary
+## Verdict
 
-{% if notes %}
-{{ notes[0].note }}
+{% if headline %}
+{{ headline.note }}
+
+Stated confidence: **{{ headline.confidence }}**{% if adversarial and adversarial.revised_confidence %}, revised to **{{ adversarial.revised_confidence }}** after the challenge below{% endif %}.
+{% if adversarial %}
+{% if conceded_count %}
+**Contested — {{ conceded_count }} objection(s) conceded.** The investigation gave ground on its
+own reasoning. Read *The challenge* before acting on the finding above.
+{% elif objections %}
+**Challenged and answered.** {{ objections | length }} objection(s) were raised and none were
+conceded. The reasoning is in *The challenge*.
 {% else %}
-No hypothesis was recorded. The investigator found no templates to rank, which means
-ingestion produced an empty scratchpad — check the ingest health metrics below.
+**Unchallenged.** The adversarial pass raised no objection.
 {% endif %}
+{% elif adversarial_ran %}
+**Checked, but the critique's text was not recorded** — this incident was investigated before
+the challenge was kept in the scratchpad. The counts are in the appendix; re-run
+`mistify investigate` to get the argument itself.
+{% else %}
+No adversarial pass was run against this investigation, so nothing has checked the finding
+above except the citation resolver.
+{% endif %}
+{% else %}
+No hypothesis was recorded. Either the investigator found no templates to rank — check the
+ingest signals in the appendix — or it stopped before concluding.
+{% endif %}
+
+{% if warnings %}
+## Read this first
+
+{% for warning in warnings -%}
+- {{ warning }}
+{% endfor %}
+{% endif %}
+
+## The incident at a glance
+
+Derived from the events themselves, not from anything a model said, so it reads the same way
+whatever route the investigation took.
+
+{% if glance.first_ts %}
+| | |
+|---|---|
+| Incident window | {{ glance.first_ts }} → {{ glance.last_ts }} |
+| Duration | {{ "%.0f" | format(glance.duration_minutes) }} min |
+| Measured across | template(s) {{ glance.window_template_ids | join(", ") }}{% if glance.window_is_from_verdict %}, cited by the verdict{% else %}, the highest-ranked template — the verdict cited none{% endif %} |
+
+Not the log window in the header, which is only where the file starts and stops.
+
+### Signal templates and when they were active
+
+Span matters as much as rank. A template active across the whole log was already happening
+before this incident and did not stop after it, so it is background rather than event — and
+folding one into the window above would report a short outage as an hour-long one.
+
+| Template | Max severity | Events | First seen | Last seen | Active for | |
+|---|---|---|---|---|---|---|
+{% for span in glance.spans -%}
+| {{ span.template_id }} | {{ span.max_severity }} | {{ "{:,}".format(span.occurrence_count) }} | {{ span.first_seen }} | {{ span.last_seen }} | {{ "%.0f" | format(span.minutes) }} min | {% if span.chronic %}chronic{% else %}within the event{% endif %} |
+{% endfor %}
+{% else %}
+No templates were flagged as signal, so there is no derived incident window — the log window
+in the header is all that is known.
+{% endif %}
+
+### Volume by severity
+
+| Severity | Events |
+|---|---|
+{% for row in glance.severities -%}
+| {{ row.severity }} | {{ "{:,}".format(row.count) }} |
+{% endfor %}
+
+### Sources involved
+
+Ordered by events at ERROR or worse, which is the order to work through them in.
+
+| Source | Events | ERROR+ | First ERROR+ | Last ERROR+ |
+|---|---|---|---|---|
+{% for row in glance.sources -%}
+| {{ row.source or "unknown" }} | {{ "{:,}".format(row.events) }} | {{ "{:,}".format(row.bad_events or 0) }} | {{ row.first_bad or "—" }} | {{ row.last_bad or "—" }} |
+{% endfor %}
 
 ## Findings
 
 {% if notes %}
+Every hypothesis the investigation recorded, in the order it recorded them. Each cites rows
+that were checked to exist.
+
 {% for note in notes %}
-### Step {{ note.step }} — confidence: {{ note.confidence }}
+### Step {{ note.step }} — confidence: {{ note.confidence }}{% if headline and note.step == headline.step and note.note == headline.note %} (the verdict above){% endif %}
 
 {{ note.note }}
 
@@ -52,6 +131,48 @@ ingestion produced an empty scratchpad — check the ingest health metrics below
 None recorded.
 {% endif %}
 
+## The challenge
+
+{% if adversarial %}
+A second model was given the notes and their evidence and asked to break them, then the
+investigation was given the objections and allowed to answer. Outcome: **{{ adversarial.outcome }}**.
+
+{% if adversarial.assessment %}
+> {{ adversarial.assessment }}
+{% endif %}
+
+{% if objections %}
+{% for objection in objections %}
+**{{ loop.index }}. {{ objection.claim or "(no claim quoted)" }}** — severity {{ objection.severity }}
+
+- Objection: {{ objection.objection }}
+- Cites: {% if objection.template_ids %}templates {{ objection.template_ids | join(", ") }}{% endif %}{% if objection.template_ids and objection.log_event_ids %}, {% endif %}{% if objection.log_event_ids %}events {{ objection.log_event_ids | join(", ") }}{% endif %}{% if not objection.template_ids and not objection.log_event_ids %}nothing — an objection citing no rows cannot outweigh a conclusion that cites them{% endif %}
+{% if objection.response is not none %}
+- Answer{% if objection.conceded %} (**conceded**){% endif %}: {{ objection.response }}
+{% else %}
+- Not answered.
+{% endif %}
+
+{% endfor %}
+{% else %}
+No objections were raised.
+{% endif %}
+
+{% if adversarial.alternative %}
+### Alternative explanation offered
+
+{{ adversarial.alternative }}
+
+The rows are said to support this at least as well as the verdict. It is the first thing to
+check if the verdict does not hold up.
+{% endif %}
+{% elif adversarial_ran %}
+The pass ran, but this incident predates the point at which its objections were kept, so only
+the counts in the appendix survive. Re-run `mistify investigate` to reproduce the argument.
+{% else %}
+The adversarial pass did not run, so nothing has argued against the findings above.
+{% endif %}
+
 ## Templates by anomaly score
 
 {% if shown_template_count < template_count %}
@@ -68,7 +189,32 @@ signal is met before the noise.
 | ID | Anomaly | Max severity | Count | First seen | Last seen | Pattern |
 |---|---|---|---|---|---|---|
 {% for t in top_templates -%}
-| {{ t.template_id }} | {{ "%.3f" | format(t.anomaly_score) }} | {{ t.max_severity }} | {{ t.occurrence_count }} | {{ t.first_seen }} | {{ t.last_seen }} | {{ t.pattern | replace("|", "\\|") }} |
+| {{ t.template_id }} | {{ "%.3f" | format(t.anomaly_score) }} | {{ t.max_severity }} | {{ "{:,}".format(t.occurrence_count) }} | {{ t.first_seen }} | {{ t.last_seen }} | {{ t.pattern | replace("|", "\\|") }} |
+{% endfor %}
+
+{% if redaction_on %}
+Values like `[IPV4:a7f2]` are redacted placeholders. The same source value always produces the
+same placeholder within this incident, so they can be correlated across lines — but the hash is
+one-way. `mistify reveal --incident-id {{ incident.incident_id }}` resolves them back when the
+run was made with `redaction.vault` enabled.
+{% endif %}
+
+---
+
+# Appendix
+
+Everything below describes how the analysis was produced rather than what happened. It is here
+so a conclusion can be checked, not because a responder needs it to act.
+
+## Run signals
+
+Metrics a reader is meant to act on. Anything that tripped is already stated in words under
+*Read this first*.
+
+| Stage | Metric | Value |
+|---|---|---|
+{% for m in health_signals -%}
+| {{ m.stage }} | {{ m.metric }} | {{ m.value }} |
 {% endfor %}
 
 ## Token usage
@@ -86,44 +232,38 @@ an extra column to add — the total is input plus output.
 
 {% if token_total.cached_input_tokens == 0 and token_total.input_tokens > 0 %}
 No tokens were served from cache. The loop is built around a stable system prompt that should
-be cacheable from the second step onward, so this is either that prefix being invalidated
-every step or a provider that does not report cache reads — worth telling apart before
-reading the input count as the real cost.
+be cacheable from the second step onward, so this is either that prefix being invalidated every
+step or a provider that does not report cache reads — worth telling apart before reading the
+input count as the real cost.
 {% endif %}
 No prices appear here. They change without notice and differ per model, so a cost in dollars
 printed into a report is a number that goes quietly wrong; the token counts are the durable
 part.
 {% else %}
 No stage reported model usage. Either this run used an investigator that calls no model — the
-deterministic `skeleton` — or no model call was made. A stage that spent nothing is absent
-here rather than shown as zero, so that "did not report" and "reported zero" stay distinct.
-{% endif %}
-
-## Pipeline health
-
-Every stage reports its own numbers. A stage that degraded should be visible here rather
-than inferred from a report that reads fine.
-
-| Stage | Metric | Value |
-|---|---|---|
-{% for m in metrics -%}
-| {{ m.stage }} | {{ m.metric }} | {{ m.value }} |
-{% endfor %}
-
-{% if warnings %}
-### Warnings
-
-{% for warning in warnings -%}
-- {{ warning }}
-{% endfor %}
+deterministic `skeleton` — or no model call was made. A stage that spent nothing is absent here
+rather than shown as zero, so that "did not report" and "reported zero" stay distinct.
 {% endif %}
 
 ## Investigation trail
+
+Every query the investigation ran, in order. Two rows can share a step: the model is allowed to
+ask for several tools at once.
 
 | Step | Query | Rows |
 |---|---|---|
 {% for q in queries -%}
 | {{ q.step }} | `{{ q.sql_query }}` | {{ q.row_count }} |
+{% endfor %}
+
+## Pipeline configuration and counters
+
+How each stage was tuned and what it counted. Useful when the tool itself is suspect.
+
+| Stage | Metric | Value |
+|---|---|---|
+{% for m in health_detail -%}
+| {{ m.stage }} | {{ m.metric }} | {{ m.value }} |
 {% endfor %}
 
 ---

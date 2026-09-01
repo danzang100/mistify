@@ -131,6 +131,10 @@ class AdversarialResult:
     #: The model that answered the objections, when it was not the one that raised them --
     #: the normal case, since the point of a rebuttal is that the original reasoning answers.
     rebuttal_model: str = ""
+    #: What the investigation said its confidence was *after* being challenged. The prompt has
+    #: always asked for it; until this was carried it was parsed and dropped, so a conclusion
+    #: that had conceded ground still reported the confidence it started with.
+    revised_confidence: str = ""
 
     @property
     def evidenced_objections(self) -> list[Objection]:
@@ -252,7 +256,7 @@ def run_adversarial_check(
 
     if rebut and result.evidenced_objections:
         answering = rebuttal_provider or provider
-        result.rebuttals, rebuttal_usage = _rebut(
+        result.rebuttals, result.revised_confidence, rebuttal_usage = _rebut(
             db, answering, result.evidenced_objections, max_tokens
         )
         result.usage = result.usage + rebuttal_usage
@@ -272,8 +276,8 @@ def _rebut(
     provider: LLMProvider,
     objections: list[Objection],
     max_tokens: int,
-) -> tuple[list[dict[str, Any]], Usage]:
-    """Answer the objections, returning what the answer cost alongside it.
+) -> tuple[list[dict[str, Any]], str, Usage]:
+    """Answer the objections, returning the revised confidence and the cost alongside them.
 
     The usage comes back rather than being recorded here because this call may run on the
     loop's provider, not the critique's, and the caller is the only one that knows which.
@@ -293,10 +297,11 @@ def _rebut(
         max_tokens=max_tokens,
     )
     try:
-        return list(_parse_json(reply.text).get("responses", [])), reply.usage
+        parsed = _parse_json(reply.text)
     except (ValueError, json.JSONDecodeError):
         # An unreadable rebuttal still cost what it cost.
-        return [], reply.usage
+        return [], "", reply.usage
+    return list(parsed.get("responses", [])), str(parsed.get("revised_confidence", "")), reply.usage
 
 
 def _outcome(result: AdversarialResult) -> str:
@@ -311,7 +316,65 @@ def _outcome(result: AdversarialResult) -> str:
     return "objections_answered" if result.rebuttals else "objections_open"
 
 
+def _paired_objections(result: AdversarialResult) -> list[dict[str, Any]]:
+    """Objections with the response each one drew, ready to persist.
+
+    The model is asked to answer the objections in order, and its replies are matched to them
+    by position -- but only when it returned exactly as many as were raised. It names the
+    objection it is answering in free text, which is not something to key on, and a
+    mispaired concession would attach an admission to the wrong claim. When the counts
+    disagree the responses are appended unpaired instead, which is honest about what is
+    known.
+    """
+    raised = result.objections
+    replies = result.rebuttals
+    paired = len(replies) == len(result.evidenced_objections)
+    by_claim = (
+        dict(zip([id(o) for o in result.evidenced_objections], replies, strict=True))
+        if paired
+        else {}
+    )
+
+    rows: list[dict[str, Any]] = []
+    for objection in raised:
+        reply = by_claim.get(id(objection))
+        rows.append(
+            {
+                "claim": objection.claim,
+                "objection": objection.objection,
+                "severity": objection.severity,
+                "template_ids": objection.template_ids,
+                "log_event_ids": objection.log_event_ids,
+                "response": None if reply is None else str(reply.get("response", "")),
+                "conceded": None if reply is None else bool(reply.get("conceded")),
+            }
+        )
+    if not paired:
+        rows.extend(
+            {
+                "claim": "",
+                "objection": "",
+                "severity": "unpaired_response",
+                "template_ids": [],
+                "log_event_ids": [],
+                "response": str(reply.get("response", "")),
+                "conceded": bool(reply.get("conceded")),
+            }
+            for reply in replies
+        )
+    return rows
+
+
 def _record(db: ScratchpadDB, provider: LLMProvider, result: AdversarialResult) -> None:
+    # What the critique *said*, not just how much of it there was. A count cannot tell a
+    # reader that the investigation conceded, or what to check instead.
+    db.save_adversarial(
+        outcome=result.outcome,
+        assessment=result.assessment,
+        alternative=result.alternative,
+        revised_confidence=result.revised_confidence,
+        objections=_paired_objections(result),
+    )
     db.record_many(
         [
             (ADVERSARIAL_PROVIDER, provider.name),

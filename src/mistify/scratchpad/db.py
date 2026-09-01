@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from mistify.common.models import (
+    SEVERITIES,
     LogRecord,
     NoiseThresholds,
     ScratchpadNote,
@@ -25,7 +26,7 @@ from mistify.metrics import Metric
 
 __all__ = ["MIGRATIONS", "ReadOnlyViolation", "ScratchpadDB"]
 
-MIGRATIONS: tuple[str, ...] = ("0001_init",)
+MIGRATIONS: tuple[str, ...] = ("0001_init", "0002_adversarial")
 
 _EVENT_BATCH = 1000
 
@@ -320,6 +321,119 @@ class ScratchpadDB:
             )
             for row in rows
         ]
+
+    # ------------------------------------------------- the adversarial pass
+
+    def save_adversarial(
+        self,
+        outcome: str,
+        assessment: str = "",
+        alternative: str = "",
+        revised_confidence: str = "",
+        objections: Sequence[dict[str, Any]] = (),
+    ) -> None:
+        """Persist what the critique said, not just how much of it there was.
+
+        Replaces any previous result for this incident: the check is re-runnable, and two
+        overlapping critiques in one report would read as one critique that contradicted
+        itself.
+        """
+        now = _now()
+        self._conn.execute("DELETE FROM adversarial_objections")
+        self._conn.execute("DELETE FROM adversarial_summary")
+        self._conn.execute(
+            "INSERT INTO adversarial_summary"
+            " (id, assessment, alternative, revised_confidence, outcome, created_at)"
+            " VALUES (1, ?, ?, ?, ?, ?)",
+            (assessment, alternative, revised_confidence, outcome, now),
+        )
+        self._conn.executemany(
+            "INSERT INTO adversarial_objections"
+            " (claim, objection, severity, template_ids_json, log_event_ids_json,"
+            "  response, conceded, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    str(o.get("claim", "")),
+                    str(o.get("objection", "")),
+                    str(o.get("severity", "medium")),
+                    json.dumps([int(i) for i in o.get("template_ids", [])]),
+                    json.dumps([int(i) for i in o.get("log_event_ids", [])]),
+                    o.get("response"),
+                    None if o.get("conceded") is None else int(bool(o.get("conceded"))),
+                    now,
+                )
+                for o in objections
+            ],
+        )
+        self._conn.commit()
+
+    def adversarial_summary(self) -> dict[str, Any] | None:
+        row = self._conn.execute("SELECT * FROM adversarial_summary WHERE id = 1").fetchone()
+        return None if row is None else dict(row)
+
+    def adversarial_objections(self) -> list[dict[str, Any]]:
+        """Objections in the order raised, with their citations decoded."""
+        rows = self._conn.execute("SELECT * FROM adversarial_objections ORDER BY id")
+        objections = []
+        for row in rows:
+            item = dict(row)
+            item["template_ids"] = json.loads(item.pop("template_ids_json"))
+            item["log_event_ids"] = json.loads(item.pop("log_event_ids_json"))
+            item["conceded"] = None if item["conceded"] is None else bool(item["conceded"])
+            objections.append(item)
+        return objections
+
+    # ------------------------------------------------- deterministic summaries
+
+    def severity_counts(self) -> dict[str, int]:
+        """Events per severity. The shape of the file, computed rather than described."""
+        rows = self._conn.execute(
+            "SELECT severity, COUNT(*) AS n FROM log_events GROUP BY severity"
+        )
+        return {str(row["severity"]): int(row["n"]) for row in rows}
+
+    def source_activity(self, min_severity: str = "ERROR") -> list[dict[str, Any]]:
+        """Per source: total events, how many at or above `min_severity`, and when.
+
+        The blast-radius question asked of the data rather than of the model. Ordered by bad
+        events first, because that is the order someone reading at speed needs them in.
+        """
+        wanted = min_severity.upper()
+        # Everything at or above the floor, in the project's own severity order rather than
+        # alphabetically -- "ERROR" < "WARN" as strings, which is the opposite of the truth.
+        bad = list(SEVERITIES[SEVERITIES.index(wanted) :]) if wanted in SEVERITIES else []
+        placeholders = ",".join("?" for _ in bad) or "NULL"
+        rows = self._conn.execute(
+            f"""SELECT source,
+                       COUNT(*) AS events,
+                       SUM(CASE WHEN severity IN ({placeholders}) THEN 1 ELSE 0 END) AS bad_events,
+                       MIN(CASE WHEN severity IN ({placeholders}) THEN ts END) AS first_bad,
+                       MAX(CASE WHEN severity IN ({placeholders}) THEN ts END) AS last_bad
+                FROM log_events
+                GROUP BY source
+                ORDER BY bad_events DESC, events DESC""",
+            bad * 3,
+        )
+        return [dict(row) for row in rows]
+
+    def template_window(self, template_ids: Sequence[int]) -> tuple[str | None, str | None]:
+        """First and last event across the given templates.
+
+        This is what an incident window actually is: when the templates that were flagged as
+        signal were active. `time_bounds` answers a different question -- when the *file*
+        starts and ends -- and using it as the incident window overstates the duration by
+        however much quiet log surrounds the event.
+        """
+        if not template_ids:
+            return (None, None)
+        placeholders = ",".join("?" for _ in template_ids)
+        row = self._conn.execute(
+            f"SELECT MIN(ts) AS first_ts, MAX(ts) AS last_ts FROM log_events"
+            f" WHERE template_id IN ({placeholders})",
+            [int(i) for i in template_ids],
+        ).fetchone()
+        return (row["first_ts"], row["last_ts"])
 
     def log_query(self, step: int, query: str, row_count: int) -> None:
         self._conn.execute(

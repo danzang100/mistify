@@ -94,6 +94,31 @@ uv run mistify report --incident-id my-incident
 
 Pipeline behaviour is configured in [`config.yaml`](config.yaml).
 
+### What the report contains
+
+The document is a fixed Jinja template, not model-written prose: the same sections in the same
+order for every incident, whatever the investigation did. A model contributes note text into
+labelled slots and nothing else — it never decides the shape of the report.
+
+Responder-facing, in order:
+
+1. **Verdict** — the leading hypothesis, its confidence, and whether the adversarial pass
+   contested it. Chosen from the anomaly ranking rather than by position, so two runs that
+   reason differently but land on the same template lead with the same thing.
+2. **Read this first** — the warnings, above the machinery rather than below it.
+3. **The incident at a glance** — window, duration, per-severity volume and per-source
+   activity, all computed from the events. Signal templates are timed individually, and one
+   active across the whole log is labelled chronic: a background problem that was already
+   there is not part of the event, and folding it into the window turns a six-minute outage
+   into an hour-long one.
+4. **Findings** — every recorded hypothesis with its cited rows.
+5. **The challenge** — what the critique actually argued, what it cited, and what the
+   investigation conceded.
+6. **Templates by anomaly score**.
+
+Then an appendix: run signals, token usage, the investigation trail, and pipeline
+configuration. It is there so a conclusion can be checked, not because a responder needs it.
+
 ### What a run costs
 
 Every report carries a **Token usage** table: one row per stage that called a model, with the

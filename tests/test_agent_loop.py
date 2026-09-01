@@ -438,3 +438,121 @@ def test_a_run_with_no_model_calls_reports_no_token_usage(loaded_db: ScratchpadD
 
     assert "## Token usage" in report
     assert "No stage reported model usage" in report
+
+
+# --------------------------------------------- the critique reaches the reader
+
+
+def _conceding_run(db: ScratchpadDB) -> None:
+    """A critique that objects with evidence, and an investigation that gives ground."""
+    db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    critic = _critique(
+        {
+            "assessment": "The causal link is asserted rather than shown.",
+            "objections": [
+                {
+                    "claim": "pool exhausted",
+                    "objection": "template 5 fires throughout the window, not just during it",
+                    "template_ids": [5],
+                    "severity": "high",
+                }
+            ],
+            "alternative": "A gateway degradation that predates the pool problem.",
+        }
+    )
+    rebutter = ScriptedProvider(
+        [
+            text_turn(
+                json.dumps(
+                    {
+                        "responses": [
+                            {
+                                "objection": "t5",
+                                "response": "Fair -- 5 is not confined.",
+                                "conceded": True,
+                            }
+                        ],
+                        "revised_confidence": "medium",
+                    }
+                )
+            )
+        ]
+    )
+    run_adversarial_check(db, critic, [9], rebuttal_provider=rebutter)
+
+
+def test_the_objection_itself_reaches_the_report(loaded_db: ScratchpadDB) -> None:
+    """A count cannot be acted on. "2 evidence-backed objections" told a reader nothing about
+    what was wrong, what it cited, or whether the investigation agreed."""
+    _conceding_run(loaded_db)
+
+    challenge = generate_report(loaded_db).split("## The challenge")[1]
+
+    assert "template 5 fires throughout the window" in challenge
+    assert "The causal link is asserted rather than shown." in challenge
+    assert "templates 5" in challenge
+
+
+def test_a_conceded_objection_is_marked_as_conceded(loaded_db: ScratchpadDB) -> None:
+    """The single most decision-relevant fact in the document: the reasoning gave ground."""
+    _conceding_run(loaded_db)
+
+    report = generate_report(loaded_db)
+
+    assert "conceded" in report.split("## The challenge")[1]
+    assert "Contested" in report.split("## Verdict")[1].split("##")[0]
+
+
+def test_an_answered_objection_is_not_reported_as_contested(loaded_db: ScratchpadDB) -> None:
+    """Control for the verdict line above: contested means conceded, not merely challenged.
+
+    Every objection answered and none conceded is a conclusion that held, and flagging it the
+    same way as one that collapsed would train a reader to ignore the flag.
+    """
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    run_adversarial_check(
+        loaded_db, _objecting_critique(), [9], rebuttal_provider=_rebutter("loop-model")
+    )
+
+    verdict = generate_report(loaded_db).split("## Verdict")[1].split("##")[0]
+
+    assert "Challenged and answered" in verdict
+    assert "Contested" not in verdict
+
+
+def test_the_revised_confidence_reaches_the_verdict(loaded_db: ScratchpadDB) -> None:
+    """The prompt has always asked for it; it used to be parsed and dropped, so a conclusion
+    that had conceded ground still reported the confidence it started with."""
+    _conceding_run(loaded_db)
+
+    verdict = generate_report(loaded_db).split("## Verdict")[1].split("##")[0]
+
+    assert "revised to **medium**" in verdict
+
+
+def test_the_alternative_explanation_is_offered_to_the_reader(loaded_db: ScratchpadDB) -> None:
+    """The first thing to check when the verdict does not hold up."""
+    _conceding_run(loaded_db)
+
+    assert "A gateway degradation that predates" in generate_report(loaded_db)
+
+
+def test_an_unchallenged_investigation_says_so(loaded_db: ScratchpadDB) -> None:
+    """Control for the challenge section: it reports what happened, it is not always full."""
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    run_adversarial_check(loaded_db, _critique({"objections": []}), [9])
+
+    report = generate_report(loaded_db)
+
+    assert "Unchallenged" in report.split("## Verdict")[1].split("##")[0]
+    assert "No objections were raised" in report.split("## The challenge")[1]
+
+
+def test_a_run_with_no_adversarial_pass_does_not_imply_one(loaded_db: ScratchpadDB) -> None:
+    """Absent is not the same as passed. A report that stayed silent would read as approval."""
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+
+    report = generate_report(loaded_db)
+
+    assert "No adversarial pass was run" in report
+    assert "nothing has argued against the findings" in report

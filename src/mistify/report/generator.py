@@ -18,11 +18,14 @@ from typing import Any
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
 from mistify import __version__
-from mistify.common.models import SEVERITIES
+from mistify.common.models import SEVERITIES, parse_timestamp
 from mistify.metrics import (
+    ADVERSARIAL_OUTCOME,
     ADVERSARIAL_UNEXPLAINED_SIGNAL,
     ADVERSARIAL_UNSUPPORTED_CLAIMS,
+    ALL_METRICS,
     ANOMALY_NEEDLE_POSITION,
+    ANOMALY_SIGNAL_TEMPLATE_IDS,
     INGEST_PARSE_ERRORS,
     INGEST_UNMAPPED_SEVERITY,
     INVESTIGATE_BUDGET_LIMITED,
@@ -97,6 +100,137 @@ def verify_citations(db: ScratchpadDB) -> tuple[dict[int, list[dict[str, Any]]],
     return cited_events, warnings
 
 
+#: Confidence as an order, so the strongest-stated note can be picked without a model.
+_CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def _pick_headline(notes: list[dict[str, Any]], scores: dict[int, float]) -> dict[str, Any] | None:
+    """Which note leads the report.
+
+    Not the first one. The loop is told to write its conclusion last, and does not reliably
+    comply -- across three runs of the same incident the first note was a narrow early
+    hypothesis twice. Not the last one either: the final note is often a deliberate aside
+    ("these timeouts are a separate, pre-existing issue"), which is exactly the thing a
+    headline must not be.
+
+    So it is chosen from the data instead: the note accounting for the most anomalous template
+    it cites, then the strongest stated confidence, then the latest step. The anomaly ranking
+    is model-free, which is what makes this stable -- two runs that reason differently but
+    reach the same template land on the same headline, and the report reads the same way.
+
+    Every note still appears under Findings. This decides the order of reading, not what is
+    said.
+    """
+    if not notes:
+        return None
+
+    def key(note: dict[str, Any]) -> tuple[float, int, int]:
+        cited = [int(i) for i in note["evidence"].get("template_ids", [])]
+        return (
+            max((scores.get(i, 0.0) for i in cited), default=0.0),
+            _CONFIDENCE_RANK.get(str(note["confidence"]).lower(), 0),
+            int(note["step"]),
+        )
+
+    return max(notes, key=key)
+
+
+def _duration_minutes(first: str | None, last: str | None) -> float | None:
+    """Minutes between two scratchpad timestamps, or None if either is missing."""
+    if not first or not last:
+        return None
+    return (parse_timestamp(last) - parse_timestamp(first)).total_seconds() / 60
+
+
+#: A template active for at least this share of the log is chronic rather than part of the
+#: event: it was already happening before the incident and did not stop after it.
+_CHRONIC_SHARE = 0.9
+
+
+def _at_a_glance(
+    db: ScratchpadDB,
+    view: MetricView,
+    headline: dict[str, Any] | None,
+    templates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """When, how long, how loud, and where -- all computed, none of it narrated.
+
+    The header's window is the *file's*, which on a quiet log overstates an incident by however
+    much silence surrounds it. Naively replacing it with the union of the signal templates does
+    not help: one chronic template active all hour drags the union back out to the whole file,
+    which is how the first version of this section reported a six-minute outage as sixty
+    minutes. So the headline window is the window of the templates the verdict actually cites,
+    and every signal template is listed with its own span next to it -- which is what separates
+    an acute failure from a background problem that was already there.
+    """
+    raw_ids = view.text(ANOMALY_SIGNAL_TEMPLATE_IDS) or ""
+    signal_ids = [int(part) for part in raw_ids.split(",") if part.strip()]
+
+    cited = [int(i) for i in (headline or {}).get("evidence", {}).get("template_ids", [])]
+    # Falling back to the top-ranked template rather than to every signal template: one
+    # template's span is a claim about one thing, the union is a claim about nothing.
+    window_ids = cited or signal_ids[:1]
+    first_ts, last_ts = db.template_window(window_ids)
+
+    log_first, log_last = db.time_bounds()
+    log_minutes = _duration_minutes(log_first, log_last)
+
+    by_id = {int(t["template_id"]): t for t in templates}
+    spans = []
+    for template_id in signal_ids:
+        template = by_id.get(template_id)
+        if template is None:
+            continue
+        minutes = _duration_minutes(template["first_seen"], template["last_seen"])
+        spans.append(
+            {
+                "template_id": template_id,
+                "first_seen": template["first_seen"],
+                "last_seen": template["last_seen"],
+                "minutes": minutes,
+                "occurrence_count": template["occurrence_count"],
+                "max_severity": template["max_severity"],
+                "chronic": bool(
+                    minutes is not None and log_minutes and minutes >= log_minutes * _CHRONIC_SHARE
+                ),
+            }
+        )
+
+    counts = db.severity_counts()
+    return {
+        "signal_template_ids": signal_ids,
+        "window_template_ids": window_ids,
+        "window_is_from_verdict": bool(cited),
+        "first_ts": first_ts,
+        "last_ts": last_ts,
+        "duration_minutes": _duration_minutes(first_ts, last_ts),
+        "spans": spans,
+        # Severity order, not alphabetical, and loudest first: a reader scans for FATAL.
+        "severities": [
+            {"severity": name, "count": counts[name]}
+            for name in reversed(SEVERITIES)
+            if name in counts
+        ],
+        "sources": db.source_activity(),
+    }
+
+
+def _split_health(
+    metrics: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Metrics a reader acts on, separated from metrics that describe how the run was tuned.
+
+    Both were in one alphabetised table, which put `templating.depth` -- a knob -- next to
+    `templating.template_coverage`, the invariant whose failure invalidates the report. The
+    split is `Metric.load_bearing`, already declared on every metric, so this stays in step
+    with the vocabulary rather than being a second opinion about it.
+    """
+    load_bearing = {m.key for m in ALL_METRICS if m.load_bearing}
+    signals = [m for m in metrics if (m["stage"], m["metric"]) in load_bearing]
+    detail = [m for m in metrics if (m["stage"], m["metric"]) not in load_bearing]
+    return signals, detail
+
+
 def collect(db: ScratchpadDB) -> ReportData:
     """Gather everything the template needs from the scratchpad."""
     incident = db.incident() or {
@@ -143,6 +277,22 @@ def collect(db: ScratchpadDB) -> ReportData:
     # was checking.
     token_stages = token_usage(metrics)
 
+    # Every template, not just the ones the report lists: a note may cite one that fell below
+    # the display cut, and scoring the headline off a truncated table would rank it at zero.
+    scores = {
+        int(t["template_id"]): float(t["anomaly_score"])
+        for t in db.top_templates(limit=max(db.template_count(), 1), order_by="anomaly_score")
+    }
+    headline = _pick_headline(notes, scores)
+    health_signals, health_detail = _split_health(metrics)
+    objections = db.adversarial_objections()
+
+    # The stage's own metric wins over the incident row: the warning about redaction being off
+    # reads the metric, and driving the two off different sources let one report both warn
+    # that redaction was disabled and point at a vault that was never written.
+    mode = view.text(REDACTION_MODE) or incident.get("redaction_mode")
+    redaction_on = bool(mode) and mode != "off"
+
     investigator = view.text(INVESTIGATE_INVESTIGATOR)
     if investigator is None:
         investigator = "unknown"
@@ -165,6 +315,19 @@ def collect(db: ScratchpadDB) -> ReportData:
         or "No caveat recorded for this investigator.",
         "token_stages": token_stages,
         "token_total": total_tokens(token_stages),
+        "headline": headline,
+        "glance": _at_a_glance(db, view, headline, top_templates),
+        "health_signals": health_signals,
+        "health_detail": health_detail,
+        # Whether the pass ran and whether its content was kept are different questions. A
+        # scratchpad written before the critique was persisted has the metrics and none of the
+        # text, and reporting that as "did not run" would turn a bookkeeping gap into a claim
+        # that nothing checked the finding.
+        "adversarial_ran": ADVERSARIAL_OUTCOME in view,
+        "adversarial": db.adversarial_summary(),
+        "objections": objections,
+        "conceded_count": sum(1 for o in objections if o["conceded"]),
+        "redaction_on": redaction_on,
         "version": __version__,
     }
 
