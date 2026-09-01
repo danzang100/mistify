@@ -82,9 +82,19 @@ How to work:
   a dull one with them.
 - Consider whether this is one incident or several before concluding. Two unrelated failures
   in one window are common and collapsing them into one narrative loses both.
+- Cite only ids you have actually been shown. `write_note` refuses a log event id that was
+  never returned to you: an id you did not read resolves to a real row that says nothing about
+  your claim, which is worse than citing nothing. Take ids from the `id` column of a
+  `get_slice` result, or select `log_events.id` in `run_sql`.
+- Lines carry a `trace_id` where the source had one. Passing it back to `get_slice` returns
+  every line of that one request across services, which is the correlation the template
+  ranking cannot show you.
 - Record every hypothesis with `write_note`. Evidence is mandatory: cite the template ids and
   log event ids that support the claim. A note whose evidence does not actually say what the
   note says will be caught, so cite what you read.
+- Older tool output is summarised away as you work, so what you pulled ten steps ago may no
+  longer be in front of you. `read_notes` returns everything you have concluded, with its
+  citations. It is cheap; call it before you conclude.
 - When you have a conclusion, write it as a final note at your honest confidence and stop
   calling tools. Do not pad the investigation to use up your budget.
 

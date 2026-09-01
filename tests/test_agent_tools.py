@@ -27,7 +27,7 @@ from mistify.agent.tools import (
 )
 from mistify.common.models import SEVERITIES, LogRecord, NoiseThresholds
 from mistify.llm.base import ToolCall, ToolResult, ToolSpec
-from mistify.scratchpad.db import ScratchpadDB
+from mistify.scratchpad.db import ScratchpadDB, _trace_id
 from tests.fixtures.synthetic_incident import RED_HERRING_MARKER, ROOT_CAUSE_MARKER
 
 #: The configured definition of noise (`anomaly.noise_share_threshold` /
@@ -84,7 +84,7 @@ def signal_template_id(db: ScratchpadDB) -> int:
 # --------------------------------------------------------------- schema
 
 
-def test_specs_offer_exactly_the_four_tools(box: ToolBox) -> None:
+def test_specs_offer_exactly_the_declared_tools(box: ToolBox) -> None:
     assert tuple(s.name for s in box.specs()) == TOOL_NAMES
 
 
@@ -93,7 +93,21 @@ def test_every_spec_is_a_json_schema_object_with_a_description(box: ToolBox) -> 
         assert tool.description.strip()
         assert tool.schema["type"] == "object"
         assert isinstance(tool.schema["properties"], dict)
-        assert tool.schema["properties"], f"{tool.name} declares no arguments"
+
+
+def test_only_read_notes_takes_no_arguments(box: ToolBox) -> None:
+    """Every other tool is parameterised, and an empty schema is usually a mistake.
+
+    `read_notes` genuinely takes none -- it returns everything written so far, and giving it a
+    filter would only invite the model to ask for the wrong subset of its own reasoning.
+    """
+    argumentless = [tool.name for tool in box.specs() if not tool.schema["properties"]]
+
+    assert argumentless == ["read_notes"]
+
+
+def test_every_argument_is_documented(box: ToolBox) -> None:
+    for tool in box.specs():
         for prop in tool.schema["properties"].values():
             assert "description" in prop, f"{tool.name} has an undocumented argument"
 
@@ -104,6 +118,7 @@ def test_every_spec_is_a_json_schema_object_with_a_description(box: ToolBox) -> 
         ("query_templates", []),
         ("get_slice", []),
         ("run_sql", ["query"]),
+        ("read_notes", []),
         ("write_note", ["note", "evidence", "confidence"]),
     ],
 )
@@ -354,7 +369,10 @@ def test_sql_results_are_capped_and_say_so(box: ToolBox) -> None:
 
 def test_note_is_persisted_with_its_evidence_and_step(box: ToolBox) -> None:
     template_id = dominant_template_id(box.db)
-    event_ids = [int(row["id"]) for row in box.db.get_slice(severity="FATAL", max_lines=3)]
+    # Read the lines through the tool first: a citation is only accepted for rows this
+    # investigation was actually shown.
+    shown = call(box, "get_slice", severity="FATAL", max_lines=3)
+    event_ids = [int(row["id"]) for row in rows(shown)]
 
     result = call(
         box,
@@ -401,24 +419,83 @@ def test_one_citation_is_enough(box: ToolBox) -> None:
     assert not result.is_error
 
 
-def test_a_citation_with_no_row_behind_it_is_flagged(box: ToolBox) -> None:
+def test_a_template_citation_with_no_row_behind_it_is_flagged(box: ToolBox) -> None:
     """Warned, not refused: the report's verifier is the authority, and a mistyped id
     should not cost a sound finding. Naming it lets the model correct itself."""
     result = call(
         box,
         "write_note",
         note="fabricated",
-        evidence={"template_ids": [999_999], "log_event_ids": [888_888]},
+        evidence={"template_ids": [999_999], "log_event_ids": []},
         confidence="low",
     )
 
     assert not result.is_error
-    assert "999999" in result.content and "888888" in result.content
-    assert "do not exist" in result.content
+    assert "999999" in result.content
+
+
+def test_an_event_this_investigation_never_saw_is_refused(box: ToolBox) -> None:
+    """The one bad citation the report's verifier cannot catch.
+
+    A cited id that does not exist is a typo. A cited id that exists but was never returned
+    here was not read -- it resolves to a real row that says nothing about the claim, and the
+    existence check waves it through. A run cited events 1 and 2, the first two lines of the
+    file, for a claim about a service appearing in neither.
+    """
+    real_but_unseen = [int(row["id"]) for row in box.db.get_slice(severity="FATAL", max_lines=2)]
+
+    result = call(
+        box,
+        "write_note",
+        note="cites rows it never looked at",
+        evidence={"template_ids": [], "log_event_ids": real_but_unseen},
+        confidence="high",
+    )
+
+    assert result.is_error
+    assert "never returned to this investigation" in result.content
+    assert box.db.notes() == []
+
+
+def test_an_event_read_through_a_slice_is_accepted(box: ToolBox) -> None:
+    """Control for the refusal above: the gate is what was read, not a ban on event ids."""
+    shown = call(box, "get_slice", severity="FATAL", max_lines=2)
+    event_ids = [int(row["id"]) for row in rows(shown)]
+
+    result = call(
+        box,
+        "write_note",
+        note="cites rows it read",
+        evidence={"template_ids": [], "log_event_ids": event_ids},
+        confidence="high",
+    )
+
+    assert not result.is_error
+    assert box.db.notes()[-1].evidence["log_event_ids"] == event_ids
+
+
+def test_ids_selected_through_run_sql_are_also_citable(box: ToolBox) -> None:
+    """Aggregating in SQL is a legitimate way to find the rows a claim rests on.
+
+    Only when the query actually read log_events: `id` is a column on several tables, and a
+    note id counted as an event seen would let a fabricated citation straight back through.
+    """
+    seen = call(box, "run_sql", query="SELECT id FROM log_events WHERE severity = 'FATAL' LIMIT 2")
+    event_ids = [int(row["id"]) for row in rows(seen)]
+
+    result = call(
+        box,
+        "write_note",
+        note="cites rows found by query",
+        evidence={"template_ids": [], "log_event_ids": event_ids},
+        confidence="medium",
+    )
+
+    assert not result.is_error
 
 
 def test_a_real_citation_is_not_flagged(box: ToolBox) -> None:
-    event_id = int(box.db.get_slice(severity="FATAL", max_lines=1)[0]["id"])
+    event_id = int(rows(call(box, "get_slice", severity="FATAL", max_lines=1))[0]["id"])
     result = call(
         box,
         "write_note",
@@ -536,3 +613,98 @@ def test_the_step_counter_can_continue_an_existing_run(loaded_db: ScratchpadDB) 
 
     assert box.step == 8
     assert loaded_db.queries()[0]["step"] == 8
+
+
+# --------------------------------------------------------------- working memory
+
+
+def test_read_notes_returns_what_was_written(box: ToolBox) -> None:
+    """Without this the scratchpad is an output sink, not working memory.
+
+    A hypothesis written early survived only in the conversation, which is exactly what the
+    loop now compacts away as it runs.
+    """
+    box.db.write_note(1, "first hypothesis", {"template_ids": [1]}, "medium")
+    box.db.write_note(2, "second hypothesis", {"template_ids": [2]}, "high")
+
+    result = call(box, "read_notes")
+
+    assert "first hypothesis" in result.content
+    assert "second hypothesis" in result.content
+    assert len(rows(result)) == 2
+
+
+def test_read_notes_carries_the_citations_back(box: ToolBox) -> None:
+    """A note without its evidence cannot be built on -- that is what made it a finding."""
+    box.db.write_note(1, "pool exhausted", {"template_ids": [9], "log_event_ids": [42]}, "high")
+
+    content = call(box, "read_notes").content
+
+    assert "9" in content
+    assert "42" in content
+
+
+def test_read_notes_on_an_empty_scratchpad_says_so(box: ToolBox) -> None:
+    """Control: it reports the absence rather than an empty table the model has to interpret."""
+    result = call(box, "read_notes")
+
+    assert "notes: 0 recorded so far" in result.content
+    assert "Nothing has been concluded yet" in result.content
+
+
+# ------------------------------------------------------------ trace correlation
+
+
+def _a_trace_id(box: ToolBox) -> str:
+    row = box.db.get_slice(severity="FATAL", max_lines=1)[0]
+    return str(row["trace_id"])
+
+
+def test_a_slice_carries_the_trace_id_of_each_line(box: ToolBox) -> None:
+    """The id has to be visible before it can be followed."""
+    content = call(box, "get_slice", severity="FATAL", max_lines=2).content
+
+    assert "trace_id" in content
+    assert _a_trace_id(box) in content
+
+
+def test_a_slice_can_be_filtered_to_one_trace(box: ToolBox) -> None:
+    """The correlation no template ranking can show: one request across services."""
+    trace = _a_trace_id(box)
+
+    returned = rows(call(box, "get_slice", trace_id=trace, max_lines=SLICE_LINES_MAX))
+
+    assert returned
+    assert {row["trace_id"] for row in returned} == {trace}
+
+
+def test_filtering_by_an_unknown_trace_returns_nothing(box: ToolBox) -> None:
+    """Control for the filter above: it selects on the value, it is not ignored.
+
+    An ignored filter would return the whole slice and read as a correlation that held.
+    """
+    result = call(box, "get_slice", trace_id="0000000000000000")
+
+    assert "0 shown of 0 matching" in result.content
+
+
+def test_a_record_with_no_trace_field_stores_null_not_empty(box: ToolBox) -> None:
+    """Absent and empty are different.
+
+    Storing "" would collapse every untraced line in a file into one imaginary request the
+    moment anyone grouped on it.
+    """
+    del box
+    assert _trace_id({"trace_id": "abc123"}) == "abc123"
+    assert _trace_id({"trace_id": "   "}) is None
+    assert _trace_id({}) is None
+    assert _trace_id(None) is None
+
+
+def test_a_trace_id_is_read_from_whichever_field_carries_it(box: ToolBox) -> None:
+    """Vendors disagree on the name and the adapter does not normalise it."""
+    del box
+    assert _trace_id({"traceId": "camel"}) == "camel"
+    assert _trace_id({"dd.trace_id": 42}) == "42"
+    # A boolean is an int in Python and is never a trace id.
+    assert _trace_id({"trace_id": True}) is None

@@ -27,12 +27,37 @@ from mistify.metrics import Metric
 
 __all__ = ["MIGRATIONS", "ReadOnlyViolation", "ScratchpadDB"]
 
-MIGRATIONS: tuple[str, ...] = ("0001_init", "0002_adversarial", "0003_objection_ids")
+MIGRATIONS: tuple[str, ...] = (
+    "0001_init",
+    "0002_adversarial",
+    "0003_objection_ids",
+    "0004_trace_id",
+)
 
 #: A template active for at least this share of the log's own span is chronic rather than part
 #: of the event. Defined here because both the report and the adversarial check need the same
 #: answer, and a threshold with two definitions drifts.
 CHRONIC_SHARE = 0.9
+
+#: Field names a trace id arrives under. Vendors disagree and the adapter does not normalise
+#: them, so the first one present wins rather than the ingest guessing a canonical name.
+_TRACE_FIELDS: tuple[str, ...] = ("trace_id", "traceId", "traceID", "trace-id", "dd.trace_id")
+
+
+def _trace_id(fields: dict[str, Any] | None) -> str | None:
+    """The record's trace id, or None when it carries no usable one.
+
+    None rather than "": absent and empty are different, and grouping on "" would collapse
+    every untraced line in the file into one imaginary request.
+    """
+    for name in _TRACE_FIELDS:
+        value = (fields or {}).get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+    return None
+
 
 _EVENT_BATCH = 1000
 
@@ -134,6 +159,7 @@ class ScratchpadDB:
                 record.raw,
                 record.message,
                 json.dumps(record.fields, default=str),
+                _trace_id(record.fields),
             )
             for record, template_id in rows
         ]
@@ -142,8 +168,8 @@ class ScratchpadDB:
             batch = payload[start : start + _EVENT_BATCH]
             self._conn.executemany(
                 "INSERT INTO log_events"
-                " (ts, source, severity, template_id, raw, message, fields_json)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " (ts, source, severity, template_id, raw, message, fields_json, trace_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 batch,
             )
             inserted += len(batch)
@@ -593,6 +619,7 @@ class ScratchpadDB:
         template_id: int | None = None,
         max_lines: int = 200,
         noise: NoiseThresholds | None = None,
+        trace_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Pull a bounded window of raw lines.
 
@@ -601,9 +628,11 @@ class ScratchpadDB:
         numerous, which is rarely what the investigation is about. Asking for a specific
         `template_id` overrides it -- that is a deliberate request, not a default.
         """
-        where, params = self._slice_clauses(start_ts, end_ts, source, severity, template_id, noise)
+        where, params = self._slice_clauses(
+            start_ts, end_ts, source, severity, template_id, noise, trace_id
+        )
         rows = self._conn.execute(
-            "SELECT id, ts, source, severity, template_id, raw, message"
+            "SELECT id, ts, source, severity, template_id, trace_id, raw, message"
             f" FROM log_events{where} ORDER BY ts, id LIMIT ?",
             [*params, max_lines],
         )
@@ -617,6 +646,7 @@ class ScratchpadDB:
         severity: str | None = None,
         template_id: int | None = None,
         noise: NoiseThresholds | None = None,
+        trace_id: str | None = None,
     ) -> int:
         """How many lines the same filters match, before `max_lines` truncates them.
 
@@ -625,7 +655,9 @@ class ScratchpadDB:
         "narrow the window". Same clauses as `get_slice` by construction, so the two cannot
         drift into answering about different sets of rows.
         """
-        where, params = self._slice_clauses(start_ts, end_ts, source, severity, template_id, noise)
+        where, params = self._slice_clauses(
+            start_ts, end_ts, source, severity, template_id, noise, trace_id
+        )
         row = self._conn.execute(f"SELECT COUNT(*) AS n FROM log_events{where}", params).fetchone()
         return int(row["n"])
 
@@ -637,6 +669,7 @@ class ScratchpadDB:
         severity: str | None,
         template_id: int | None,
         noise: NoiseThresholds | None,
+        trace_id: str | None = None,
     ) -> tuple[str, list[Any]]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -660,6 +693,9 @@ class ScratchpadDB:
         if template_id is not None:
             clauses.append("template_id = ?")
             params.append(template_id)
+        if trace_id:
+            clauses.append("trace_id = ?")
+            params.append(trace_id)
         return (f" WHERE {' AND '.join(clauses)}" if clauses else "", params)
 
     def events_by_id(self, ids: Sequence[int]) -> list[dict[str, Any]]:
@@ -667,7 +703,7 @@ class ScratchpadDB:
             return []
         placeholders = ", ".join("?" for _ in ids)
         rows = self._conn.execute(
-            "SELECT id, ts, source, severity, template_id, raw, message"
+            "SELECT id, ts, source, severity, template_id, trace_id, raw, message"
             f" FROM log_events WHERE id IN ({placeholders}) ORDER BY ts, id",
             list(ids),
         )

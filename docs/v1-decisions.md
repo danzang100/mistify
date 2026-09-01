@@ -470,3 +470,36 @@ Three changes, in order of how much they buy:
   curve is what decides whether a longer incident is affordable.
 
 No token ceiling yet; see issue 9.
+
+### A citation is only worth what the investigation actually read
+
+`write_note` warned about cited ids that do not exist and accepted everything else. That check
+cannot catch the citation that matters: an id which *does* exist but was never returned to this
+investigation resolves to a real row saying nothing about the claim, and passes every
+mechanical test the report can run.
+
+It happened on the baseline run. The investigation switched from `get_slice` to `run_sql`,
+selected `ts, source, raw` with no `id` column, and by note-writing time had no real ids in
+context — so it passed through the `[1]` and `[2]` footnote markers from its own prose. Events
+1 and 2 are the first two lines of the file, from services the claim does not mention. Only the
+adversarial model caught it.
+
+`ToolBox` now records every log event id it has returned, and `write_note` refuses a citation
+outside that set. Existence remains a warning rather than a refusal — a typo should not cost a
+sound finding — but reading is now a precondition, because the difference between the two is
+the difference between a mistake and an invention.
+
+### The scratchpad was an output sink, not working memory
+
+The model could write notes and never read them back. Four tools, none of which returned a
+note. Every hypothesis it formed survived only in the conversation — which is precisely what
+compaction now summarises away as the investigation runs. `read_notes` closes that, and it went
+from a nicety to a requirement the moment history stopped being kept whole.
+
+### Trace correlation, three phases after the field was first stored
+
+`trace_id` was on every line, inside `fields_json`, indexed by nothing and read by no code. See
+issue 4: the register predicted the cost would land when the correlation was implemented, and
+what actually happened is that it was never implemented and the field sat inert. Now a column,
+an index, and a `get_slice` filter, with each line carrying its trace id so the value can be
+found before it is followed.

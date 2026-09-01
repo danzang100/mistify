@@ -14,7 +14,7 @@ or one of the design documents, the fix column says which document to amend.
 | 1. Two rankings coexist | Medium | 3 |
 | 2. Anomaly scores are global, computed once | Medium | 3 |
 | 3. The anomaly baseline is the incident itself | High | 4/5 — promote from "Future" |
-| 4. No index for trace correlation | Medium | 3 |
+| 4. No index for trace correlation | ~~Medium~~ | **Fixed** |
 | 5. Unimplemented adapters are dropped silently | Low | 4 |
 | 6. Noise thresholds are defined in two places | ~~Medium~~ | **Fixed** |
 | 7. The provider seam drops thinking blocks | ~~Medium~~ | **Fixed** — it was a hard requirement, not a cost |
@@ -142,7 +142,21 @@ export".
 
 **Target phase.** 4/5, reclassified from "Future".
 
-## 4 — No index for trace correlation
+## 4 — No index for trace correlation — FIXED
+
+**Resolved.** Migration `0004_trace_id` promotes `trace_id` to a real column with an index and
+backfills it from `fields_json`, so an existing scratchpad gains the capability without a
+re-ingest. `get_slice` takes a `trace_id` filter and returns each line's trace id, which is
+what makes the value discoverable before it can be followed. A record with no trace id stores
+NULL rather than `""`: grouping on an empty string would invent one request out of every
+untraced line in the file.
+
+The prediction below was right about the timing and wrong about the reason. The cost never
+landed, because no query was ever written — the field sat unread for three phases. What forced
+it was reading a real run: the investigator had no way to follow one request across services,
+and the field it needed was in the database the whole time.
+
+The original write-up follows.
 
 **Problem.** Structured fields are stored as a single `fields_json` TEXT column on
 `log_events`, with indexes on `ts`, `template_id` and `severity` only. `trace_id` lives inside
@@ -159,10 +173,8 @@ the correlation, which is also the moment it is least convenient to discover.
 an index on it, when the Phase 3 agent actually needs the correlation. Doing it earlier
 commits schema to a field no code reads.
 
-**Where.** `src/mistify/scratchpad/migrations/0001_init.sql`;
+**Where.** `src/mistify/scratchpad/migrations/0004_trace_id.sql`;
 architecture §6 failure table, "Clock skew across sources".
-
-**Target phase.** 3.
 
 ## 5 — Unimplemented adapters are dropped silently
 

@@ -94,6 +94,13 @@ uv run mistify investigate --incident-id my-incident
 uv run mistify report --incident-id my-incident
 ```
 
+The investigator has five tools: `query_templates` and `get_slice` to read the scratchpad,
+`run_sql` for a read-only aggregate over it, `read_notes` to read back its own findings, and
+`write_note` to record one. `write_note` refuses a log event id that was never returned to the
+investigation — an id nobody read resolves to a real row that says nothing about the claim,
+which is the one bad citation the report's existence check cannot catch. Lines carry their
+`trace_id`, and passing it back to `get_slice` returns one request across every service.
+
 Pipeline behaviour is configured in [`config.yaml`](config.yaml).
 
 ### What the report contains

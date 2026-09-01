@@ -48,6 +48,7 @@ TOOL_NAMES: Final[tuple[str, ...]] = (
     "query_templates",
     "get_slice",
     "run_sql",
+    "read_notes",
     "write_note",
 )
 
@@ -121,8 +122,14 @@ class ToolBox:
             "query_templates": self._query_templates,
             "get_slice": self._get_slice,
             "run_sql": self._run_sql,
+            "read_notes": self._read_notes,
             "write_note": self._write_note,
         }
+        #: Every log event id this investigation has actually been shown. A citation naming an
+        #: id that is not in here was not read, it was produced -- which is how a run came to
+        #: cite events 1 and 2, the first two lines of the file, for a claim about a service
+        #: that appears in neither. The ids exist, so the report's existence check passed it.
+        self._seen_events: set[int] = set()
 
     # ---------------------------------------------------------------- schema
 
@@ -183,7 +190,9 @@ class ToolBox:
                     "suppressed unless you ask for a template_id explicitly, which is "
                     "treated as deliberate and returns that template's lines regardless. "
                     f"max_lines defaults to {SLICE_LINES_DEFAULT} and is capped at "
-                    f"{SLICE_LINES_MAX}; narrow the time window rather than raising it."
+                    f"{SLICE_LINES_MAX}; narrow the time window rather than raising it. "
+                    "Each line comes back with its trace id where it has one, and passing "
+                    "trace_id back returns every line of that one request across services."
                 ),
                 schema={
                     "type": "object",
@@ -214,6 +223,16 @@ class ToolBox:
                             "description": (
                                 "Return only lines of this template, from query_templates. "
                                 "Overrides noise suppression."
+                            ),
+                        },
+                        "trace_id": {
+                            "type": "string",
+                            "description": (
+                                "Return only lines carrying this trace id, from the trace_id "
+                                "column of an earlier slice. This is how one request is "
+                                "followed across services; a trace that starts in one service "
+                                "and ends in an error in another is the correlation no "
+                                "template ranking can show you."
                             ),
                         },
                         "max_lines": {
@@ -256,6 +275,21 @@ class ToolBox:
                         },
                     },
                     "required": ["query"],
+                    "additionalProperties": False,
+                },
+            ),
+            ToolSpec(
+                name="read_notes",
+                description=(
+                    "Read back every note recorded in this investigation so far, with the "
+                    "citations attached to each. Cheap, and worth calling before concluding: "
+                    "older tool output is summarised away as the investigation runs, so a "
+                    "hypothesis written earlier may no longer be visible in the conversation."
+                ),
+                schema={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
                     "additionalProperties": False,
                 },
             ),
@@ -415,6 +449,7 @@ class ToolBox:
         source = _str_arg(args, "source")
         severity = _severity_arg(args, "severity")
         template_id = _optional_int(args, "template_id")
+        trace_id = _str_arg(args, "trace_id")
         max_lines = _bounded_int(
             args, "max_lines", default=SLICE_LINES_DEFAULT, maximum=SLICE_LINES_MAX
         )
@@ -427,7 +462,9 @@ class ToolBox:
             template_id=template_id,
             max_lines=max_lines,
             noise=self.noise,
+            trace_id=trace_id,
         )
+        self._seen_events.update(int(row["id"]) for row in rows)
 
         filters = _describe(
             start_ts=start_ts,
@@ -435,6 +472,7 @@ class ToolBox:
             source=source,
             severity=severity,
             template_id=template_id,
+            trace_id=trace_id,
         )
         suppression = (
             "noise suppression off (explicit template_id)"
@@ -448,6 +486,7 @@ class ToolBox:
             severity=severity,
             template_id=template_id,
             noise=self.noise,
+            trace_id=trace_id,
         )
         header = (
             f"lines: {len(rows)} shown of {matched} matching (max_lines {max_lines}); "
@@ -463,7 +502,7 @@ class ToolBox:
                 "further rather than raising max_lines."
             )
         table = _table(
-            ("id", "ts", "source", "severity", "template_id", "text"),
+            ("id", "ts", "source", "severity", "template_id", "trace_id", "text"),
             [
                 (
                     row["id"],
@@ -471,6 +510,7 @@ class ToolBox:
                     row["source"],
                     row["severity"],
                     row["template_id"],
+                    row["trace_id"] or "-",
                     row["message"] or row["raw"],
                 )
                 for row in rows
@@ -508,8 +548,52 @@ class ToolBox:
         if not rows:
             return _Outcome(content=header, row_count=0, description=query)
         columns = tuple(rows[0])
+        if "id" in columns and "log_events" in query.lower():
+            # Only when the query actually read log_events: `id` is a column on several
+            # tables, and counting a note id as an event the model has seen would let a
+            # fabricated citation back through the gate below.
+            self._seen_events.update(
+                int(row["id"]) for row in rows if isinstance(row.get("id"), int)
+            )
         table = _table(columns, [tuple(row.get(column) for column in columns) for row in rows])
         return _Outcome(content=f"{header}\n{table}", row_count=len(rows), description=query)
+
+    def _read_notes(self, args: dict[str, Any]) -> _Outcome:
+        """Every note this investigation has written, with its citations.
+
+        Without this the scratchpad is an output sink, not working memory: the model could
+        write a hypothesis and never see it again, so its own earlier reasoning survived only
+        in the conversation. That was tolerable while the conversation was kept whole. It is
+        not now that older tool output is compacted away, and it is the difference between a
+        scratchpad and a log file.
+        """
+        del args  # takes no arguments; the whole point is that it is cheap to call
+        notes = self.db.notes()
+        header = f"notes: {len(notes)} recorded so far."
+        if not notes:
+            return _Outcome(
+                content=f"{header} Nothing has been concluded yet.",
+                row_count=0,
+                description="read_notes()",
+            )
+        table = _table(
+            ("step", "confidence", "template_ids", "log_event_ids", "note"),
+            [
+                (
+                    note.step,
+                    note.confidence,
+                    ",".join(str(i) for i in note.evidence.get("template_ids", [])) or "-",
+                    ",".join(str(i) for i in note.evidence.get("log_event_ids", [])) or "-",
+                    note.note,
+                )
+                for note in notes
+            ],
+        )
+        return _Outcome(
+            content=f"{header}\n{table}",
+            row_count=len(notes),
+            description="read_notes()",
+        )
 
     def _write_note(self, args: dict[str, Any]) -> _Outcome:
         note = _required_str(args, "note")
@@ -522,6 +606,30 @@ class ToolBox:
             f"write_note(confidence={confidence!r}, template_ids={template_ids}, "
             f"log_event_ids={event_ids})"
         )
+
+        # Refused before the note is written, unlike the existence check below, because these
+        # two failures are different. A cited id that does not exist is a typo. A cited id
+        # that exists but was never returned to this investigation was not read -- it was
+        # produced, and it will resolve to a real row that says nothing about the claim, which
+        # is the one kind of bad citation the report's verifier cannot catch. A run did
+        # exactly this: it cited events 1 and 2, the first two lines of the file, for a claim
+        # about a service appearing in neither, after switching to run_sql and selecting no
+        # id column. Only the adversarial model caught it.
+        unseen = sorted(set(event_ids) - self._seen_events)
+        if unseen:
+            return _Outcome(
+                content=(
+                    f"write_note rejected: log event id(s) {unseen} were never returned to "
+                    "this investigation, so they cannot support a claim. Cite ids from the "
+                    "`id` column of a get_slice result, or select log_events.id in run_sql "
+                    "and cite from that. If the finding rests on templates rather than "
+                    "individual lines, cite template_ids alone."
+                ),
+                row_count=0,
+                description=description,
+                is_error=True,
+            )
+
         try:
             note_id = self.db.write_note(self.step, note, evidence, confidence)
         except (ValueError, TypeError, sqlite3.Error) as exc:
@@ -536,10 +644,9 @@ class ToolBox:
             f"write_note: saved note {note_id} at step {self.step} (confidence={confidence}, "
             f"citing {len(template_ids)} template(s) and {len(event_ids)} log event(s))."
         )
-        # Citations are checked, but a bad one does not lose the note. The report's
-        # deterministic verifier is the authority on fabricated citations; refusing here
-        # would throw away a sound finding over one mistyped id. Naming the unresolved ids
-        # gives the model the chance to write a corrected note itself.
+        # Existence is checked but does not lose the note: refusing here over one mistyped id
+        # would throw away a sound finding, and the report's verifier is the authority. Naming
+        # the unresolved ids gives the model the chance to correct itself.
         unknown = _unresolved(self.db, template_ids, event_ids)
         if unknown:
             content += f" Warning: these cited ids do not exist in the scratchpad: {unknown}."
