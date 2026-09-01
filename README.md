@@ -10,20 +10,27 @@ are in [`docs/log-agent-v1-build-plan.html`](docs/log-agent-v1-build-plan.html) 
 
 ## Status
 
-**Phase 2 of 6 complete.** The full path from a JSON Lines file to a rendered markdown report
-runs end to end, and templates carry a deterministic anomaly score. The investigation step is
-still a hardcoded heuristic rather than a model-driven loop — that arrives in Phase 3. See the
-build plan for what each remaining phase adds.
+**Phase 3 of 6 complete.** A model now drives the investigation through the scratchpad tools,
+behind a provider seam, with an adversarial pass that objects to the conclusion rather than
+rewriting it.
+
+**Running the model-driven path needs a credential** (see Investigate below). Everything else —
+ingest, templating, scoring, reporting, and the deterministic `--investigator skeleton` — runs
+with no account anywhere, and so does the entire test suite.
 
 | Phase | Scope | State |
 |-------|-------|-------|
 | 0 | Decisions, repo skeleton, config | done |
 | 1 | Walking skeleton: JSONL → redact → Drain3 → SQLite → report | done |
 | 2 | `anomaly_score`, Drain3 threshold calibration, over-merge detection, full redaction set | done |
-| 3 | Real agent loop, adversarial pass, rebuttal | not started |
+| 3 | Provider seam, agent loop, adversarial pass with rebuttal | done |
 | 4 | Elastic / Loki / OTLP adapters, unknown-format bootstrapper | not started |
 | 5 | Evaluation harness (Loghub, LogDx-CI, baselines) | not started |
 | 6 | MCP server, HTML/PDF reports, packaging | not started |
+
+Deferred problems, each with a recommended fix and a target phase, are in
+[`Issue.md`](Issue.md). Two of them (#1 two rankings, #2 whole-file anomaly scores) are Phase 3
+decisions that are now due.
 
 ## Install
 
@@ -49,6 +56,21 @@ The report lands in `reports/demo.md`. Against your own logs:
 ```bash
 uv run mistify run --source path/to/incident.jsonl
 ```
+
+### Investigate
+
+`investigate` and `run` default to `--investigator loop`, which drives a model and needs a
+credential — either `ANTHROPIC_API_KEY`, or a profile from `ant auth login`. A Claude Pro
+subscription includes a monthly programmatic allowance billed at API rates; it is separate
+from chat usage.
+
+```bash
+uv run mistify run --source examples/sample_incident.jsonl --investigator skeleton
+```
+
+`--investigator skeleton` uses the deterministic heuristic instead and calls no model, which
+is how to exercise the whole pipeline without an account. `--no-adversarial` skips the
+critique when you want one model call instead of three.
 
 That is shorthand for the three-step pipeline:
 
