@@ -465,8 +465,13 @@ def test_anthropic_populates_usage_including_cached_tokens() -> None:
     )
     turn = _provider(response).converse("system", [Message(role="user", text="go")])
 
-    # Cache *writes* are billed, so they count as input; only cache reads are the cheap ones.
-    assert turn.usage == Usage(input_tokens=107, output_tokens=40, cached_input_tokens=2000)
+    # `input_tokens` is every prompt token: fresh, cache writes and cache reads alike, per the
+    # contract on `Usage`. Anthropic reports the three separately and this adapter is where
+    # they are combined, so a run total adds up the same way against either provider.
+    assert turn.usage == Usage(input_tokens=2107, output_tokens=40, cached_input_tokens=2000)
+    # Cache reads are counted once, not twice: they are inside `input_tokens`, so the total is
+    # input plus output and nothing else.
+    assert turn.usage.total_tokens == 2147
 
 
 def test_anthropic_survives_missing_usage_fields() -> None:

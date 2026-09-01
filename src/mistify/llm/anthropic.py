@@ -279,19 +279,29 @@ def _decode_stop_reason(raw: Any) -> StopReason:
 
 
 def _decode_usage(raw: Any) -> Usage:
-    """Token counts, with cache reads kept separate from everything else that was paid for.
+    """Token counts, normalised to the seam's contract: cached is a *subset* of input.
 
-    Cache *creation* tokens count as input: they are billed (at a premium, in fact), so
-    folding them into `cached_input_tokens` would make a run that rewrites its cache every
-    step look like a run that is reading it.
+    Anthropic reports three disjoint numbers -- fresh input, cache writes and cache reads --
+    so all three are summed into `input_tokens`, and cache reads are additionally reported as
+    `cached_input_tokens`. Gemini's `prompt_token_count` is already inclusive, which is the
+    shape `Usage` documents, so this is the adapter that has to do the work.
+
+    Leaving cache reads out of `input_tokens` (as this did before there was anything totalling
+    them) makes a cached run look cheaper than it was, by exactly the tokens the cache served.
+
+    Cache *creation* is not folded into `cached_input_tokens`: it is billed at a premium
+    rather than served cheaply, and counting it as cached would make a run that rewrites its
+    cache every step look like a run that is reading one.
     """
     if raw is None:
         return Usage()
+    cache_read = _as_int(getattr(raw, "cache_read_input_tokens", 0))
     return Usage(
         input_tokens=_as_int(getattr(raw, "input_tokens", 0))
-        + _as_int(getattr(raw, "cache_creation_input_tokens", 0)),
+        + _as_int(getattr(raw, "cache_creation_input_tokens", 0))
+        + cache_read,
         output_tokens=_as_int(getattr(raw, "output_tokens", 0)),
-        cached_input_tokens=_as_int(getattr(raw, "cache_read_input_tokens", 0)),
+        cached_input_tokens=cache_read,
     )
 
 

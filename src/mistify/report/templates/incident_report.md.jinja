@@ -71,6 +71,34 @@ signal is met before the noise.
 | {{ t.template_id }} | {{ "%.3f" | format(t.anomaly_score) }} | {{ t.max_severity }} | {{ t.occurrence_count }} | {{ t.first_seen }} | {{ t.last_seen }} | {{ t.pattern | replace("|", "\\|") }} |
 {% endfor %}
 
+## Token usage
+
+{% if token_stages %}
+Every stage that called a model, and what it spent. Cached tokens are a subset of input, not
+an extra column to add — the total is input plus output.
+
+| Stage | Model | Calls | Input | Cached | Output | Total |
+|---|---|---|---|---|---|---|
+{% for stage in token_stages -%}
+| {{ stage.stage }} | {{ stage.model or "—" }} | {{ stage.calls if stage.calls is not none else "—" }} | {{ "{:,}".format(stage.input_tokens) }} | {{ "{:,}".format(stage.cached_input_tokens) }} ({{ "%.0f" | format(stage.cached_share * 100) }}%) | {{ "{:,}".format(stage.output_tokens) }} | {{ "{:,}".format(stage.total_tokens) }} |
+{% endfor -%}
+| **Total** | | | **{{ "{:,}".format(token_total.input_tokens) }}** | **{{ "{:,}".format(token_total.cached_input_tokens) }}** ({{ "%.0f" | format(token_total.cached_share * 100) }}%) | **{{ "{:,}".format(token_total.output_tokens) }}** | **{{ "{:,}".format(token_total.total_tokens) }}** |
+
+{% if token_total.cached_input_tokens == 0 and token_total.input_tokens > 0 %}
+No tokens were served from cache. The loop is built around a stable system prompt that should
+be cacheable from the second step onward, so this is either that prefix being invalidated
+every step or a provider that does not report cache reads — worth telling apart before
+reading the input count as the real cost.
+{% endif %}
+No prices appear here. They change without notice and differ per model, so a cost in dollars
+printed into a report is a number that goes quietly wrong; the token counts are the durable
+part.
+{% else %}
+No stage reported model usage. Either this run used an investigator that calls no model — the
+deterministic `skeleton` — or no model call was made. A stage that spent nothing is absent
+here rather than shown as zero, so that "did not report" and "reported zero" stay distinct.
+{% endif %}
+
 ## Pipeline health
 
 Every stage reports its own numbers. A stage that degraded should be visible here rather

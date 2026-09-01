@@ -41,6 +41,8 @@ from mistify.metrics import (
     TEMPLATING_REDUCTION_FACTOR,
     Metric,
     MetricView,
+    token_usage,
+    total_tokens,
 )
 from mistify.scratchpad.db import ScratchpadDB
 from mistify.templating.calibration import CalibrationStatus
@@ -131,6 +133,16 @@ def collect(db: ScratchpadDB) -> ReportData:
     view = MetricView(metrics)
     warnings.extend(_health_warnings(view))
 
+    # Token counts come out of the same rows, grouped by the stage that spent them. Every
+    # stage that calls a model is here, not just the loop: the adversarial pass is one or two
+    # calls on a second model, and a run total that quietly omitted it would understate the
+    # bill by the whole cost of the check.
+    #
+    # Left in the order `token_usage` returns, which is metric-declaration order and therefore
+    # the order the stages ran. Sorting alphabetically put the check above the investigation it
+    # was checking.
+    token_stages = token_usage(metrics)
+
     investigator = view.text(INVESTIGATE_INVESTIGATOR)
     if investigator is None:
         investigator = "unknown"
@@ -151,6 +163,8 @@ def collect(db: ScratchpadDB) -> ReportData:
         "investigator": investigator,
         "investigator_caveat": view.text(INVESTIGATE_CAVEAT)
         or "No caveat recorded for this investigator.",
+        "token_stages": token_stages,
+        "token_total": total_tokens(token_stages),
         "version": __version__,
     }
 

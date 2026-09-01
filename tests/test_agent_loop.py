@@ -19,8 +19,12 @@ from mistify.common.models import NoiseThresholds
 from mistify.llm.base import Turn, Usage
 from mistify.llm.scripted import ScriptedProvider, text_turn, tool_call_turn
 from mistify.metrics import (
+    ADVERSARIAL_INPUT_TOKENS,
+    ADVERSARIAL_MODEL_CALLS,
     ADVERSARIAL_OBJECTIONS,
     ADVERSARIAL_OUTCOME,
+    ADVERSARIAL_OUTPUT_TOKENS,
+    ADVERSARIAL_REBUTTAL_MODEL,
     ADVERSARIAL_UNEXPLAINED_SIGNAL,
     INVESTIGATE_BUDGET_LIMITED,
     INVESTIGATE_CACHED_INPUT_TOKENS,
@@ -332,3 +336,105 @@ def test_running_past_the_script_is_an_error(loaded_db: ScratchpadDB) -> None:
     provider = ScriptedProvider([tool_call_turn("query_templates", {}, call_id="c1")])
     with pytest.raises(ProviderError):
         InvestigationLoop(loaded_db, provider, _toolbox(loaded_db)).run()
+
+
+# ------------------------------------------------------- what the check costs
+
+
+def _objecting_critique(usage: Usage | None = None) -> ScriptedProvider:
+    payload = {
+        "objections": [
+            {"claim": "pool exhausted", "objection": "t5 fires more", "template_ids": [5]}
+        ]
+    }
+    return ScriptedProvider(
+        [text_turn(json.dumps(payload), usage=usage or Usage())], name="critic", model="critic-1"
+    )
+
+
+def _rebutter(model: str, usage: Usage | None = None) -> ScriptedProvider:
+    reply = json.dumps({"responses": [{"objection": "t5", "conceded": False}]})
+    return ScriptedProvider([text_turn(reply, usage=usage or Usage())], model=model)
+
+
+def test_the_adversarial_pass_records_what_it_spent(loaded_db: ScratchpadDB) -> None:
+    """One or two calls against the loop's fifteen -- but on a second model, so a run total
+    that dropped them would understate the bill by the entire cost of the check."""
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    run_adversarial_check(
+        loaded_db,
+        _objecting_critique(Usage(input_tokens=800, output_tokens=120)),
+        [9],
+        rebuttal_provider=_rebutter("loop-model", Usage(input_tokens=400, output_tokens=60)),
+    )
+
+    view = MetricView(loaded_db.metrics("adversarial"))
+    assert view.number(ADVERSARIAL_MODEL_CALLS) == 2
+    assert view.number(ADVERSARIAL_INPUT_TOKENS) == 1200
+    assert view.number(ADVERSARIAL_OUTPUT_TOKENS) == 180
+
+
+def test_a_pass_that_makes_one_call_reports_one_call(loaded_db: ScratchpadDB) -> None:
+    """Control for the count above: it tracks the calls actually made, it is not fixed at two."""
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    run_adversarial_check(
+        loaded_db, _critique({"objections": []}), [9], rebuttal_provider=_rebutter("loop-model")
+    )
+
+    view = MetricView(loaded_db.metrics("adversarial"))
+    assert view.number(ADVERSARIAL_MODEL_CALLS) == 1
+
+
+def test_a_rebuttal_on_another_model_says_which(loaded_db: ScratchpadDB) -> None:
+    """Two models can spend this stage's tokens, and they are not billed at the same rate."""
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    run_adversarial_check(
+        loaded_db, _objecting_critique(), [9], rebuttal_provider=_rebutter("loop-model")
+    )
+
+    assert MetricView(loaded_db.metrics("adversarial")).text(ADVERSARIAL_REBUTTAL_MODEL) == (
+        "loop-model"
+    )
+
+
+def test_no_rebuttal_model_is_recorded_when_it_is_the_same_model(loaded_db: ScratchpadDB) -> None:
+    """Control for the metric above: it marks a real split, so it must stay absent otherwise.
+
+    Recording it unconditionally would make every run look like it used two models, including
+    the ones that did not.
+    """
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    critic = _objecting_critique()
+    run_adversarial_check(loaded_db, critic, [9], rebuttal_provider=_rebutter(critic.model))
+
+    assert MetricView(loaded_db.metrics("adversarial")).text(ADVERSARIAL_REBUTTAL_MODEL) is None
+
+
+def test_the_report_says_what_the_whole_run_cost(loaded_db: ScratchpadDB) -> None:
+    """The loop and the check are both on the bill, and the report has to add them up."""
+    loop = ScriptedProvider(_concluding_script(loaded_db))
+    InvestigationLoop(loaded_db, loop, _toolbox(loaded_db)).run()
+    run_adversarial_check(
+        loaded_db,
+        _objecting_critique(Usage(input_tokens=800, output_tokens=120)),
+        [9],
+        rebuttal_provider=_rebutter("loop-model", Usage(input_tokens=400, output_tokens=60)),
+    )
+
+    report = generate_report(loaded_db)
+
+    assert "## Token usage" in report
+    # The loop's 120 + 40 plus the check's 1,200 + 180.
+    assert "1,540" in report
+
+
+def test_a_run_with_no_model_calls_reports_no_token_usage(loaded_db: ScratchpadDB) -> None:
+    """Control for the section above: it renders what was measured, not a fixed table.
+
+    The deterministic investigator calls nothing, and a token table full of zeros would claim
+    a measurement nobody took.
+    """
+    report = generate_report(loaded_db)
+
+    assert "## Token usage" in report
+    assert "No stage reported model usage" in report

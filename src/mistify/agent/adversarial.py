@@ -30,12 +30,17 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from mistify.llm.base import LLMProvider, Message
+from mistify.llm.base import LLMProvider, Message, Usage
 from mistify.metrics import (
+    ADVERSARIAL_CACHED_INPUT_TOKENS,
+    ADVERSARIAL_INPUT_TOKENS,
     ADVERSARIAL_MODEL,
+    ADVERSARIAL_MODEL_CALLS,
     ADVERSARIAL_OBJECTIONS,
     ADVERSARIAL_OUTCOME,
+    ADVERSARIAL_OUTPUT_TOKENS,
     ADVERSARIAL_PROVIDER,
+    ADVERSARIAL_REBUTTAL_MODEL,
     ADVERSARIAL_REBUTTED,
     ADVERSARIAL_UNEXPLAINED_SIGNAL,
     ADVERSARIAL_UNSUPPORTED_CLAIMS,
@@ -118,6 +123,14 @@ class AdversarialResult:
     unsupported_claims: list[str] = field(default_factory=list)
     rebuttals: list[dict[str, Any]] = field(default_factory=list)
     outcome: str = "not_run"
+    #: What the critique and the rebuttal cost between them. Recorded because the pass is one
+    #: or two calls against the loop's fifteen, and a run total that omitted it would be
+    #: quietly wrong about how much of the bill the check accounts for.
+    usage: Usage = field(default_factory=Usage)
+    model_calls: int = 0
+    #: The model that answered the objections, when it was not the one that raised them --
+    #: the normal case, since the point of a rebuttal is that the original reasoning answers.
+    rebuttal_model: str = ""
 
     @property
     def evidenced_objections(self) -> list[Objection]:
@@ -208,6 +221,8 @@ def run_adversarial_check(
         messages=[Message(role="user", text=prompt)],
         max_tokens=max_tokens,
     )
+    result.usage = result.usage + critique.usage
+    result.model_calls += 1
 
     try:
         parsed = _parse_json(critique.text)
@@ -236,9 +251,16 @@ def run_adversarial_check(
     ]
 
     if rebut and result.evidenced_objections:
-        result.rebuttals = _rebut(
-            db, rebuttal_provider or provider, result.evidenced_objections, max_tokens
+        answering = rebuttal_provider or provider
+        result.rebuttals, rebuttal_usage = _rebut(
+            db, answering, result.evidenced_objections, max_tokens
         )
+        result.usage = result.usage + rebuttal_usage
+        result.model_calls += 1
+        # Two models can spend this stage's tokens. Recording only the critique's would
+        # attribute the rebuttal's share to the wrong one, at the wrong price.
+        if answering.model != provider.model:
+            result.rebuttal_model = answering.model
 
     result.outcome = _outcome(result)
     _record(db, provider, result)
@@ -250,7 +272,12 @@ def _rebut(
     provider: LLMProvider,
     objections: list[Objection],
     max_tokens: int,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], Usage]:
+    """Answer the objections, returning what the answer cost alongside it.
+
+    The usage comes back rather than being recorded here because this call may run on the
+    loop's provider, not the critique's, and the caller is the only one that knows which.
+    """
     listing = "\n".join(
         f"- {o.claim}: {o.objection} (cites templates {o.template_ids}, events {o.log_event_ids})"
         for o in objections
@@ -266,9 +293,10 @@ def _rebut(
         max_tokens=max_tokens,
     )
     try:
-        return list(_parse_json(reply.text).get("responses", []))
+        return list(_parse_json(reply.text).get("responses", [])), reply.usage
     except (ValueError, json.JSONDecodeError):
-        return []
+        # An unreadable rebuttal still cost what it cost.
+        return [], reply.usage
 
 
 def _outcome(result: AdversarialResult) -> str:
@@ -293,5 +321,10 @@ def _record(db: ScratchpadDB, provider: LLMProvider, result: AdversarialResult) 
             (ADVERSARIAL_UNEXPLAINED_SIGNAL, len(result.unexplained_signal)),
             (ADVERSARIAL_REBUTTED, len(result.rebuttals)),
             (ADVERSARIAL_OUTCOME, result.outcome),
+            (ADVERSARIAL_MODEL_CALLS, result.model_calls),
+            (ADVERSARIAL_INPUT_TOKENS, result.usage.input_tokens),
+            (ADVERSARIAL_OUTPUT_TOKENS, result.usage.output_tokens),
+            (ADVERSARIAL_CACHED_INPUT_TOKENS, result.usage.cached_input_tokens),
         ]
+        + ([(ADVERSARIAL_REBUTTAL_MODEL, result.rebuttal_model)] if result.rebuttal_model else [])
     )

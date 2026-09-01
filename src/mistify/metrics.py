@@ -33,9 +33,19 @@ __all__ = [
     "Metric",
     "MetricFamily",
     "MetricView",
+    "StageTokens",
+    "token_usage",
+    "total_tokens",
 ]
 
 Kind = Literal["int", "float", "str", "bool"]
+
+#: What a token count counts. Declared on the metric rather than inferred from its name, so
+#: the report can total a run's token usage without holding a list of which metrics are token
+#: metrics -- a list that goes stale the moment a stage starts calling a model.
+#: `cached_input` is a *subset* of `input`, matching `llm.base.Usage`; totalling both would
+#: double-count.
+TokenRole = Literal["input", "cached_input", "output"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +65,10 @@ class Metric:
     #: True when some reader acts on this metric. Renaming a load-bearing metric changes
     #: behaviour; renaming a display-only one does not.
     load_bearing: bool = False
+    #: Set when this metric is a token count, saying which one. Every stage that calls a model
+    #: declares the same three, which is what lets a run total be computed rather than
+    #: maintained.
+    token_role: TokenRole | None = None
     threshold: float | None = None
     comparison: Literal["gt", "lt"] = "gt"
     floor: float = -math.inf
@@ -233,11 +247,15 @@ INVESTIGATE_BUDGET_LIMITED = Metric(
     trigger_values=frozenset({"True"}),
 )
 INVESTIGATE_STOP_REASON = Metric("investigate", "stop_reason", "str")
-INVESTIGATE_INPUT_TOKENS = Metric("investigate", "input_tokens", "int")
-INVESTIGATE_OUTPUT_TOKENS = Metric("investigate", "output_tokens", "int")
-#: Zero across a multi-step run means the cached prefix is being invalidated every step, and
-#: the investigation is quietly costing far more than it should.
-INVESTIGATE_CACHED_INPUT_TOKENS = Metric("investigate", "cached_input_tokens", "int")
+#: Every prompt token the loop spent, cached ones included -- see `llm.base.Usage`.
+INVESTIGATE_INPUT_TOKENS = Metric("investigate", "input_tokens", "int", token_role="input")
+INVESTIGATE_OUTPUT_TOKENS = Metric("investigate", "output_tokens", "int", token_role="output")
+#: The subset of `input_tokens` served from cache. Zero across a multi-step run means either
+#: the cached prefix is being invalidated every step or the provider does not report cache
+#: reads -- worth telling apart before concluding the investigation is expensive.
+INVESTIGATE_CACHED_INPUT_TOKENS = Metric(
+    "investigate", "cached_input_tokens", "int", token_role="cached_input"
+)
 
 # ---------------------------------------------------------------- adversarial
 
@@ -263,6 +281,18 @@ ADVERSARIAL_UNEXPLAINED_SIGNAL = Metric(
 )
 ADVERSARIAL_REBUTTED = Metric("adversarial", "objections_rebutted", "int")
 ADVERSARIAL_OUTCOME = Metric("adversarial", "outcome", "str")
+#: Model calls the critique and rebuttal made between them. Without it the token counts below
+#: cannot be read as a rate, and a pass that silently made two calls looks like one.
+ADVERSARIAL_MODEL_CALLS = Metric("adversarial", "model_calls", "int")
+ADVERSARIAL_INPUT_TOKENS = Metric("adversarial", "input_tokens", "int", token_role="input")
+ADVERSARIAL_OUTPUT_TOKENS = Metric("adversarial", "output_tokens", "int", token_role="output")
+ADVERSARIAL_CACHED_INPUT_TOKENS = Metric(
+    "adversarial", "cached_input_tokens", "int", token_role="cached_input"
+)
+#: Only recorded when the rebuttal ran on a different model from the critique, which is the
+#: normal case: the point of a rebuttal is that the *original reasoning* answers. Without it
+#: this stage's tokens would be attributed entirely to the critique's model.
+ADVERSARIAL_REBUTTAL_MODEL = Metric("adversarial", "rebuttal_model", "str")
 
 
 ALL_METRICS: tuple[Metric, ...] = (
@@ -325,6 +355,11 @@ ALL_METRICS: tuple[Metric, ...] = (
     ADVERSARIAL_UNSUPPORTED_CLAIMS,
     ADVERSARIAL_UNEXPLAINED_SIGNAL,
     ADVERSARIAL_REBUTTED,
+    ADVERSARIAL_MODEL_CALLS,
+    ADVERSARIAL_INPUT_TOKENS,
+    ADVERSARIAL_OUTPUT_TOKENS,
+    ADVERSARIAL_CACHED_INPUT_TOKENS,
+    ADVERSARIAL_REBUTTAL_MODEL,
     ADVERSARIAL_OUTCOME,
 )
 
@@ -377,6 +412,99 @@ class MetricView:
         if metric.comparison == "gt":
             return value > metric.threshold
         return metric.floor < value < metric.threshold
+
+
+@dataclass(frozen=True, slots=True)
+class StageTokens:
+    """What one stage spent on model calls.
+
+    `cached_input_tokens` is a subset of `input_tokens`, so `total_tokens` deliberately does
+    not add it in -- see `llm.base.Usage` for why the adapters normalise to that shape.
+    """
+
+    stage: str
+    input_tokens: int = 0
+    cached_input_tokens: int = 0
+    output_tokens: int = 0
+    model: str | None = None
+    calls: int | None = None
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    @property
+    def cached_share(self) -> float:
+        """Share of the prompt served from cache. Zero when nothing was cached *or* measured."""
+        return self.cached_input_tokens / self.input_tokens if self.input_tokens else 0.0
+
+    def __add__(self, other: StageTokens) -> StageTokens:
+        """Combine two stages. The result carries no model or call count, because it has two."""
+        return StageTokens(
+            stage="total",
+            input_tokens=self.input_tokens + other.input_tokens,
+            cached_input_tokens=self.cached_input_tokens + other.cached_input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+        )
+
+
+#: The model a stage used and how many calls it made, so a token count can say what spent it.
+#: A stage absent from here still reports its tokens, just without attribution.
+_TOKEN_CONTEXT: dict[str, tuple[Metric, Metric]] = {
+    "investigate": (INVESTIGATE_MODEL, INVESTIGATE_STEPS),
+    "adversarial": (ADVERSARIAL_MODEL, ADVERSARIAL_MODEL_CALLS),
+}
+
+_TOKEN_FIELDS: dict[str, str] = {
+    "input": "input_tokens",
+    "cached_input": "cached_input_tokens",
+    "output": "output_tokens",
+}
+
+
+def token_usage(rows: Sequence[Mapping[str, Any]]) -> list[StageTokens]:
+    """Per-stage token counts for one run.
+
+    Driven by `Metric.token_role` rather than by a list of metric names kept here, so a stage
+    that starts calling a model tomorrow appears in the report's token table by declaring its
+    metrics and nothing else.
+
+    A stage that recorded no token metric is omitted rather than shown as zero: it did not
+    spend nothing, it did not report, and those are different claims. Same reason
+    `MetricView` distinguishes absent from zero.
+    """
+    view = MetricView(rows)
+
+    by_stage: dict[str, dict[str, int]] = {}
+    for metric in ALL_METRICS:
+        if metric.token_role is None:
+            continue
+        value = view.number(metric)
+        if value is not None:
+            by_stage.setdefault(metric.stage, {})[_TOKEN_FIELDS[metric.token_role]] = int(value)
+
+    stages: list[StageTokens] = []
+    for stage, counts in by_stage.items():
+        model_metric, calls_metric = _TOKEN_CONTEXT.get(stage, (None, None))
+        calls = None if calls_metric is None else view.number(calls_metric)
+        stages.append(
+            StageTokens(
+                stage=stage,
+                model=None if model_metric is None else view.text(model_metric),
+                calls=None if calls is None else int(calls),
+                **counts,
+            )
+        )
+    return stages
+
+
+def total_tokens(stages: Iterable[StageTokens]) -> StageTokens:
+    """Every stage added up. Nothing in means an all-zero total, which the caller should not
+    print without checking that any stage reported at all."""
+    combined = StageTokens(stage="total")
+    for stage in stages:
+        combined = combined + stage
+    return combined
 
 
 def as_rows(entries: Iterable[tuple[Metric, object]]) -> list[tuple[str, str, object]]:

@@ -93,14 +93,30 @@ class Message:
 class Usage:
     """Tokens consumed by one call.
 
-    `cached_input` is reported separately because the whole point of caching the template
-    digest is that it stops being paid for at full rate -- a run where this stays zero across
-    steps means the cache is being invalidated and the investigation is quietly expensive.
+    **`input_tokens` counts every prompt token, and `cached_input_tokens` is the subset of
+    them that was served from cache.** Subset, not a separate bucket -- so `total_tokens` is
+    `input + output` and never double-counts, whatever the provider.
+
+    That contract has to be stated because the vendors disagree about it. Gemini's
+    `prompt_token_count` already includes the cached portion; Anthropic reports cache reads
+    and cache writes as fields *beside* `input_tokens`. Adapters normalise to the rule above,
+    which is the only reason a run total can add up across two providers. Left to each
+    adapter's own convention, a total would silently undercount one of them.
+
+    `cached_input` is kept because the whole point of caching the template digest is that it
+    stops being paid for at full rate. A run where it stays zero across steps is either
+    invalidating the cached prefix every step or talking to a provider that does not report
+    cache reads, and those are worth telling apart before concluding anything about cost.
     """
 
     input_tokens: int = 0
     output_tokens: int = 0
     cached_input_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        """Prompt plus completion. Cached tokens are already inside `input_tokens`."""
+        return self.input_tokens + self.output_tokens
 
     def __add__(self, other: Usage) -> Usage:
         return Usage(

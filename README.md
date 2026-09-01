@@ -94,6 +94,27 @@ uv run mistify report --incident-id my-incident
 
 Pipeline behaviour is configured in [`config.yaml`](config.yaml).
 
+### What a run costs
+
+Every report carries a **Token usage** table: one row per stage that called a model, with the
+model it used, how many calls it made, input and output tokens, and how much of the input was
+served from cache. The loop and the adversarial pass are billed separately, on different
+models, so they are counted separately and then totalled.
+
+Cached tokens are a *subset* of input, not a fourth number to add — the total is input plus
+output. The two adapters normalise to that rule, because the vendors disagree about it: see
+`Usage` in [`src/mistify/llm/base.py`](src/mistify/llm/base.py).
+
+A cache share of zero on the first run against a file and a large one on the next is normal:
+the loop's system prompt is the stable prefix, and a provider's implicit cache only has
+something to hit once it has seen it. Zero *across* a multi-step run is worth looking at.
+
+No prices are printed. They change without notice and differ per model; the token counts are
+the part that stays true.
+
+Reports are written to `report.output_dir` in `config.yaml`, which defaults to `./reports`,
+one file per incident id.
+
 ## Develop
 
 ```bash

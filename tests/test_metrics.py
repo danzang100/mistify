@@ -15,6 +15,8 @@ from mistify.metrics import (
     Metric,
     MetricView,
     as_rows,
+    token_usage,
+    total_tokens,
 )
 from mistify.redaction.patterns import ENTITY_ORDER
 
@@ -92,6 +94,11 @@ EXPECTED_METRIC_KEYS = {
     ("adversarial", "unexplained_signal_templates"),
     ("adversarial", "objections_rebutted"),
     ("adversarial", "outcome"),
+    ("adversarial", "model_calls"),
+    ("adversarial", "input_tokens"),
+    ("adversarial", "output_tokens"),
+    ("adversarial", "cached_input_tokens"),
+    ("adversarial", "rebuttal_model"),
 }
 
 
@@ -262,3 +269,97 @@ def test_as_rows_flattens_declared_metrics() -> None:
 
 def test_as_rows_of_nothing_is_empty() -> None:
     assert as_rows([]) == []
+
+
+# ------------------------------------------------------------- token accounting
+
+
+def _token_rows(stage: str, **counts: int) -> list[dict[str, object]]:
+    return [
+        {"stage": stage, "metric": name, "value": str(value), "value_num": value}
+        for name, value in counts.items()
+    ]
+
+
+def test_token_usage_groups_by_the_stage_that_spent_them() -> None:
+    """A run total that lumped two stages together could not say which model cost what."""
+    rows = _token_rows("investigate", input_tokens=1000, output_tokens=200)
+    rows += _token_rows("adversarial", input_tokens=300, output_tokens=50)
+
+    stages = {s.stage: s for s in token_usage(rows)}
+
+    assert stages["investigate"].total_tokens == 1200
+    assert stages["adversarial"].total_tokens == 350
+
+
+def test_the_total_spans_every_stage_that_called_a_model() -> None:
+    """The adversarial pass is a second model on a second bill; omitting it understates the run."""
+    rows = _token_rows("investigate", input_tokens=1000, output_tokens=200)
+    rows += _token_rows("adversarial", input_tokens=300, output_tokens=50)
+
+    assert total_tokens(token_usage(rows)).total_tokens == 1550
+
+
+def test_cached_tokens_are_not_added_on_top_of_input() -> None:
+    """`cached_input_tokens` is a subset of `input_tokens` -- see `llm.base.Usage`.
+
+    Counting it as a fourth bucket would inflate every cached run by exactly the tokens the
+    cache saved, which is the wrong direction to be wrong in.
+    """
+    rows = _token_rows("investigate", input_tokens=1000, cached_input_tokens=900, output_tokens=100)
+
+    stage = token_usage(rows)[0]
+
+    assert stage.total_tokens == 1100
+    assert stage.cached_share == pytest.approx(0.9)
+
+
+def test_a_stage_that_reported_nothing_is_absent_rather_than_zero() -> None:
+    """Absent and zero are different claims, the same distinction `MetricView` draws."""
+    rows = _token_rows("investigate", input_tokens=10, output_tokens=2)
+
+    assert [s.stage for s in token_usage(rows)] == ["investigate"]
+
+
+def test_a_stage_that_reported_zero_is_present() -> None:
+    """Control for the test above, which would also pass if token_usage returned nothing ever.
+
+    A pass that made no model call records zeros, and those zeros are a measurement.
+    """
+    rows = _token_rows("adversarial", input_tokens=0, output_tokens=0)
+
+    stages = token_usage(rows)
+
+    assert [s.stage for s in stages] == ["adversarial"]
+    assert stages[0].total_tokens == 0
+
+
+def test_token_usage_follows_the_declarations_not_a_hardcoded_list() -> None:
+    """Every declared token metric is one of the three roles, and every model-calling stage
+    declares all three. A stage that declared only two would silently under-report."""
+    by_stage: dict[str, set[str | None]] = {}
+    for metric in ALL_METRICS:
+        if metric.token_role is not None:
+            by_stage.setdefault(metric.stage, set()).add(metric.token_role)
+
+    assert by_stage, "no metric declares a token role"
+    for stage, roles in by_stage.items():
+        assert roles == {"input", "cached_input", "output"}, f"{stage} declares {roles}"
+
+
+def test_the_total_of_nothing_is_empty() -> None:
+    """A run with no model calls must not produce a confident zero attributed to a stage."""
+    assert token_usage([]) == []
+    assert total_tokens([]).total_tokens == 0
+
+
+def test_stages_come_back_in_run_order_not_alphabetical() -> None:
+    """The check reads as a footnote to the investigation, so it has to come after it.
+
+    Sorted by name it does not: `adversarial` precedes `investigate`. The order is declaration
+    order, which is the order the stages run.
+    """
+    rows = _token_rows("adversarial", input_tokens=1, output_tokens=1)
+    rows += _token_rows("investigate", input_tokens=1, output_tokens=1)
+
+    assert [s.stage for s in token_usage(rows)] == ["investigate", "adversarial"]

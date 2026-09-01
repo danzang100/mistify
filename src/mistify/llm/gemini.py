@@ -211,6 +211,14 @@ class GeminiProvider:
 
     @staticmethod
     def _usage(response: Any) -> Usage:
+        """Token counts, which already match the seam's contract.
+
+        `prompt_token_count` is the whole prompt including whatever was served from cache, and
+        `cached_content_token_count` is that subset -- which is exactly what `Usage` documents,
+        so nothing is added or subtracted here. The Anthropic adapter is the one that has to
+        normalise. Fields are read defensively because the API omits them on blocked responses
+        and sends explicit nulls when nothing was generated.
+        """
         meta = getattr(response, "usage_metadata", None)
         if meta is None:
             return Usage()
