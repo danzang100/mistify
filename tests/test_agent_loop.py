@@ -791,3 +791,35 @@ def test_flat_input_is_not_reported_as_growth(loaded_db: ScratchpadDB) -> None:
     InvestigationLoop(loaded_db, ScriptedProvider(script), _toolbox(loaded_db)).run()
 
     assert MetricView(loaded_db.metrics("investigate")).number(INVESTIGATE_INPUT_GROWTH) == 1.0
+
+
+def test_small_tool_output_survives_compaction(loaded_db: ScratchpadDB) -> None:
+    """Compaction exists to stop one wide slice being re-sent forever, not to shred evidence.
+
+    Measured across five runs: every investigation examined the planted precursor with a
+    ten-row slice at step three, had it summarised away by step six, and concluded without it.
+    One re-queried three templates it had already read. A conclusion is written last, so small
+    evidence has to still be there when it is.
+    """
+    script = [
+        tool_call_turn("get_slice", {"template_id": 8, "max_lines": 10}, call_id=f"c{i}")
+        for i in range(5)
+    ]
+    script.append(text_turn("done"))
+    provider = ScriptedProvider(script)
+    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=1).run()
+
+    results = [r for m in provider.calls[-1].messages for r in m.tool_results]
+
+    assert results, "no tool results reached the final call"
+    assert all(ELIDED not in r.content for r in results)
+
+
+def test_large_tool_output_is_still_compacted(loaded_db: ScratchpadDB) -> None:
+    """Control for the exemption above: it is a size threshold, not compaction switched off."""
+    provider = ScriptedProvider(_slice_script(loaded_db, 5))
+    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=1).run()
+
+    results = [r for m in provider.calls[-1].messages for r in m.tool_results]
+
+    assert any(ELIDED in r.content for r in results)

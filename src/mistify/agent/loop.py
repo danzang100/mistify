@@ -48,6 +48,7 @@ from mistify.scratchpad.db import ScratchpadDB
 
 __all__ = [
     "ELIDED",
+    "ELIDE_MIN_LINES",
     "INVESTIGATOR_NAME",
     "InvestigationLoop",
     "InvestigationResult",
@@ -92,9 +93,14 @@ How to work:
 - Record every hypothesis with `write_note`. Evidence is mandatory: cite the template ids and
   log event ids that support the claim. A note whose evidence does not actually say what the
   note says will be caught, so cite what you read.
-- Older tool output is summarised away as you work, so what you pulled ten steps ago may no
-  longer be in front of you. `read_notes` returns everything you have concluded, with its
-  citations. It is cheap; call it before you conclude.
+- Cite every template your note names, not only the one the claim is chiefly about. If you
+  write that one template was preceded by another, both belong in `template_ids`: a template
+  discussed in your prose but missing from your citations is reported as unaccounted for, and
+  a reader checking your reasoning cannot follow it back to rows.
+- Large tool output is summarised away as you work, so a wide slice you pulled ten steps ago
+  may no longer be in front of you. Write the note when you finish looking at something, not
+  at the end: a note is durable and the rows behind it are not. `read_notes` returns everything
+  you have concluded so far, with its citations, and is cheap to call.
 - When you have a conclusion, write it as a final note at your honest confidence and stop
   calling tools. Do not pad the investigation to use up your budget.
 
@@ -108,10 +114,21 @@ Be direct. If the logs do not support a root cause, say that instead of inventin
 ELIDED = "[rows elided to keep the conversation bounded; re-run the tool to see them again]"
 
 
+#: Results at or below this many lines are left alone. Compaction exists to stop one large
+#: slice being re-sent for the rest of the investigation; a ten-row slice is not that, and
+#: eliding it costs more than it saves. Measured: across five runs every investigation examined
+#: the planted precursor with a ten-row slice at step three, had it summarised away by step
+#: six, and concluded without it -- one run re-queried three templates it had already read.
+#: Small evidence has to survive to the conclusion, because the conclusion is written last.
+ELIDE_MIN_LINES = 20
+
+
 def _summarise(outcome: ToolResult) -> ToolResult:
     """One tool result reduced to its first line -- the header the tool already wrote."""
     if outcome.is_error or ELIDED in outcome.content:
         # An error is short and is the whole message; there is nothing to trim.
+        return outcome
+    if outcome.content.count("\n") <= ELIDE_MIN_LINES:
         return outcome
     head, _, rest = outcome.content.partition("\n")
     if not rest.strip():

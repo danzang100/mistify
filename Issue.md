@@ -20,6 +20,7 @@ or one of the design documents, the fix column says which document to amend.
 | 7. The provider seam drops thinking blocks | ~~Medium~~ | **Fixed** — it was a hard requirement, not a cost |
 | 8. The anomaly score has no duration term | Medium | 4 — worked around, not solved |
 | 9. Conversation growth is bounded but not budgeted | Medium | 4 |
+| 10. The investigator under-cites what it reasons over | Medium | 4 |
 
 ---
 
@@ -278,3 +279,31 @@ harness will measure the token cost directly and say whether it is worth the sea
 **Note.** Found while building the Anthropic adapter, not by the review. The seam is mine and
 this is a gap in it — recorded rather than absorbed, because a silently costlier loop is
 exactly the kind of thing that gets attributed to the model later.
+
+---
+
+## 10 — The investigator under-cites what it reasons over
+
+**Problem.** Across nine runs of the sample incident the loop cited templates 8 and 9 every
+time and template 7 never — while three of those runs named template 7 in the finding's prose
+as the precursor. It cites what the claim is chiefly about and omits the context it reasons
+over.
+
+**Why it matters.** Two consequences, and the second is worse. `unexplained_signal_templates`
+tests citation, so a template discussed in a note is still reported as unaccounted for: the
+warning is correct by its own definition and misleading to a reader. And a claim whose
+supporting context cannot be followed back to rows is the exact failure the citation discipline
+exists to prevent — the report says "preceded by slow connection acquisitions" and offers no
+way to check it.
+
+**What landed.** The loop's system prompt now asks for every template a note names to appear in
+its `template_ids`. Untested: the nine runs predate it.
+
+**What has not.** If prompting does not fix it, the mechanical option is to reject a note whose
+prose names a template id absent from its citations — the same shape as the log-event gate,
+which did work. That is string matching against prose and should be a last resort.
+
+**Note on how this was found.** It was nearly missed, and then twice reported as something it
+was not. The metric counted citations while the comparison being made counted prose mentions,
+which invented first a regression and then a mechanism for it. Scoring the two separately is
+now part of the repeat protocol in `docs/baseline.md`.

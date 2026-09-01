@@ -70,6 +70,23 @@ _RETRYABLE_MARKERS = (
 
 _PUNCTUATION = re.compile(r"[^A-Z0-9]")
 
+#: Google returns a RetryInfo telling you exactly how long the quota window has left, e.g.
+#: `'retryDelay': '54s'`. Ignoring it and backing off on a guess is how a retry budget gets
+#: spent entirely inside a window that had not reset yet.
+_RETRY_DELAY = re.compile(r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s")
+
+
+def _advertised_delay(exc: Exception) -> float | None:
+    """Seconds the API asked us to wait, when it said so.
+
+    Free-tier quotas are per-minute, so the wait is routinely longer than any exponential
+    schedule reaches in the retries available. Honouring the server's own number is the
+    difference between recovering and failing the investigation while the quota was about to
+    reset anyway.
+    """
+    match = _RETRY_DELAY.search(str(exc))
+    return float(match.group(1)) if match else None
+
 
 def _sanitise_schema(schema: Any) -> Any:
     """Strip keywords Gemini refuses, recursively, leaving the rest of the schema intact."""
@@ -292,6 +309,12 @@ class GeminiProvider:
                 # Full jitter: a loop that retries on a fixed schedule marches its own
                 # retries into the next rate-limit window together.
                 delay = min(2**attempt, 30) * (0.5 + random.random() / 2)
+                # The server knows when the window resets and says so. Backing off for less
+                # than that guarantees the next attempt fails too, which is how five retries
+                # get spent inside one 60-second quota window.
+                advertised = _advertised_delay(exc)
+                if advertised is not None:
+                    delay = max(delay, advertised + random.random())
                 self._sleep(delay)
         raise ProviderError("unreachable: retry loop exited without returning")
 

@@ -81,9 +81,11 @@ llm:
   # No shipped provider supports task budgets, so this is inert today and the run is bounded
   # by pipeline.max_agent_tool_calls instead.
   task_budget_tokens: 64000
-  # Free-tier quotas are per-minute. Zero leaves pacing to retry-with-backoff; raise it if
-  # throttling shows up in practice.
-  min_interval_seconds: 0.0
+  # Measured: the free tier allows 15 requests/minute for gemini-3.5-flash-lite, and a failed
+  # request counts, so a retry storm feeds itself. One investigation is ~12 calls, which fits;
+  # two back to back do not. 4s spacing keeps a run inside the window. The adapter also honours
+  # the retryDelay the API returns, which is the backstop when this is set too low.
+  min_interval_seconds: 4.0
 
 report:
   format: markdown

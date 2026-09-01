@@ -33,7 +33,7 @@ from mistify.llm.base import (
     ToolSpec,
     Usage,
 )
-from mistify.llm.gemini import GeminiProvider
+from mistify.llm.gemini import GeminiProvider, _advertised_delay
 
 MODEL = "gemini-3-pro-preview"
 
@@ -929,3 +929,34 @@ def test_no_interval_means_no_pacing_sleep() -> None:
     _ask(provider)
 
     assert sleeps.delays == []
+
+
+def test_the_servers_own_retry_delay_is_honoured() -> None:
+    """Free-tier quotas are per-minute, and the API says exactly how long is left.
+
+    Backing off on an exponential guess that tops out below that guarantees the next attempt
+    fails too, which is how a whole retry budget gets spent inside one window that had not
+    reset. Three of five runs failed this way before the delay was read.
+    """
+    sleeps = _Sleeps()
+    quota = _Boom("429 RESOURCE_EXHAUSTED ... 'retryDelay': '54s'")
+    provider = _provider(quota, _response(_text("recovered")), sleep=sleeps)
+
+    assert _ask(provider).text == "recovered"
+    assert sleeps.delays[0] >= 54.0
+
+
+def test_a_retry_without_an_advertised_delay_uses_the_backoff() -> None:
+    """Control: the server's number replaces the guess, it is not required for one to exist."""
+    sleeps = _Sleeps()
+    provider = _provider(_Boom("503 UNAVAILABLE"), _response(_text("recovered")), sleep=sleeps)
+
+    assert _ask(provider).text == "recovered"
+    assert 0 < sleeps.delays[0] <= 1.0
+
+
+def test_the_advertised_delay_is_read_from_either_quoting_style() -> None:
+    """The SDK stringifies the error dict; the JSON on the wire is quoted differently."""
+    assert _advertised_delay(Exception("{'retryDelay': '54s'}")) == 54.0
+    assert _advertised_delay(Exception('{"retryDelay": "7.5s"}')) == 7.5
+    assert _advertised_delay(Exception("503 UNAVAILABLE")) is None
