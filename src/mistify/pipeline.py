@@ -235,9 +235,7 @@ def ingest(
             min_templates=config.anomaly.signal_min_templates,
             max_templates=config.anomaly.signal_max_templates,
         )
-        noisy = db.noise_template_ids(
-            config.anomaly.noise_share_threshold, config.anomaly.noise_anomaly_ceiling
-        )
+        noisy = db.noise_template_ids(config.anomaly.noise_thresholds())
         if vault is not None:
             vault.flush()
 

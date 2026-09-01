@@ -16,6 +16,7 @@ from dateutil import parser as date_parser
 __all__ = [
     "SEVERITIES",
     "LogRecord",
+    "NoiseThresholds",
     "ScratchpadNote",
     "TemplateResult",
     "TemplateSummary",
@@ -154,6 +155,27 @@ class LogRecord:
         thing, which is what every `ORDER BY ts`, `MIN(ts)` and time-window slice assumes.
         """
         return self.ts.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+
+
+@dataclass(frozen=True, slots=True)
+class NoiseThresholds:
+    """What counts as noise: a template big enough to crowd out everything else, and dull.
+
+    Both halves are required together. Volume alone is not noise -- a flood can be the
+    incident -- so a share without a ceiling would suppress exactly the templates worth
+    reading. Passing them as one value is what stops a caller specifying half a rule.
+    """
+
+    share: float
+    anomaly_ceiling: float
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.share <= 1.0:
+            raise ValueError(f"noise share must be between 0 and 1, got {self.share}")
+        if not 0.0 <= self.anomaly_ceiling <= 1.0:
+            raise ValueError(
+                f"noise anomaly ceiling must be between 0 and 1, got {self.anomaly_ceiling}"
+            )
 
 
 @dataclass(slots=True)

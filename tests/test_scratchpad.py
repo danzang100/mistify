@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from mistify.common.models import LogRecord, TemplateSummary, parse_timestamp
+from mistify.common.models import (
+    LogRecord,
+    NoiseThresholds,
+    TemplateSummary,
+    parse_timestamp,
+)
 from mistify.metrics import (
     INGEST_FORMAT,
     INGEST_LINES_READ,
@@ -255,6 +260,10 @@ def test_top_templates_supports_every_documented_ordering(populated: ScratchpadD
 
 # --------------------------------------------------------------- noise suppression
 
+#: The shipped definition of noise. Named here rather than defaulted in the query methods:
+#: suppressing noise means saying what noise is, and the answer belongs to config.
+DEFAULT_NOISE = NoiseThresholds(share=0.15, anomaly_ceiling=0.35)
+
 
 @pytest.fixture
 def noisy(tmp_path: Path) -> ScratchpadDB:
@@ -313,20 +322,20 @@ def noisy(tmp_path: Path) -> ScratchpadDB:
 
 
 def test_dominant_unremarkable_template_is_noise(noisy: ScratchpadDB) -> None:
-    assert noisy.noise_template_ids() == {1}
+    assert noisy.noise_template_ids(DEFAULT_NOISE) == {1}
 
 
 def test_volume_alone_does_not_make_a_template_noise(noisy: ScratchpadDB) -> None:
     """A flood can be the incident, so the anomaly ceiling is part of the test."""
-    assert noisy.noise_template_ids(anomaly_ceiling=0.0) == set()
+    assert noisy.noise_template_ids(NoiseThresholds(share=0.15, anomaly_ceiling=0.0)) == set()
 
 
 def test_rare_severe_template_is_never_noise(noisy: ScratchpadDB) -> None:
-    assert 2 not in noisy.noise_template_ids()
+    assert 2 not in noisy.noise_template_ids(DEFAULT_NOISE)
 
 
 def test_suppressed_ranking_omits_the_noise(noisy: ScratchpadDB) -> None:
-    ranked = noisy.top_templates(limit=10, order_by="count", exclude_noise=True)
+    ranked = noisy.top_templates(limit=10, order_by="count", noise=DEFAULT_NOISE)
     assert [t["template_id"] for t in ranked] == [2]
 
 
@@ -342,13 +351,13 @@ def test_slice_without_suppression_drowns_in_heartbeats(noisy: ScratchpadDB) -> 
 
 
 def test_slice_with_suppression_returns_the_signal(noisy: ScratchpadDB) -> None:
-    rows = noisy.get_slice(max_lines=10, exclude_noise=True)
+    rows = noisy.get_slice(max_lines=10, noise=DEFAULT_NOISE)
     assert {r["template_id"] for r in rows} == {2}
 
 
 def test_explicit_template_slice_ignores_suppression(noisy: ScratchpadDB) -> None:
     """Asking for a template by id is a deliberate act; do not second-guess it."""
-    rows = noisy.get_slice(template_id=1, max_lines=5, exclude_noise=True)
+    rows = noisy.get_slice(template_id=1, max_lines=5, noise=DEFAULT_NOISE)
     assert len(rows) == 5
 
 
@@ -393,3 +402,21 @@ def test_record_many_replaces_like_record(tmp_path: Path) -> None:
 
     assert len(rows) == 1
     assert rows[0]["value"] == "20"
+
+
+def test_suppression_requires_saying_what_noise_is(noisy: ScratchpadDB) -> None:
+    """No thresholds means no suppression, rather than a threshold config never set.
+
+    The query methods used to default to 0.15/0.35, duplicating `config.yaml`. A caller that
+    asked to exclude noise without naming thresholds silently got numbers the configuration
+    had no say over (Issue.md #6).
+    """
+    assert noisy.get_slice(max_lines=10) == noisy.get_slice(max_lines=10, noise=None)
+    assert {r["template_id"] for r in noisy.get_slice(max_lines=10)} == {1}
+
+
+def test_thresholds_come_from_config(noisy: ScratchpadDB) -> None:
+    """The configured value is the one the scratchpad acts on."""
+    from mistify.common.config import MistifyConfig
+
+    assert noisy.noise_template_ids(MistifyConfig().anomaly.noise_thresholds()) == {1}

@@ -17,6 +17,7 @@ from typing import Any
 
 from mistify.common.models import (
     LogRecord,
+    NoiseThresholds,
     ScratchpadNote,
     TemplateSummary,
 )
@@ -369,9 +370,7 @@ class ScratchpadDB:
         )
         return {int(row["template_id"]) for row in rows}
 
-    def noise_template_ids(
-        self, share_threshold: float = 0.15, anomaly_ceiling: float = 0.35
-    ) -> set[int]:
+    def noise_template_ids(self, thresholds: NoiseThresholds) -> set[int]:
         """Templates that are pure volume: a large share of the file, and unremarkable.
 
         Volume alone does not make a template noise -- a flood can be the incident, which is
@@ -385,7 +384,7 @@ class ScratchpadDB:
         rows = self._conn.execute(
             "SELECT template_id FROM templates"
             " WHERE anomaly_score < ? AND CAST(occurrence_count AS REAL) / ? >= ?",
-            (anomaly_ceiling, float(total), share_threshold),
+            (thresholds.anomaly_ceiling, float(total), thresholds.share),
         )
         return {int(row["template_id"]) for row in rows}
 
@@ -393,14 +392,13 @@ class ScratchpadDB:
         self,
         limit: int = 10,
         order_by: str = "count",
-        exclude_noise: bool = False,
-        noise_share: float = 0.15,
-        noise_ceiling: float = 0.35,
+        noise: NoiseThresholds | None = None,
     ) -> list[dict[str, Any]]:
         """Templates ranked by count, severity, recency, or anomaly score.
 
-        `exclude_noise` drops high-volume, low-anomaly templates so a dominant heartbeat
-        cannot crowd the ranked list the investigator reads top-down.
+        Passing `noise` drops high-volume, low-anomaly templates so a dominant heartbeat
+        cannot crowd the ranked list the investigator reads top-down. There is no default:
+        suppressing noise means saying what counts as noise, and the answer lives in config.
         """
         orderings = {
             "count": "occurrence_count DESC, max_severity_rank DESC",
@@ -415,8 +413,8 @@ class ScratchpadDB:
 
         where = ""
         params: list[Any] = []
-        if exclude_noise:
-            noisy = self.noise_template_ids(noise_share, noise_ceiling)
+        if noise is not None:
+            noisy = self.noise_template_ids(noise)
             if noisy:
                 where = f" WHERE template_id NOT IN ({', '.join('?' for _ in noisy)})"
                 params.extend(sorted(noisy))
@@ -443,20 +441,19 @@ class ScratchpadDB:
         severity: str | None = None,
         template_id: int | None = None,
         max_lines: int = 200,
-        exclude_noise: bool = False,
-        noise_share: float = 0.15,
-        noise_ceiling: float = 0.35,
+        noise: NoiseThresholds | None = None,
     ) -> list[dict[str, Any]]:
         """Pull a bounded window of raw lines.
 
-        `exclude_noise` matters most here. A time slice is exactly where a dominant heartbeat
+        Passing `noise` matters most here. A time slice is exactly where a dominant heartbeat
         template drowns the lines worth reading: `max_lines` is spent on whatever is most
-        numerous, which is rarely what the investigation is about.
+        numerous, which is rarely what the investigation is about. Asking for a specific
+        `template_id` overrides it -- that is a deliberate request, not a default.
         """
         clauses: list[str] = []
         params: list[Any] = []
-        if exclude_noise and template_id is None:
-            noisy = self.noise_template_ids(noise_share, noise_ceiling)
+        if noise is not None and template_id is None:
+            noisy = self.noise_template_ids(noise)
             if noisy:
                 clauses.append(f"template_id NOT IN ({', '.join('?' for _ in noisy)})")
                 params.extend(sorted(noisy))

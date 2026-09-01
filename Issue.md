@@ -16,7 +16,7 @@ or one of the design documents, the fix column says which document to amend.
 | 3. The anomaly baseline is the incident itself | High | 4/5 — promote from "Future" |
 | 4. No index for trace correlation | Medium | 3 |
 | 5. Unimplemented adapters are dropped silently | Low | 4 |
-| 6. Noise thresholds are defined in two places | Medium | 3 — blocks the agent loop |
+| 6. Noise thresholds are defined in two places | ~~Medium~~ | **Fixed** |
 
 ---
 
@@ -145,7 +145,13 @@ the first adapter that can be named but not built.
 
 **Target phase.** 4.
 
-## 6. Noise thresholds are defined in two places
+## 6. Noise thresholds are defined in two places — FIXED
+
+**Resolved.** `NoiseThresholds` is now a single value built from config by
+`AnomalyConfig.noise_thresholds()`, and the query layer has no defaults to fall back on.
+`exclude_noise` went with them: passing thresholds *is* the request to suppress, so one
+argument replaced two and half a rule can no longer be specified. The original write-up
+follows.
 
 **Problem.** `noise_template_ids`, `top_templates` and `get_slice` in
 `src/mistify/scratchpad/db.py` each default `share_threshold`/`noise_share` to `0.15` and

@@ -13,6 +13,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from mistify.common.models import NoiseThresholds
 from mistify.redaction.patterns import DEFAULT_ENTITIES, SUPPORTED_ENTITIES
 
 __all__ = [
@@ -132,6 +133,12 @@ class AnomalyConfig(_Strict):
         if self.severity + self.burstiness + self.rarity <= 0:
             raise ValueError("at least one anomaly weight must be greater than zero")
         return self
+
+    def noise_thresholds(self) -> NoiseThresholds:
+        """The configured definition of noise, as one value to hand to the scratchpad."""
+        return NoiseThresholds(
+            share=self.noise_share_threshold, anomaly_ceiling=self.noise_anomaly_ceiling
+        )
 
     def weights(self) -> dict[str, float]:
         return {

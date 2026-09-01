@@ -9,6 +9,7 @@ import yaml
 from pydantic import ValidationError
 
 from mistify.common.config import AnomalyConfig, MistifyConfig, load_config
+from mistify.common.models import NoiseThresholds
 
 
 def test_defaults_load_without_a_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -154,3 +155,23 @@ def test_noise_thresholds_are_bounded() -> None:
 def test_signal_bounds_must_be_positive() -> None:
     with pytest.raises(ValidationError):
         MistifyConfig.model_validate({"anomaly": {"signal_min_templates": 0}})
+
+
+def test_noise_thresholds_come_from_one_place(tmp_path: Path) -> None:
+    """Issue.md #6: the scratchpad used to carry its own copy of these two numbers.
+
+    Retuning the config must actually change what the investigator sees suppressed, which
+    only holds while the query layer has no defaults of its own to fall back on.
+    """
+    config = MistifyConfig.model_validate(
+        {"anomaly": {"noise_share_threshold": 0.4, "noise_anomaly_ceiling": 0.2}}
+    )
+    thresholds = config.anomaly.noise_thresholds()
+    assert (thresholds.share, thresholds.anomaly_ceiling) == (0.4, 0.2)
+
+
+def test_noise_thresholds_reject_impossible_values() -> None:
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        NoiseThresholds(share=1.5, anomaly_ceiling=0.3)
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        NoiseThresholds(share=0.1, anomaly_ceiling=-0.2)
