@@ -73,9 +73,10 @@ llm:
   adversarial_model: gemini-3.5-flash   # must differ from `model` (architecture §6.3)
   bootstrap_model: gemini-3.5-flash-lite
   judge_model: gemini-3.5-flash
-  effort: high
   max_tokens: 8192
-  task_budget_tokens: 64000             # ignored by providers without task budgets
+  # No shipped provider supports task budgets, so this is inert today and the run is bounded
+  # by pipeline.max_agent_tool_calls instead.
+  task_budget_tokens: 64000
   # Free-tier quotas are per-minute. Zero leaves pacing to retry-with-backoff; raise it if
   # throttling shows up in practice.
   min_interval_seconds: 0.0

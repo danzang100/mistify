@@ -8,8 +8,8 @@ for a tool, so tool use is detected by the presence of `function_call` parts. Ma
 `finish_reason` straight onto the seam's `StopReason` would end every investigation on its
 first tool call.
 
-**Function responses are keyed by name, not by call id.** Anthropic correlates a result to a
-call with an id; Gemini matches on the function name. The seam carries ids, so the adapter
+**Function responses are keyed by name, not by call id.** The seam correlates a result to a
+call with an id, as most vendors do; Gemini matches on the function name instead. The adapter
 rebuilds an id-to-name map by walking the conversation each time it translates -- stateless,
 and correct even when the caller replays a history the adapter never produced.
 
@@ -215,9 +215,10 @@ class GeminiProvider:
 
         `prompt_token_count` is the whole prompt including whatever was served from cache, and
         `cached_content_token_count` is that subset -- which is exactly what `Usage` documents,
-        so nothing is added or subtracted here. The Anthropic adapter is the one that has to
-        normalise. Fields are read defensively because the API omits them on blocked responses
-        and sends explicit nulls when nothing was generated.
+        so nothing is added or subtracted here -- an adapter for a vendor that reports the
+        cached portion separately would be the one doing the adding. Fields are read
+        defensively because the API omits them on blocked responses and sends explicit nulls
+        when nothing was generated.
         """
         meta = getattr(response, "usage_metadata", None)
         if meta is None:

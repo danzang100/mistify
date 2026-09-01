@@ -92,9 +92,13 @@ REBUTTAL_PROMPT = """Your investigation has been challenged. Answer the objectio
 For each one, either concede it, or answer it by pointing at evidence already in the
 scratchpad. Do not restate your conclusion; address the specific objection.
 
+Every objection carries an id. Quote it back in `objection_id` so your answer is attached to
+the right one; an answer whose id matches no objection is reported as unmatched rather than
+guessed at.
+
 Reply with JSON only:
 
-{"responses": [{"objection": "<which one>", "response": "<your answer>",
+{"responses": [{"objection_id": "<the id you are answering>", "response": "<your answer>",
                 "conceded": true|false}],
  "revised_confidence": "low|medium|high"}
 """
@@ -102,6 +106,9 @@ Reply with JSON only:
 
 @dataclass(slots=True)
 class Objection:
+    #: Assigned by us, not asked of the model, and shown to it in the rebuttal prompt so it
+    #: can be quoted back. See `0003_objection_ids.sql` for why the model does not choose it.
+    id: str
     claim: str
     objection: str
     template_ids: list[int] = field(default_factory=list)
@@ -242,13 +249,14 @@ def run_adversarial_check(
     result.alternative = str(parsed.get("alternative", ""))
     result.objections = [
         Objection(
+            id=f"o{index}",
             claim=str(raw.get("claim", "")),
             objection=str(raw.get("objection", "")),
             template_ids=[int(i) for i in raw.get("template_ids", [])],
             log_event_ids=[int(i) for i in raw.get("log_event_ids", [])],
             severity=str(raw.get("severity", "medium")),
         )
-        for raw in parsed.get("objections", [])
+        for index, raw in enumerate(parsed.get("objections", []), start=1)
     ]
     result.unsupported_claims = [
         o.claim for o in result.objections if o.severity == "high" and o.cites_evidence
@@ -283,7 +291,8 @@ def _rebut(
     loop's provider, not the critique's, and the caller is the only one that knows which.
     """
     listing = "\n".join(
-        f"- {o.claim}: {o.objection} (cites templates {o.template_ids}, events {o.log_event_ids})"
+        f"[{o.id}] {o.claim}: {o.objection} "
+        f"(cites templates {o.template_ids}, events {o.log_event_ids})"
         for o in objections
     )
     reply = provider.converse(
@@ -319,27 +328,27 @@ def _outcome(result: AdversarialResult) -> str:
 def _paired_objections(result: AdversarialResult) -> list[dict[str, Any]]:
     """Objections with the response each one drew, ready to persist.
 
-    The model is asked to answer the objections in order, and its replies are matched to them
-    by position -- but only when it returned exactly as many as were raised. It names the
-    objection it is answering in free text, which is not something to key on, and a
-    mispaired concession would attach an admission to the wrong claim. When the counts
-    disagree the responses are appended unpaired instead, which is honest about what is
-    known.
+    Matched on the id we handed the model, not on where the reply landed in a list. Positional
+    pairing held only while the model returned exactly as many responses as there were
+    objections, and when it did not, a concession was attached to a claim that never drew it --
+    which reads as an admission the investigation never made.
+
+    A response whose id matches nothing is kept, unattached. Dropping it would hide the fact
+    that the investigation answered something; guessing which objection it meant is the error
+    this replaced.
     """
-    raised = result.objections
-    replies = result.rebuttals
-    paired = len(replies) == len(result.evidenced_objections)
-    by_claim = (
-        dict(zip([id(o) for o in result.evidenced_objections], replies, strict=True))
-        if paired
-        else {}
-    )
+    replies = {
+        str(reply.get("objection_id", "")): reply
+        for reply in result.rebuttals
+        if reply.get("objection_id")
+    }
 
     rows: list[dict[str, Any]] = []
-    for objection in raised:
-        reply = by_claim.get(id(objection))
+    for objection in result.objections:
+        reply = replies.pop(objection.id, None)
         rows.append(
             {
+                "objection_id": objection.id,
                 "claim": objection.claim,
                 "objection": objection.objection,
                 "severity": objection.severity,
@@ -349,19 +358,20 @@ def _paired_objections(result: AdversarialResult) -> list[dict[str, Any]]:
                 "conceded": None if reply is None else bool(reply.get("conceded")),
             }
         )
-    if not paired:
-        rows.extend(
-            {
-                "claim": "",
-                "objection": "",
-                "severity": "unpaired_response",
-                "template_ids": [],
-                "log_event_ids": [],
-                "response": str(reply.get("response", "")),
-                "conceded": bool(reply.get("conceded")),
-            }
-            for reply in replies
-        )
+
+    rows.extend(
+        {
+            "objection_id": objection_id or "unmatched",
+            "claim": "",
+            "objection": "",
+            "severity": "unmatched_response",
+            "template_ids": [],
+            "log_event_ids": [],
+            "response": str(reply.get("response", "")),
+            "conceded": bool(reply.get("conceded")),
+        }
+        for objection_id, reply in replies.items()
+    )
     return rows
 
 

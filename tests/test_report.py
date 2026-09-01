@@ -345,13 +345,13 @@ def _ranked_template_ids(db: ScratchpadDB) -> list[int]:
     return [int(t["template_id"]) for t in db.top_templates(limit=99, order_by="anomaly_score")]
 
 
-def test_the_verdict_is_the_note_explaining_the_most_anomalous_template(
+def test_the_leading_issue_is_the_one_explaining_the_most_anomalous_template(
     loaded_db: ScratchpadDB,
 ) -> None:
-    """Not the first note and not the last one.
+    """Not the first note written and not the last one.
 
     The loop is told to conclude last and does not reliably comply; the final note is often a
-    deliberate aside. The anomaly ranking is model-free, so choosing on it makes the verdict
+    deliberate aside. The anomaly ranking is model-free, so ordering on it makes the overview
     stable across runs that reasoned differently but landed on the same template.
     """
     ranked = _ranked_template_ids(loaded_db)
@@ -359,23 +359,70 @@ def test_the_verdict_is_the_note_explaining_the_most_anomalous_template(
     loaded_db.write_note(2, "the real conclusion", {"template_ids": [ranked[0]]}, "high")
     loaded_db.write_note(3, "a separate pre-existing issue", {"template_ids": [ranked[-2]]}, "high")
 
-    verdict = generate_report(loaded_db).split("## Verdict")[1].split("##")[0]
+    overview = generate_report(loaded_db).split("## What was found")[1].split("## ")[0]
 
-    assert "the real conclusion" in verdict
-    assert "an early narrow guess" not in verdict
-    assert "a separate pre-existing issue" not in verdict
+    assert overview.index("the real conclusion") < overview.index("an early narrow guess")
+    assert overview.index("the real conclusion") < overview.index("a separate pre-existing issue")
 
 
-def test_a_single_note_is_the_verdict_whatever_it_cites(loaded_db: ScratchpadDB) -> None:
-    """Control for the selection above: it ranks candidates, it does not filter them.
+def test_every_issue_appears_in_the_overview_not_just_the_leading_one(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """An investigation that found two unrelated problems has found two problems.
 
-    A lone note citing the dullest template in the file is still the only conclusion there is,
-    and a report that led with nothing would be worse than one that led with that.
+    The overview used to have room for exactly one, which silently dropped the other -- the
+    case the loop is explicitly prompted to look for.
     """
+    ranked = _ranked_template_ids(loaded_db)
+    loaded_db.write_note(1, "the real conclusion", {"template_ids": [ranked[0]]}, "high")
+    loaded_db.write_note(2, "a separate pre-existing issue", {"template_ids": [ranked[-2]]}, "high")
+
+    overview = generate_report(loaded_db).split("## What was found")[1].split("## ")[0]
+
+    assert "the real conclusion" in overview
+    assert "a separate pre-existing issue" in overview
+    assert "not necessarily one incident" in overview
+
+
+def test_one_issue_is_not_described_as_possibly_several(loaded_db: ScratchpadDB) -> None:
+    """Control for the caveat above: it fires on plurality, it is not boilerplate."""
     ranked = _ranked_template_ids(loaded_db)
     loaded_db.write_note(1, "the only note", {"template_ids": [ranked[-1]]}, "low")
 
-    assert "the only note" in generate_report(loaded_db).split("## Verdict")[1].split("##")[0]
+    overview = generate_report(loaded_db).split("## What was found")[1].split("## ")[0]
+
+    assert "the only note" in overview
+    assert "not necessarily one incident" not in overview
+
+
+def test_an_issue_resting_only_on_chronic_templates_is_marked_background(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """A note about something that was already happening is not a finding about this incident.
+
+    Ranked purely on anomaly score it can outrank the outage, which is how a background error
+    stream ends up presented as the headline.
+    """
+    run_skeleton_investigation(loaded_db)
+    glance = generate_report(loaded_db)
+    chronic_ids = [
+        line.split("|")[1].strip()
+        for line in glance.splitlines()
+        if line.startswith("|") and line.rstrip().endswith("chronic |")
+    ]
+    assert chronic_ids, "the fixture is expected to contain a chronic template"
+
+    loaded_db.write_note(9, "background chatter", {"template_ids": [int(chronic_ids[0])]}, "high")
+
+    overview = generate_report(loaded_db).split("## What was found")[1].split("## ")[0]
+    background_line = [
+        line
+        for line in overview.splitlines()
+        if "background chatter" in line or "background**" in line
+    ]
+
+    assert "**background**" in overview
+    assert background_line
 
 
 def test_every_note_still_appears_under_findings(loaded_db: ScratchpadDB) -> None:
@@ -512,7 +559,7 @@ def test_the_machinery_is_below_the_incident(loaded_db: ScratchpadDB) -> None:
     run_skeleton_investigation(loaded_db)
     report = generate_report(loaded_db)
 
-    assert report.index("## Verdict") < report.index("## The incident at a glance")
+    assert report.index("## What was found") < report.index("## The incident at a glance")
     assert report.index("## The incident at a glance") < report.index("## Findings")
     assert report.index("## Findings") < report.index("# Appendix")
     assert report.index("# Appendix") < report.index("## Token usage")

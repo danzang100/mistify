@@ -11,29 +11,45 @@
 | Templates | {{ template_count }} |
 | Log window | {{ first_ts or "n/a" }} → {{ last_ts or "n/a" }} |
 
-## Verdict
+## What was found
 
-{% if headline %}
-{{ headline.note }}
+{% if issues %}
+Every issue the investigation recorded, most significant first. Order is the anomaly ranking of
+the templates each one cites — computed, not chosen by a model — so two runs that reason
+differently but reach the same templates present them in the same order.
 
-Stated confidence: **{{ headline.confidence }}**{% if adversarial and adversarial.revised_confidence %}, revised to **{{ adversarial.revised_confidence }}** after the challenge below{% endif %}.
+{% for issue in issues %}
+**{{ issue.rank }}. {{ issue.note }}**
+
+Confidence {{ issue.confidence }} · templates {{ issue.template_ids | join(", ") or "none cited" }} · recorded at step {{ issue.step }}{% if issue.chronic %} · **background**: every template it rests on was active across the whole log, so this was already happening before the incident{% endif %}
+
+{% endfor %}
+{% if issues | length > 1 %}
+More than one issue was recorded. They are not necessarily one incident — two unrelated
+failures in the same window are common, and the ranking above does not decide which of these
+belong together.
+{% endif %}
+
 {% if adversarial %}
 {% if conceded_count %}
 **Contested — {{ conceded_count }} objection(s) conceded.** The investigation gave ground on its
-own reasoning. Read *The challenge* before acting on the finding above.
+own reasoning. Read *The challenge* before acting on any of the above.
 {% elif objections %}
 **Challenged and answered.** {{ objections | length }} objection(s) were raised and none were
 conceded. The reasoning is in *The challenge*.
 {% else %}
 **Unchallenged.** The adversarial pass raised no objection.
 {% endif %}
+{% if adversarial.revised_confidence %}
+Confidence after the challenge: **{{ adversarial.revised_confidence }}**.
+{% endif %}
 {% elif adversarial_ran %}
 **Checked, but the critique's text was not recorded** — this incident was investigated before
 the challenge was kept in the scratchpad. The counts are in the appendix; re-run
 `mistify investigate` to get the argument itself.
 {% else %}
-No adversarial pass was run against this investigation, so nothing has checked the finding
-above except the citation resolver.
+No adversarial pass was run against this investigation, so nothing has checked the above except
+the citation resolver.
 {% endif %}
 {% else %}
 No hypothesis was recorded. Either the investigator found no templates to rank — check the
@@ -58,7 +74,7 @@ whatever route the investigation took.
 |---|---|
 | Incident window | {{ glance.first_ts }} → {{ glance.last_ts }} |
 | Duration | {{ "%.0f" | format(glance.duration_minutes) }} min |
-| Measured across | template(s) {{ glance.window_template_ids | join(", ") }}{% if glance.window_is_from_verdict %}, cited by the verdict{% else %}, the highest-ranked template — the verdict cited none{% endif %} |
+| Measured across | template(s) {{ glance.window_template_ids | join(", ") }}{% if glance.window_is_from_verdict %}, cited by the leading issue{% else %}, the highest-ranked template — no issue cited one{% endif %} |
 
 Not the log window in the header, which is only where the file starts and stops.
 
@@ -103,7 +119,7 @@ Every hypothesis the investigation recorded, in the order it recorded them. Each
 that were checked to exist.
 
 {% for note in notes %}
-### Step {{ note.step }} — confidence: {{ note.confidence }}{% if headline and note.step == headline.step and note.note == headline.note %} (the verdict above){% endif %}
+### Step {{ note.step }} — confidence: {{ note.confidence }}
 
 {{ note.note }}
 
@@ -164,7 +180,7 @@ No objections were raised.
 {{ adversarial.alternative }}
 
 The rows are said to support this at least as well as the verdict. It is the first thing to
-check if the verdict does not hold up.
+check if the leading issue does not hold up.
 {% endif %}
 {% elif adversarial_ran %}
 The pass ran, but this incident predates the point at which its objections were kept, so only

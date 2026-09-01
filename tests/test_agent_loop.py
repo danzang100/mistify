@@ -266,7 +266,7 @@ def test_an_evidenced_objection_gets_a_rebuttal(loaded_db: ScratchpadDB) -> None
         }
     )
     rebutter = ScriptedProvider(
-        [text_turn(json.dumps({"responses": [{"objection": "t5", "conceded": False}]}))]
+        [text_turn(json.dumps({"responses": [{"objection_id": "o1", "conceded": False}]}))]
     )
     result = run_adversarial_check(loaded_db, critic, [9], rebuttal_provider=rebutter)
 
@@ -353,7 +353,7 @@ def _objecting_critique(usage: Usage | None = None) -> ScriptedProvider:
 
 
 def _rebutter(model: str, usage: Usage | None = None) -> ScriptedProvider:
-    reply = json.dumps({"responses": [{"objection": "t5", "conceded": False}]})
+    reply = json.dumps({"responses": [{"objection_id": "o1", "conceded": False}]})
     return ScriptedProvider([text_turn(reply, usage=usage or Usage())], model=model)
 
 
@@ -467,7 +467,7 @@ def _conceding_run(db: ScratchpadDB) -> None:
                     {
                         "responses": [
                             {
-                                "objection": "t5",
+                                "objection_id": "o1",
                                 "response": "Fair -- 5 is not confined.",
                                 "conceded": True,
                             }
@@ -500,7 +500,7 @@ def test_a_conceded_objection_is_marked_as_conceded(loaded_db: ScratchpadDB) -> 
     report = generate_report(loaded_db)
 
     assert "conceded" in report.split("## The challenge")[1]
-    assert "Contested" in report.split("## Verdict")[1].split("##")[0]
+    assert "Contested" in report.split("## What was found")[1].split("## ")[0]
 
 
 def test_an_answered_objection_is_not_reported_as_contested(loaded_db: ScratchpadDB) -> None:
@@ -514,20 +514,20 @@ def test_an_answered_objection_is_not_reported_as_contested(loaded_db: Scratchpa
         loaded_db, _objecting_critique(), [9], rebuttal_provider=_rebutter("loop-model")
     )
 
-    verdict = generate_report(loaded_db).split("## Verdict")[1].split("##")[0]
+    verdict = generate_report(loaded_db).split("## What was found")[1].split("## ")[0]
 
     assert "Challenged and answered" in verdict
     assert "Contested" not in verdict
 
 
-def test_the_revised_confidence_reaches_the_verdict(loaded_db: ScratchpadDB) -> None:
+def test_the_revised_confidence_reaches_the_overview(loaded_db: ScratchpadDB) -> None:
     """The prompt has always asked for it; it used to be parsed and dropped, so a conclusion
     that had conceded ground still reported the confidence it started with."""
     _conceding_run(loaded_db)
 
-    verdict = generate_report(loaded_db).split("## Verdict")[1].split("##")[0]
+    verdict = generate_report(loaded_db).split("## What was found")[1].split("## ")[0]
 
-    assert "revised to **medium**" in verdict
+    assert "Confidence after the challenge: **medium**" in verdict
 
 
 def test_the_alternative_explanation_is_offered_to_the_reader(loaded_db: ScratchpadDB) -> None:
@@ -544,7 +544,7 @@ def test_an_unchallenged_investigation_says_so(loaded_db: ScratchpadDB) -> None:
 
     report = generate_report(loaded_db)
 
-    assert "Unchallenged" in report.split("## Verdict")[1].split("##")[0]
+    assert "Unchallenged" in report.split("## What was found")[1].split("## ")[0]
     assert "No objections were raised" in report.split("## The challenge")[1]
 
 
@@ -556,3 +556,90 @@ def test_a_run_with_no_adversarial_pass_does_not_imply_one(loaded_db: Scratchpad
 
     assert "No adversarial pass was run" in report
     assert "nothing has argued against the findings" in report
+
+
+# ------------------------------------------------ pairing answers to objections
+
+
+def _two_objections() -> ScriptedProvider:
+    return _critique(
+        {
+            "objections": [
+                {"claim": "first claim", "objection": "a", "template_ids": [5]},
+                {"claim": "second claim", "objection": "b", "template_ids": [7]},
+            ]
+        }
+    )
+
+
+def test_an_answer_lands_on_the_objection_whose_id_it_quotes(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """Answered out of order on purpose.
+
+    Paired by position this attaches the concession to the first claim, which is an admission
+    the investigation never made -- worse than reporting nothing, because it reads as real.
+    """
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    rebutter = ScriptedProvider(
+        [
+            text_turn(
+                json.dumps(
+                    {
+                        "responses": [
+                            {
+                                "objection_id": "o2",
+                                "response": "conceding the second",
+                                "conceded": True,
+                            },
+                            {
+                                "objection_id": "o1",
+                                "response": "answering the first",
+                                "conceded": False,
+                            },
+                        ]
+                    }
+                )
+            )
+        ]
+    )
+    run_adversarial_check(loaded_db, _two_objections(), [9], rebuttal_provider=rebutter)
+
+    by_claim = {o["claim"]: o for o in loaded_db.adversarial_objections()}
+
+    assert by_claim["first claim"]["conceded"] is False
+    assert by_claim["second claim"]["conceded"] is True
+
+
+def test_an_answer_naming_no_known_objection_is_kept_unmatched(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """Dropping it would hide that the investigation answered; guessing is what this replaced."""
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    rebutter = ScriptedProvider(
+        [
+            text_turn(
+                json.dumps(
+                    {"responses": [{"objection_id": "o99", "response": "stray", "conceded": True}]}
+                )
+            )
+        ]
+    )
+    run_adversarial_check(loaded_db, _objecting_critique(), [9], rebuttal_provider=rebutter)
+
+    stored = loaded_db.adversarial_objections()
+    unmatched = [o for o in stored if o["severity"] == "unmatched_response"]
+
+    assert len(unmatched) == 1
+    assert unmatched[0]["response"] == "stray"
+    # The real objection is still there, and still unanswered rather than wrongly conceded.
+    original = next(o for o in stored if o["claim"] == "pool exhausted")
+    assert original["response"] is None
+
+
+def test_objections_are_numbered_from_one(loaded_db: ScratchpadDB) -> None:
+    """The ids are ours and deterministic, which is the whole reason they can be relied on."""
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    run_adversarial_check(loaded_db, _two_objections(), [9], rebut=False)
+
+    assert [o["objection_id"] for o in loaded_db.adversarial_objections()] == ["o1", "o2"]

@@ -101,39 +101,40 @@ def verify_citations(db: ScratchpadDB) -> tuple[dict[int, list[dict[str, Any]]],
     return cited_events, warnings
 
 
-#: Confidence as an order, so the strongest-stated note can be picked without a model.
+#: Confidence as an order, so notes can be ranked without a model.
 _CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 
+#: A template active for at least this share of the log is chronic rather than part of the
+#: event: it was already happening before the incident and did not stop after it.
+_CHRONIC_SHARE = 0.9
 
-def _pick_headline(notes: list[dict[str, Any]], scores: dict[int, float]) -> dict[str, Any] | None:
-    """Which note leads the report.
 
-    Not the first one. The loop is told to write its conclusion last, and does not reliably
-    comply -- across three runs of the same incident the first note was a narrow early
-    hypothesis twice. Not the last one either: the final note is often a deliberate aside
-    ("these timeouts are a separate, pre-existing issue"), which is exactly the thing a
-    headline must not be.
+def _rank_notes(notes: list[dict[str, Any]], scores: dict[int, float]) -> list[dict[str, Any]]:
+    """Every recorded hypothesis, most significant first.
 
-    So it is chosen from the data instead: the note accounting for the most anomalous template
-    it cites, then the strongest stated confidence, then the latest step. The anomaly ranking
-    is model-free, which is what makes this stable -- two runs that reason differently but
-    reach the same template land on the same headline, and the report reads the same way.
+    Not in the order they were written. The loop is told to conclude last and does not reliably
+    comply -- across three runs of the same incident the first note was an early narrow
+    hypothesis twice, and the last one was a deliberate aside ("these timeouts are separate")
+    once. Neither position means anything.
 
-    Every note still appears under Findings. This decides the order of reading, not what is
-    said.
+    Ranked on the anomaly score of the templates each note cites, which no model touched. Two
+    runs that reason differently but reach the same templates therefore order their issues the
+    same way, which is what makes one report comparable to the next.
+
+    This is an ordering, not a filter. Every note appears, because an investigation that found
+    two unrelated problems has found two problems, and a report with room for one of them
+    loses the other.
     """
-    if not notes:
-        return None
 
     def key(note: dict[str, Any]) -> tuple[float, int, int]:
         cited = [int(i) for i in note["evidence"].get("template_ids", [])]
         return (
             max((scores.get(i, 0.0) for i in cited), default=0.0),
             _CONFIDENCE_RANK.get(str(note["confidence"]).lower(), 0),
-            int(note["step"]),
+            -int(note["step"]),
         )
 
-    return max(notes, key=key)
+    return sorted(notes, key=key, reverse=True)
 
 
 def _duration_minutes(first: str | None, last: str | None) -> float | None:
@@ -143,9 +144,44 @@ def _duration_minutes(first: str | None, last: str | None) -> float | None:
     return (parse_timestamp(last) - parse_timestamp(first)).total_seconds() / 60
 
 
-#: A template active for at least this share of the log is chronic rather than part of the
-#: event: it was already happening before the incident and did not stop after it.
-_CHRONIC_SHARE = 0.9
+def _chronic_template_ids(templates: list[dict[str, Any]], log_minutes: float | None) -> set[int]:
+    """Templates active across essentially the whole log.
+
+    A template that was firing before the incident began and kept firing after it ended is
+    background, not event. Saying so is what stops a chronic error stream from being read as
+    part of an outage it merely overlapped with.
+    """
+    if not log_minutes:
+        return set()
+    chronic = set()
+    for template in templates:
+        minutes = _duration_minutes(template["first_seen"], template["last_seen"])
+        if minutes is not None and minutes >= log_minutes * _CHRONIC_SHARE:
+            chronic.add(int(template["template_id"]))
+    return chronic
+
+
+def _describe_issues(
+    ranked: list[dict[str, Any]], scores: dict[int, float], chronic: set[int]
+) -> list[dict[str, Any]]:
+    """The ranked notes as the report's overview of what was found."""
+    issues = []
+    for position, note in enumerate(ranked, start=1):
+        cited = [int(i) for i in note["evidence"].get("template_ids", [])]
+        issues.append(
+            {
+                "rank": position,
+                "note": note["note"],
+                "step": note["step"],
+                "confidence": note["confidence"],
+                "template_ids": cited,
+                "top_score": max((scores.get(i, 0.0) for i in cited), default=0.0),
+                # Only when every template it rests on is chronic. One acute template among
+                # them means the note is about the event, whatever else it mentions.
+                "chronic": bool(cited) and all(i in chronic for i in cited),
+            }
+        )
+    return issues
 
 
 def _at_a_glance(
@@ -153,6 +189,7 @@ def _at_a_glance(
     view: MetricView,
     headline: dict[str, Any] | None,
     templates: list[dict[str, Any]],
+    chronic: set[int],
 ) -> dict[str, Any]:
     """When, how long, how loud, and where -- all computed, none of it narrated.
 
@@ -160,9 +197,8 @@ def _at_a_glance(
     much silence surrounds it. Naively replacing it with the union of the signal templates does
     not help: one chronic template active all hour drags the union back out to the whole file,
     which is how the first version of this section reported a six-minute outage as sixty
-    minutes. So the headline window is the window of the templates the verdict actually cites,
-    and every signal template is listed with its own span next to it -- which is what separates
-    an acute failure from a background problem that was already there.
+    minutes. So the headline window is the window of the templates the leading issue cites, and
+    every signal template is listed with its own span next to it.
     """
     raw_ids = view.text(ANOMALY_SIGNAL_TEMPLATE_IDS) or ""
     signal_ids = [int(part) for part in raw_ids.split(",") if part.strip()]
@@ -173,27 +209,21 @@ def _at_a_glance(
     window_ids = cited or signal_ids[:1]
     first_ts, last_ts = db.template_window(window_ids)
 
-    log_first, log_last = db.time_bounds()
-    log_minutes = _duration_minutes(log_first, log_last)
-
     by_id = {int(t["template_id"]): t for t in templates}
     spans = []
     for template_id in signal_ids:
         template = by_id.get(template_id)
         if template is None:
             continue
-        minutes = _duration_minutes(template["first_seen"], template["last_seen"])
         spans.append(
             {
                 "template_id": template_id,
                 "first_seen": template["first_seen"],
                 "last_seen": template["last_seen"],
-                "minutes": minutes,
+                "minutes": _duration_minutes(template["first_seen"], template["last_seen"]),
                 "occurrence_count": template["occurrence_count"],
                 "max_severity": template["max_severity"],
-                "chronic": bool(
-                    minutes is not None and log_minutes and minutes >= log_minutes * _CHRONIC_SHARE
-                ),
+                "chronic": template_id in chronic,
             }
         )
 
@@ -206,6 +236,7 @@ def _at_a_glance(
         "last_ts": last_ts,
         "duration_minutes": _duration_minutes(first_ts, last_ts),
         "spans": spans,
+        "chronic_template_ids": sorted(chronic & set(signal_ids)),
         # Severity order, not alphabetical, and loudest first: a reader scans for FATAL.
         "severities": [
             {"severity": name, "count": counts[name]}
@@ -284,7 +315,10 @@ def collect(db: ScratchpadDB) -> ReportData:
         int(t["template_id"]): float(t["anomaly_score"])
         for t in db.top_templates(limit=max(db.template_count(), 1), order_by="anomaly_score")
     }
-    headline = _pick_headline(notes, scores)
+    ranked = _rank_notes(notes, scores)
+    headline = ranked[0] if ranked else None
+    log_first, log_last = db.time_bounds()
+    chronic = _chronic_template_ids(top_templates, _duration_minutes(log_first, log_last))
     health_signals, health_detail = _split_health(metrics)
     objections = db.adversarial_objections()
 
@@ -321,7 +355,8 @@ def collect(db: ScratchpadDB) -> ReportData:
         "token_stages": token_stages,
         "token_total": total_tokens(token_stages),
         "headline": headline,
-        "glance": _at_a_glance(db, view, headline, top_templates),
+        "issues": _describe_issues(ranked, scores, chronic),
+        "glance": _at_a_glance(db, view, headline, top_templates, chronic),
         "health_signals": health_signals,
         "health_detail": health_detail,
         # Whether the pass ran and whether its content was kept are different questions. A

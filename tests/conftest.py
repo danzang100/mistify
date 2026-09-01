@@ -23,8 +23,6 @@ _PROVIDER_CREDENTIALS = (
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
     "GOOGLE_GENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
 )
 
 
@@ -46,7 +44,6 @@ def _no_live_model_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     # Clearing the environment is not enough on its own: the CLI reloads `.env` on every
     # invocation, which puts the key straight back.
     monkeypatch.setattr("mistify.cli.load_dotenv", lambda *a, **k: False, raising=False)
-    monkeypatch.setattr("mistify.llm.registry._has_auth_profile", lambda: False, raising=False)
 
 
 def _scratch_config(directory: Path, **sections: dict[str, Any]) -> MistifyConfig:

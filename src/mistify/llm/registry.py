@@ -29,15 +29,6 @@ _GEMINI_HELP = (
     "deterministic heuristic and calls no model."
 )
 
-_ANTHROPIC_HELP = (
-    "No Anthropic credential found. Either export ANTHROPIC_API_KEY, or sign in with "
-    "`ant auth login` so the SDK can read the profile. A Claude Pro subscription includes a "
-    "monthly programmatic allowance billed at API rates, which is what `ant auth login` "
-    "authenticates against -- it is separate from your chat usage.\n"
-    "To work without any credential, run with --investigator skeleton, which uses the "
-    "deterministic heuristic and calls no model."
-)
-
 
 def build_provider(name: str, model: str, config: LLMConfig) -> LLMProvider:
     """Construct the named provider.
@@ -61,29 +52,4 @@ def build_provider(name: str, model: str, config: LLMConfig) -> LLMProvider:
 
         return GeminiProvider(model=model, min_interval_seconds=config.min_interval_seconds)
 
-    if name == "anthropic":
-        try:
-            from mistify.llm.anthropic import AnthropicProvider
-        except ImportError as exc:  # pragma: no cover - dependency is declared
-            raise MissingCredentialError(f"the anthropic SDK is not importable: {exc}") from exc
-
-        import os
-
-        if not (os.environ.get("ANTHROPIC_API_KEY") or _has_auth_profile()):
-            raise MissingCredentialError(_ANTHROPIC_HELP)
-        return AnthropicProvider(model=model, effort=config.effort)
-
-    raise MissingCredentialError(
-        f"unknown llm provider {name!r}. Known: gemini, anthropic, scripted"
-    )
-
-
-def _has_auth_profile() -> bool:
-    """Whether an `ant auth login` profile exists for the SDK to read.
-
-    A best-effort check: the SDK's own resolution order is richer than this, so a false
-    negative only costs the user a clearer error than the SDK would have given them.
-    """
-    from pathlib import Path
-
-    return (Path.home() / ".config" / "anthropic").exists()
+    raise MissingCredentialError(f"unknown llm provider {name!r}. Known: gemini, scripted")

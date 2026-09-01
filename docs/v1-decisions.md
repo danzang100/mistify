@@ -367,8 +367,11 @@ satisfies §6.3's different-model requirement rather than working around it. A f
 key is real API access, and `GEMINI_API_KEY` is read from the environment or from a `.env`
 file the CLI loads on startup.
 
-`AnthropicProvider` is unchanged and still selectable with `llm.provider: anthropic`. Nothing
-above the seam moved.
+`AnthropicProvider` was kept and left selectable at first, then removed outright once it was
+clear no credential for it would appear. Nothing above the seam moved in either direction,
+which is the whole claim the seam makes. `llm.effort` went with it — an Anthropic-only setting
+with no remaining reader — and `llm.task_budget_tokens` is now inert for the same reason,
+documented as such rather than silently ignored.
 
 ### A second adapter is what made the seam's gap visible
 
@@ -391,7 +394,7 @@ Two capabilities the Gemini adapter answers differently, both already expressibl
 
 - **Task budgets.** `supports_task_budget` is False, so the loop falls back to its own
   tool-call cap and forced convergence. The config setting is kept and ignored rather than
-  removed, since it still applies to Anthropic.
+  removed: the loop's branch on the capability is live, and it is what the branch would pass.
 - **Throttling is routine.** Free-tier quotas are per-minute, so a 429 mid-investigation is
   expected rather than exceptional. The adapter retries with full-jitter backoff; a fixed
   schedule would march its own retries into the next rate-limit window together.

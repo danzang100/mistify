@@ -73,8 +73,9 @@ place to spend more.
 Free-tier quotas are per-minute. The adapter retries throttling with backoff; if that is not
 enough, set `llm.min_interval_seconds` to space calls out.
 
-Anthropic is supported by the same seam (`llm.provider: anthropic`, with `ANTHROPIC_API_KEY`
-or an `ant auth login` profile) but is not the default.
+Gemini is the only real provider that ships. The seam it sits behind (`src/mistify/llm/`) took
+a second adapter once and would take another; an Anthropic implementation lived there and was
+removed when no credential for it existed.
 
 ```bash
 uv run mistify run --source examples/sample_incident.jsonl --investigator skeleton
@@ -102,9 +103,10 @@ labelled slots and nothing else — it never decides the shape of the report.
 
 Responder-facing, in order:
 
-1. **Verdict** — the leading hypothesis, its confidence, and whether the adversarial pass
-   contested it. Chosen from the anomaly ranking rather than by position, so two runs that
-   reason differently but land on the same template lead with the same thing.
+1. **What was found** — every issue the investigation recorded, most significant first,
+   ordered on the anomaly ranking of the templates each cites rather than on the order they
+   were written. An issue resting entirely on templates active across the whole log is marked
+   *background*. Two or more issues carry a note that they are not necessarily one incident.
 2. **Read this first** — the warnings, above the machinery rather than below it.
 3. **The incident at a glance** — window, duration, per-severity volume and per-source
    activity, all computed from the events. Signal templates are timed individually, and one

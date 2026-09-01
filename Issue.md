@@ -183,8 +183,8 @@ make it into this register at the time. Recorded now so it is not rediscovered a
 
 ## 7. The provider seam drops thinking blocks — FIXED
 
-**Resolved, and it turned out to be more serious than recorded below.** On Anthropic this was
-a token cost. On Gemini it is a hard requirement: replaying a `functionCall` part without its
+**Resolved, and it turned out to be more serious than recorded below.** On Anthropic — whose
+adapter has since been removed — this was a token cost. On Gemini it is a hard requirement: replaying a `functionCall` part without its
 `thought_signature` is rejected with `400 INVALID_ARGUMENT`, so the second turn of every
 investigation failed. `ToolCall` now carries an opaque `signature` that adapters populate and
 hand back verbatim. Opaque is the load-bearing word — nothing above the seam reads it, because
@@ -193,7 +193,8 @@ leaking upward.
 
 Worth noting how it was found: it did not show up in review or in any test, because with one
 adapter there was nothing to disagree with. The second adapter is what made the seam's gap
-visible on its first real run. That is the argument for two adapters, demonstrated.
+visible on its first real run. That is the argument for two adapters, demonstrated — and worth
+remembering now that the codebase is back down to one.
 
 The original write-up follows.
 

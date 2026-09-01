@@ -26,7 +26,7 @@ from mistify.metrics import Metric
 
 __all__ = ["MIGRATIONS", "ReadOnlyViolation", "ScratchpadDB"]
 
-MIGRATIONS: tuple[str, ...] = ("0001_init", "0002_adversarial")
+MIGRATIONS: tuple[str, ...] = ("0001_init", "0002_adversarial", "0003_objection_ids")
 
 _EVENT_BATCH = 1000
 
@@ -349,11 +349,12 @@ class ScratchpadDB:
         )
         self._conn.executemany(
             "INSERT INTO adversarial_objections"
-            " (claim, objection, severity, template_ids_json, log_event_ids_json,"
+            " (objection_id, claim, objection, severity, template_ids_json, log_event_ids_json,"
             "  response, conceded, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
+                    str(o.get("objection_id", "")),
                     str(o.get("claim", "")),
                     str(o.get("objection", "")),
                     str(o.get("severity", "medium")),

@@ -1,7 +1,7 @@
 """The seam between the investigation and whichever model runs it.
 
 Everything above this line — the loop, the tools, the adversarial pass — is written against
-these types and never against a vendor SDK. Two adapters satisfy it today: `AnthropicProvider`
+these types and never against a vendor SDK. Two adapters satisfy it today: `GeminiProvider`
 talks to a real model, and `ScriptedProvider` replays a fixed sequence of turns, which is what
 lets the whole agent loop be tested without a credential, a network, or a bill.
 
@@ -11,9 +11,14 @@ tools, or know what a scratchpad is — those are the caller's business, so swap
 cannot quietly change how an investigation is conducted.
 
 Capabilities that genuinely differ between vendors are declared rather than assumed. Task
-budgets, where the model paces itself against a token ceiling it can see, exist on Anthropic
-and have no equivalent elsewhere; a caller checks `supports_task_budget` and falls back to the
-hard tool-call cap, instead of the seam pretending every provider is the same shape.
+budgets, where the model paces itself against a token ceiling it can see, are the standing
+example: no shipped provider offers one, so a caller checks `supports_task_budget` and falls
+back to the hard tool-call cap instead of the seam pretending every provider is the same shape.
+
+An earlier Anthropic adapter has been removed. Its fingerprints are deliberately left in the
+comments below wherever it explains *why* a field exists, because "two vendors disagreed about
+this" is the only reason several of them are shaped the way they are, and a seam that forgets
+that will be flattened by the next person who sees only one implementation.
 """
 
 from __future__ import annotations
@@ -58,7 +63,8 @@ class ToolCall:
     inside it, and nothing should: the moment this field acquires a meaning it stops being a
     seam and becomes one vendor's data model leaking upward. Gemini requires its thought
     signature to be replayed on every function call and rejects the request outright without
-    it; Anthropic has no equivalent and leaves it None.
+    it; the Anthropic adapter that once shared this seam had no equivalent and left it None,
+    which is how the field came to be optional.
     """
 
     id: str
@@ -97,11 +103,11 @@ class Usage:
     them that was served from cache.** Subset, not a separate bucket -- so `total_tokens` is
     `input + output` and never double-counts, whatever the provider.
 
-    That contract has to be stated because the vendors disagree about it. Gemini's
-    `prompt_token_count` already includes the cached portion; Anthropic reports cache reads
-    and cache writes as fields *beside* `input_tokens`. Adapters normalise to the rule above,
-    which is the only reason a run total can add up across two providers. Left to each
-    adapter's own convention, a total would silently undercount one of them.
+    That contract has to be stated because vendors disagree about it. Gemini's
+    `prompt_token_count` already includes the cached portion; the Anthropic API reports cache
+    reads and cache writes as fields *beside* `input_tokens`, and its adapter had to add them
+    together. Any future adapter normalises to the rule above -- left to each one's own
+    convention, a run total would silently undercount whichever disagreed.
 
     `cached_input` is kept because the whole point of caching the template digest is that it
     stops being paid for at full rate. A run where it stays zero across steps is either

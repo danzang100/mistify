@@ -169,8 +169,6 @@ def test_missing_credential_explains_what_to_set(
     Resolved before the loop starts: by the time a model call fails, a scratchpad has been
     loaded and the error reads like an investigation problem instead of a setup one.
     """
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr("mistify.llm.registry._has_auth_profile", lambda: False, raising=True)
     runner.invoke(
         cli,
         [

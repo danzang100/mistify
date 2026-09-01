@@ -195,27 +195,28 @@ class LLMConfig(_Strict):
 
     #: Provider for the investigation loop. `scripted` replays fixed turns and is what the
     #: tests use -- it needs no credential, so the whole loop is exercised without a bill.
-    provider: Literal["anthropic", "gemini", "scripted"] = "gemini"
+    provider: Literal["gemini", "scripted"] = "gemini"
     #: Cheapest tier that still calls tools reliably -- verified against the live API.
     model: str = "gemini-3.5-flash-lite"
 
     #: Provider and model for the adversarial pass. Defaulting to the same provider but a
     #: different model is the weaker half of §6.3; pointing this at another provider entirely
     #: is the stronger one.
-    adversarial_provider: Literal["anthropic", "gemini", "scripted"] | None = None
+    adversarial_provider: Literal["gemini", "scripted"] | None = None
     #: One tier up from the loop. §6.3 needs a different model, and the critique is one
     #: call against the loop's fifteen, so it is the cheapest place to spend more.
     adversarial_model: str = "gemini-3.5-flash"
 
     bootstrap_model: str = "gemini-3.5-flash-lite"
     judge_model: str = "gemini-3.5-flash"
-    effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
 
     #: Ceiling per model response. Not the investigation budget -- see `pipeline` for that.
     max_tokens: int = Field(default=8192, ge=256)
 
-    #: Token ceiling the model paces itself against, where the provider supports one. Ignored
-    #: by providers that do not, which then rely on `pipeline.max_agent_tool_calls`.
+    #: Token ceiling the model paces itself against, where the provider supports one. No
+    #: shipped provider does -- Gemini has no equivalent -- so today every run falls back to
+    #: `pipeline.max_agent_tool_calls`. Kept because the loop's branch on
+    #: `supports_task_budget` is live and this is what it would pass.
     task_budget_tokens: int | None = Field(default=64000, ge=20000)
 
     #: Enforced spacing between model calls, for providers with per-minute quotas. Zero
