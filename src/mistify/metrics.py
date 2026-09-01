@@ -217,6 +217,52 @@ INVESTIGATE_STEPS = Metric("investigate", "steps", "int")
 INVESTIGATE_OUTCOME = Metric("investigate", "outcome", "str")
 INVESTIGATE_NOTES_WRITTEN = Metric("investigate", "notes_written", "int")
 INVESTIGATE_TARGET_TEMPLATE_ID = Metric("investigate", "target_template_id", "int")
+#: How much to trust this investigator, in its own words. Recorded by whichever one ran, so
+#: the report renders a caveat without needing to know what investigators exist.
+INVESTIGATE_CAVEAT = Metric("investigate", "caveat", "str", load_bearing=True)
+INVESTIGATE_PROVIDER = Metric("investigate", "provider", "str")
+INVESTIGATE_MODEL = Metric("investigate", "model", "str")
+INVESTIGATE_TOOL_CALLS = Metric("investigate", "tool_calls", "int")
+#: The investigation ran out of tool calls before the model concluded. Load-bearing: the
+#: report must say so rather than presenting a truncated search as a finished one.
+INVESTIGATE_BUDGET_LIMITED = Metric(
+    "investigate",
+    "budget_limited",
+    "bool",
+    load_bearing=True,
+    trigger_values=frozenset({"True"}),
+)
+INVESTIGATE_STOP_REASON = Metric("investigate", "stop_reason", "str")
+INVESTIGATE_INPUT_TOKENS = Metric("investigate", "input_tokens", "int")
+INVESTIGATE_OUTPUT_TOKENS = Metric("investigate", "output_tokens", "int")
+#: Zero across a multi-step run means the cached prefix is being invalidated every step, and
+#: the investigation is quietly costing far more than it should.
+INVESTIGATE_CACHED_INPUT_TOKENS = Metric("investigate", "cached_input_tokens", "int")
+
+# ---------------------------------------------------------------- adversarial
+
+ADVERSARIAL_PROVIDER = Metric("adversarial", "provider", "str")
+ADVERSARIAL_MODEL = Metric("adversarial", "model", "str")
+#: Objections the critique raised. Load-bearing: an investigation with unanswered objections
+#: has not been checked, it has been disagreed with.
+ADVERSARIAL_OBJECTIONS = Metric(
+    "adversarial", "objections", "int", load_bearing=True, threshold=0, comparison="gt"
+)
+ADVERSARIAL_UNSUPPORTED_CLAIMS = Metric(
+    "adversarial", "unsupported_claims", "int", load_bearing=True, threshold=0, comparison="gt"
+)
+#: High-anomaly templates the conclusion never accounted for -- the one mechanical test the
+#: adversarial pass performs that does not depend on a model's judgement.
+ADVERSARIAL_UNEXPLAINED_SIGNAL = Metric(
+    "adversarial",
+    "unexplained_signal_templates",
+    "int",
+    load_bearing=True,
+    threshold=0,
+    comparison="gt",
+)
+ADVERSARIAL_REBUTTED = Metric("adversarial", "objections_rebutted", "int")
+ADVERSARIAL_OUTCOME = Metric("adversarial", "outcome", "str")
 
 
 ALL_METRICS: tuple[Metric, ...] = (
@@ -264,6 +310,22 @@ ALL_METRICS: tuple[Metric, ...] = (
     INVESTIGATE_OUTCOME,
     INVESTIGATE_NOTES_WRITTEN,
     INVESTIGATE_TARGET_TEMPLATE_ID,
+    INVESTIGATE_CAVEAT,
+    INVESTIGATE_PROVIDER,
+    INVESTIGATE_MODEL,
+    INVESTIGATE_TOOL_CALLS,
+    INVESTIGATE_BUDGET_LIMITED,
+    INVESTIGATE_STOP_REASON,
+    INVESTIGATE_INPUT_TOKENS,
+    INVESTIGATE_OUTPUT_TOKENS,
+    INVESTIGATE_CACHED_INPUT_TOKENS,
+    ADVERSARIAL_PROVIDER,
+    ADVERSARIAL_MODEL,
+    ADVERSARIAL_OBJECTIONS,
+    ADVERSARIAL_UNSUPPORTED_CLAIMS,
+    ADVERSARIAL_UNEXPLAINED_SIGNAL,
+    ADVERSARIAL_REBUTTED,
+    ADVERSARIAL_OUTCOME,
 )
 
 

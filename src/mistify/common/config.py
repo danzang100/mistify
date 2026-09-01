@@ -184,18 +184,51 @@ class ScratchpadConfig(_Strict):
 
 
 class LLMConfig(_Strict):
-    """Model assignments.
+    """Which model runs what, and through which provider.
 
     The loop and the adversarial pass must not share a model: architecture §6.3 identifies
     correlated blind spots between the reasoner and its checker as the core risk of the
-    adversarial design, and a shared model is the most direct way to produce them.
+    adversarial design, and a shared model is the most direct way to produce them. Different
+    *providers* satisfy that more strongly than two models from one family, which is why the
+    provider is configurable per role rather than once for the whole run.
     """
 
+    #: Provider for the investigation loop. `scripted` replays fixed turns and is what the
+    #: tests use -- it needs no credential, so the whole loop is exercised without a bill.
+    provider: Literal["anthropic", "scripted"] = "anthropic"
     model: str = "claude-opus-5"
+
+    #: Provider and model for the adversarial pass. Defaulting to the same provider but a
+    #: different model is the weaker half of §6.3; pointing this at another provider entirely
+    #: is the stronger one.
+    adversarial_provider: Literal["anthropic", "scripted"] | None = None
     adversarial_model: str = "claude-sonnet-5"
+
     bootstrap_model: str = "claude-haiku-4-5"
     judge_model: str = "claude-opus-5"
     effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
+
+    #: Ceiling per model response. Not the investigation budget -- see `pipeline` for that.
+    max_tokens: int = Field(default=8192, ge=256)
+
+    #: Token ceiling the model paces itself against, where the provider supports one. Ignored
+    #: by providers that do not, which then rely on `pipeline.max_agent_tool_calls`.
+    task_budget_tokens: int | None = Field(default=64000, ge=20000)
+
+    @model_validator(mode="after")
+    def _adversarial_differs(self) -> LLMConfig:
+        provider = self.adversarial_provider or self.provider
+        if provider == self.provider and self.adversarial_model == self.model:
+            raise ValueError(
+                "the adversarial pass must not use the same provider and model as the loop "
+                "(architecture §6.3: a shared model gives the reasoner and its checker one "
+                "blind spot). Change llm.adversarial_model or llm.adversarial_provider."
+            )
+        return self
+
+    def adversarial_provider_name(self) -> str:
+        """Provider for the critique, defaulting to the loop's when unset."""
+        return self.adversarial_provider or self.provider
 
 
 class ReportConfig(_Strict):

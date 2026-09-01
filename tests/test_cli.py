@@ -48,6 +48,8 @@ def test_run_produces_a_report_naming_the_root_cause(
             str(incident_file),
             "--incident-id",
             "cli-run",
+            "--investigator",
+            "skeleton",
             "--config",
             str(config_file),
         ],
@@ -70,7 +72,9 @@ def test_three_step_pipeline_matches_run(
     assert ingest_result.exit_code == 0, ingest_result.output
     assert "events loaded" in ingest_result.output
 
-    investigate_result = runner.invoke(cli, ["investigate", "--incident-id", "staged", *common])
+    investigate_result = runner.invoke(
+        cli, ["investigate", "--incident-id", "staged", "--investigator", "skeleton", *common]
+    )
     assert investigate_result.exit_code == 0, investigate_result.output
     assert ROOT_CAUSE_MARKER in investigate_result.output
 
@@ -144,3 +148,46 @@ def test_missing_source_is_rejected_by_click(runner: CliRunner, config_file: Pat
         cli, ["ingest", "--source", "absent.jsonl", "--config", str(config_file)]
     )
     assert result.exit_code != 0
+
+
+# --------------------------------------------------------------- the model-driven path
+
+
+def test_the_loop_is_the_default_investigator(runner: CliRunner) -> None:
+    """Phase 3's investigator is the product's default; the heuristic is the fallback."""
+    result = runner.invoke(cli, ["investigate", "--help"])
+    assert result.exit_code == 0
+    assert "--investigator" in result.output
+    assert "skeleton" in result.output
+
+
+def test_missing_credential_explains_what_to_set(
+    runner: CliRunner, incident_file: Path, config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The failure a first-time user hits, so it has to name the fix rather than trace.
+
+    Resolved before the loop starts: by the time a model call fails, a scratchpad has been
+    loaded and the error reads like an investigation problem instead of a setup one.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr("mistify.llm.registry._has_auth_profile", lambda: False, raising=True)
+    runner.invoke(
+        cli,
+        [
+            "ingest",
+            "--source",
+            str(incident_file),
+            "--incident-id",
+            "nocred",
+            "--config",
+            str(config_file),
+        ],
+    )
+    result = runner.invoke(
+        cli, ["investigate", "--incident-id", "nocred", "--config", str(config_file)]
+    )
+
+    assert result.exit_code != 0
+    assert "ANTHROPIC_API_KEY" in result.output
+    assert "ant auth login" in result.output
+    assert "--investigator skeleton" in result.output

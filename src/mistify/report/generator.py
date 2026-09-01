@@ -18,13 +18,17 @@ from typing import Any
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
 from mistify import __version__
-from mistify.agent.skeleton import INVESTIGATOR_NAME
 from mistify.common.models import SEVERITIES
 from mistify.metrics import (
+    ADVERSARIAL_UNEXPLAINED_SIGNAL,
+    ADVERSARIAL_UNSUPPORTED_CLAIMS,
     ANOMALY_NEEDLE_POSITION,
     INGEST_PARSE_ERRORS,
     INGEST_UNMAPPED_SEVERITY,
+    INVESTIGATE_BUDGET_LIMITED,
+    INVESTIGATE_CAVEAT,
     INVESTIGATE_INVESTIGATOR,
+    INVESTIGATE_TOOL_CALLS,
     REDACTION_MODE,
     SCRATCHPAD_ORPHAN_EVENTS,
     TEMPLATING_CALIBRATION_REASON,
@@ -53,14 +57,6 @@ __all__ = [
 #: shows the head of it, and says so whenever it is showing less than all of it. A truncated
 #: list presented as the complete one is a partial view of the incident read as a whole one.
 TOP_TEMPLATE_LIMIT = 15
-
-_INVESTIGATOR_CAVEATS = {
-    INVESTIGATOR_NAME: (
-        "Template selection is a hardcoded severity-then-count heuristic, not a "
-        "model-driven investigation. Treat the finding below as a starting point, not a "
-        "root-cause conclusion."
-    ),
-}
 
 ReportData = dict[str, Any]
 
@@ -153,9 +149,8 @@ def collect(db: ScratchpadDB) -> ReportData:
         "first_ts": first_ts,
         "last_ts": last_ts,
         "investigator": investigator,
-        "investigator_caveat": _INVESTIGATOR_CAVEATS.get(
-            investigator, "No caveat recorded for this investigator."
-        ),
+        "investigator_caveat": view.text(INVESTIGATE_CAVEAT)
+        or "No caveat recorded for this investigator.",
         "version": __version__,
     }
 
@@ -240,6 +235,32 @@ def _health_warnings(view: MetricView) -> list[str]:
 
     if view.triggers(REDACTION_MODE):
         warnings.append("Redaction was disabled for this run.")
+
+    # An investigation cut short by its budget is not a finished one, and the difference has
+    # to be in words rather than left for a reader to spot in the metric table.
+    if view.triggers(INVESTIGATE_BUDGET_LIMITED):
+        calls = view.number(INVESTIGATE_TOOL_CALLS)
+        spent = f" after {int(calls)} tool calls" if calls is not None else ""
+        warnings.append(
+            f"The investigation was budget-limited: it reached its tool-call cap{spent} "
+            "before concluding. Treat the finding as the best available from a search that "
+            "was cut short, not as a completed investigation."
+        )
+
+    # The one adversarial test that does not depend on a model's judgement.
+    if view.triggers(ADVERSARIAL_UNEXPLAINED_SIGNAL):
+        unexplained = int(_triggered_value(view, ADVERSARIAL_UNEXPLAINED_SIGNAL))
+        warnings.append(
+            f"{unexplained} high-anomaly template(s) are not accounted for by any note. The "
+            "ranking flagged them as signal and the conclusion does not mention them."
+        )
+
+    if view.triggers(ADVERSARIAL_UNSUPPORTED_CLAIMS):
+        unsupported = int(_triggered_value(view, ADVERSARIAL_UNSUPPORTED_CLAIMS))
+        warnings.append(
+            f"The adversarial pass raised {unsupported} evidence-backed objection(s) at high "
+            "severity against claims in this report."
+        )
 
     if view.triggers(TEMPLATING_CALIBRATION_STATUS):
         reason = view.text(TEMPLATING_CALIBRATION_REASON)

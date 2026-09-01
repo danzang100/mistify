@@ -76,6 +76,22 @@ EXPECTED_METRIC_KEYS = {
     ("investigate", "outcome"),
     ("investigate", "notes_written"),
     ("investigate", "target_template_id"),
+    ("investigate", "caveat"),
+    ("investigate", "provider"),
+    ("investigate", "model"),
+    ("investigate", "tool_calls"),
+    ("investigate", "budget_limited"),
+    ("investigate", "stop_reason"),
+    ("investigate", "input_tokens"),
+    ("investigate", "output_tokens"),
+    ("investigate", "cached_input_tokens"),
+    ("adversarial", "provider"),
+    ("adversarial", "model"),
+    ("adversarial", "objections"),
+    ("adversarial", "unsupported_claims"),
+    ("adversarial", "unexplained_signal_templates"),
+    ("adversarial", "objections_rebutted"),
+    ("adversarial", "outcome"),
 }
 
 

@@ -17,6 +17,7 @@ or one of the design documents, the fix column says which document to amend.
 | 4. No index for trace correlation | Medium | 3 |
 | 5. Unimplemented adapters are dropped silently | Low | 4 |
 | 6. Noise thresholds are defined in two places | ~~Medium~~ | **Fixed** |
+| 7. The provider seam drops thinking blocks | Medium | 3/5 — costs tokens on long loops |
 
 ---
 
@@ -179,3 +180,30 @@ config through three signatures than to explain later why a documented setting h
 
 **Note.** This was raised as its own candidate in the Phase 2 architecture review and did not
 make it into this register at the time. Recorded now so it is not rediscovered a third time.
+
+## 7. The provider seam drops thinking blocks
+
+**Problem.** `Turn` in `src/mistify/llm/base.py` carries text, tool calls, a stop reason and
+usage — but not the model's reasoning blocks. `AnthropicProvider` therefore discards them, and
+the loop never sends them back.
+
+**Why it matters.** On a provider that returns reasoning, replaying it unchanged on the next
+turn is how the model keeps its own train of thought across a tool-using loop. Dropping it
+means the model re-derives its reasoning at every step of an investigation that may run twenty
+tool calls, which costs output tokens and can cost coherence. It is invisible in a two-step
+test and expensive in a real run.
+
+**Recommended fix.** Add an opaque `reasoning` field to `Turn` and `Message` that adapters
+populate and echo back verbatim, without the loop ever inspecting it. Opaque is the important
+part: the seam must not acquire a vendor's notion of what a thinking block contains, or it
+stops being a seam. Providers with nothing to put there leave it empty.
+
+**Where.** `src/mistify/llm/base.py` (the fix), `src/mistify/llm/anthropic.py` (populate and
+replay).
+
+**Target phase.** 3 if the loop turns out to wander across steps; otherwise 5, where the eval
+harness will measure the token cost directly and say whether it is worth the seam widening.
+
+**Note.** Found while building the Anthropic adapter, not by the review. The seam is mine and
+this is a gap in it — recorded rather than absorbed, because a silently costlier loop is
+exactly the kind of thing that gets attributed to the model later.

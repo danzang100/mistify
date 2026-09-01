@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
 from mistify import __version__
 from mistify.agent.skeleton import run_skeleton_investigation
-from mistify.common.config import load_config
+from mistify.common.config import MistifyConfig, load_config
 from mistify.pipeline import UnknownFormatError, derive_incident_id, ingest
 from mistify.redaction.vault import RedactionVault
 from mistify.report.generator import write_report
 from mistify.scratchpad.db import ScratchpadDB
+
+if TYPE_CHECKING:  # pragma: no cover - the agent stack is imported only when used
+    from mistify.agent.loop import InvestigationResult
 
 __all__ = ["cli"]
 
@@ -59,23 +63,46 @@ def ingest_command(
     click.echo(f"scratchpad    {result.scratchpad_path}")
 
 
+_investigator_option = click.option(
+    "--investigator",
+    type=click.Choice(["loop", "skeleton"]),
+    default="loop",
+    help="loop drives a model through the tools; skeleton is the deterministic heuristic "
+    "and needs no credential.",
+)
+
+
 @cli.command(name="investigate")
 @click.option("--incident-id", required=True)
+@_investigator_option
+@click.option("--no-adversarial", is_flag=True, help="Skip the adversarial check.")
 @_config_option
-def investigate_command(incident_id: str, config_path: Path | None) -> None:
-    """Run the investigation loop over an ingested incident."""
+def investigate_command(
+    incident_id: str, investigator: str, no_adversarial: bool, config_path: Path | None
+) -> None:
+    """Investigate an ingested incident."""
     config = load_config(config_path)
     path = config.scratchpad_path(incident_id)
     if not path.exists():
         raise click.ClickException(f"no scratchpad for incident {incident_id!r} at {path}")
 
     with ScratchpadDB(path) as db:
-        result = run_skeleton_investigation(db)
+        if investigator == "skeleton":
+            skeleton = run_skeleton_investigation(db)
+            click.echo(f"steps  {skeleton.steps}")
+            click.echo(f"notes  {len(skeleton.notes)}")
+            for note in skeleton.notes:
+                click.echo(f"  [{note.confidence}] {note.note}")
+            return
 
-    click.echo(f"steps  {result.steps}")
-    click.echo(f"notes  {len(result.notes)}")
-    for note in result.notes:
-        click.echo(f"  [{note.confidence}] {note.note}")
+        result = _run_agent(db, config, adversarial=not no_adversarial)
+        click.echo(f"steps       {result.steps}")
+        click.echo(f"tool calls  {result.tool_calls}")
+        click.echo(f"notes       {len(result.notes)}")
+        if result.budget_limited:
+            click.echo("budget-limited: reached the tool-call cap before concluding", err=True)
+        for note in result.notes:
+            click.echo(f"  [{note.confidence}] {note.note[:160]}")
 
 
 @cli.command(name="report")
@@ -165,9 +192,16 @@ def _warn_unredacted() -> None:
 @click.option("--source", required=True, type=click.Path(exists=True, path_type=Path))
 @click.option("--incident-id", default=None)
 @click.option("--format", "format_name", default="auto")
+@_investigator_option
+@click.option("--no-adversarial", is_flag=True, help="Skip the adversarial check.")
 @_config_option
 def run_command(
-    source: Path, incident_id: str | None, format_name: str, config_path: Path | None
+    source: Path,
+    incident_id: str | None,
+    format_name: str,
+    investigator: str,
+    no_adversarial: bool,
+    config_path: Path | None,
 ) -> None:
     """Ingest, investigate and report in one pass."""
     config = load_config(config_path)
@@ -183,11 +217,60 @@ def run_command(
     )
 
     with ScratchpadDB(result.scratchpad_path) as db:
-        investigation = run_skeleton_investigation(db)
+        if investigator == "skeleton":
+            steps = run_skeleton_investigation(db).steps
+        else:
+            steps = _run_agent(db, config, adversarial=not no_adversarial).steps
         output = write_report(db, config.report.output_dir, result.incident_id)
 
-    click.echo(f"investigated in {investigation.steps} steps")
+    click.echo(f"investigated in {steps} steps")
     click.echo(f"report {output}")
+
+
+def _run_agent(db: ScratchpadDB, config: MistifyConfig, adversarial: bool) -> InvestigationResult:
+    """Drive the model loop, then let the critique answer it.
+
+    Credentials are resolved here rather than at import, so every deterministic command keeps
+    working on a machine with no account anywhere.
+    """
+    from mistify.agent.adversarial import run_adversarial_check
+    from mistify.agent.loop import InvestigationLoop
+    from mistify.agent.tools import ToolBox
+    from mistify.llm.registry import MissingCredentialError, build_provider
+    from mistify.metrics import ANOMALY_SIGNAL_TEMPLATE_IDS, MetricView
+
+    try:
+        provider = build_provider(config.llm.provider, config.llm.model, config.llm)
+    except MissingCredentialError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    toolbox = ToolBox(db, noise=config.anomaly.noise_thresholds())
+    loop = InvestigationLoop(
+        db=db,
+        provider=provider,
+        toolbox=toolbox,
+        max_tool_calls=config.pipeline.max_agent_tool_calls,
+        max_tokens=config.llm.max_tokens,
+        task_budget_tokens=config.llm.task_budget_tokens,
+    )
+    result = loop.run()
+
+    if adversarial:
+        try:
+            critic = build_provider(
+                config.llm.adversarial_provider_name(), config.llm.adversarial_model, config.llm
+            )
+        except MissingCredentialError as exc:
+            raise click.ClickException(str(exc)) from exc
+
+        view = MetricView(db.metrics("anomaly"))
+        raw_ids = view.text(ANOMALY_SIGNAL_TEMPLATE_IDS) or ""
+        signal_ids = [int(part) for part in raw_ids.split(",") if part.strip()]
+        run_adversarial_check(
+            db, critic, signal_ids, rebuttal_provider=provider, max_tokens=config.llm.max_tokens
+        )
+
+    return result
 
 
 def main() -> int:

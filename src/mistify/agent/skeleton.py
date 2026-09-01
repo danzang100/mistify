@@ -18,6 +18,7 @@ from typing import Any
 
 from mistify.common.models import SEVERITIES, ScratchpadNote
 from mistify.metrics import (
+    INVESTIGATE_CAVEAT,
     INVESTIGATE_INVESTIGATOR,
     INVESTIGATE_NOTES_WRITTEN,
     INVESTIGATE_OUTCOME,
@@ -29,6 +30,11 @@ from mistify.scratchpad.db import ScratchpadDB
 __all__ = ["INVESTIGATOR_NAME", "SkeletonResult", "run_skeleton_investigation"]
 
 INVESTIGATOR_NAME = "phase1-skeleton"
+
+CAVEAT = (
+    "Template selection is a hardcoded severity-then-count heuristic, not a model-driven "
+    "investigation. Treat the finding below as a starting point, not a root-cause conclusion."
+)
 
 _SLICE_LIMIT = 50
 _EVIDENCE_EVENTS = 5
@@ -48,6 +54,7 @@ def run_skeleton_investigation(db: ScratchpadDB) -> SkeletonResult:
     db.log_query(step, "top_templates(order_by='severity', limit=10)", len(ranked))
     if not ranked:
         db.record(INVESTIGATE_INVESTIGATOR, INVESTIGATOR_NAME)
+        db.record(INVESTIGATE_CAVEAT, CAVEAT)
         db.record(INVESTIGATE_STEPS, step)
         db.record(INVESTIGATE_OUTCOME, "no_templates")
         return SkeletonResult(notes=[], steps=step, target_template_id=None)
@@ -79,6 +86,7 @@ def run_skeleton_investigation(db: ScratchpadDB) -> SkeletonResult:
     note_id = db.write_note(step, note_text, evidence, confidence="low")
 
     db.record(INVESTIGATE_INVESTIGATOR, INVESTIGATOR_NAME)
+    db.record(INVESTIGATE_CAVEAT, CAVEAT)
     db.record(INVESTIGATE_STEPS, step)
     db.record(INVESTIGATE_NOTES_WRITTEN, 1)
     db.record(INVESTIGATE_TARGET_TEMPLATE_ID, template_id)
