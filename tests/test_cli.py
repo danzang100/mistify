@@ -188,6 +188,6 @@ def test_missing_credential_explains_what_to_set(
     )
 
     assert result.exit_code != 0
-    assert "ANTHROPIC_API_KEY" in result.output
-    assert "ant auth login" in result.output
+    assert "GEMINI_API_KEY" in result.output
+    assert ".env" in result.output
     assert "--investigator skeleton" in result.output

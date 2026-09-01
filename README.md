@@ -60,9 +60,21 @@ uv run mistify run --source path/to/incident.jsonl
 ### Investigate
 
 `investigate` and `run` default to `--investigator loop`, which drives a model and needs a
-credential — either `ANTHROPIC_API_KEY`, or a profile from `ant auth login`. A Claude Pro
-subscription includes a monthly programmatic allowance billed at API rates; it is separate
-from chat usage.
+credential. The default provider is Gemini: set `GEMINI_API_KEY`, either in the environment or
+in a `.env` file at the repo root, which the CLI loads on startup. A free AI Studio key is
+enough.
+
+The shipped models are the cheap tiers — `gemini-3.5-flash-lite` for the loop and
+`gemini-3.5-flash` for the adversarial pass. They must differ: architecture §6.3 requires the
+critique to run on a different model from the reasoning, and config rejects a run where they
+match. The loop is roughly fifteen calls to the critique's one, so the critique is the cheap
+place to spend more.
+
+Free-tier quotas are per-minute. The adapter retries throttling with backoff; if that is not
+enough, set `llm.min_interval_seconds` to space calls out.
+
+Anthropic is supported by the same seam (`llm.provider: anthropic`, with `ANTHROPIC_API_KEY`
+or an `ant auth login` profile) but is not the default.
 
 ```bash
 uv run mistify run --source examples/sample_incident.jsonl --investigator skeleton

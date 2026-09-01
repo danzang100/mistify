@@ -66,11 +66,19 @@ scratchpad:
   path: .cache/incident_{incident_id}.sqlite
 
 llm:
-  model: claude-opus-5
-  adversarial_model: claude-sonnet-5   # must differ from `model` (architecture §6.3)
-  bootstrap_model: claude-haiku-4-5
-  judge_model: claude-opus-5
+  # Gemini by default: a free AI Studio key is real API access, and the loop is ~15 calls
+  # per investigation where the critique is one.
+  provider: gemini
+  model: gemini-3.5-flash-lite          # cheapest tier that still calls tools reliably
+  adversarial_model: gemini-3.5-flash   # must differ from `model` (architecture §6.3)
+  bootstrap_model: gemini-3.5-flash-lite
+  judge_model: gemini-3.5-flash
   effort: high
+  max_tokens: 8192
+  task_budget_tokens: 64000             # ignored by providers without task budgets
+  # Free-tier quotas are per-minute. Zero leaves pacing to retry-with-backoff; raise it if
+  # throttling shows up in practice.
+  min_interval_seconds: 0.0
 
 report:
   format: markdown

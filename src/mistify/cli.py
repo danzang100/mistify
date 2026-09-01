@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
+from dotenv import load_dotenv
 
 from mistify import __version__
 from mistify.agent.skeleton import run_skeleton_investigation
@@ -34,6 +35,9 @@ _config_option = click.option(
 @click.version_option(__version__, prog_name="mistify")
 def cli() -> None:
     """Mistify — incident log analysis agent."""
+    # A key in a .env file is a key the user has already provided; making them export it as
+    # well is a setup step that earns nothing. Never overrides a real environment variable.
+    load_dotenv(override=False)
 
 
 @cli.command(name="ingest")

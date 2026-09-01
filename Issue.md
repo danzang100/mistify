@@ -17,7 +17,7 @@ or one of the design documents, the fix column says which document to amend.
 | 4. No index for trace correlation | Medium | 3 |
 | 5. Unimplemented adapters are dropped silently | Low | 4 |
 | 6. Noise thresholds are defined in two places | ~~Medium~~ | **Fixed** |
-| 7. The provider seam drops thinking blocks | Medium | 3/5 — costs tokens on long loops |
+| 7. The provider seam drops thinking blocks | ~~Medium~~ | **Fixed** — it was a hard requirement, not a cost |
 
 ---
 
@@ -181,7 +181,22 @@ config through three signatures than to explain later why a documented setting h
 **Note.** This was raised as its own candidate in the Phase 2 architecture review and did not
 make it into this register at the time. Recorded now so it is not rediscovered a third time.
 
-## 7. The provider seam drops thinking blocks
+## 7. The provider seam drops thinking blocks — FIXED
+
+**Resolved, and it turned out to be more serious than recorded below.** On Anthropic this was
+a token cost. On Gemini it is a hard requirement: replaying a `functionCall` part without its
+`thought_signature` is rejected with `400 INVALID_ARGUMENT`, so the second turn of every
+investigation failed. `ToolCall` now carries an opaque `signature` that adapters populate and
+hand back verbatim. Opaque is the load-bearing word — nothing above the seam reads it, because
+the moment it acquires a meaning it stops being a seam and becomes one vendor's data model
+leaking upward.
+
+Worth noting how it was found: it did not show up in review or in any test, because with one
+adapter there was nothing to disagree with. The second adapter is what made the seam's gap
+visible on its first real run. That is the argument for two adapters, demonstrated.
+
+The original write-up follows.
+
 
 **Problem.** `Turn` in `src/mistify/llm/base.py` carries text, tool calls, a stop reason and
 usage — but not the model's reasoning blocks. `AnthropicProvider` therefore discards them, and

@@ -21,6 +21,14 @@ class MissingCredentialError(RuntimeError):
     """A provider was asked for but nothing on this machine can authenticate it."""
 
 
+_GEMINI_HELP = (
+    "No Gemini credential found. Set GEMINI_API_KEY, either in the environment or in a .env "
+    "file at the repo root, which the CLI loads on startup. A free AI Studio key works; its "
+    "per-minute quota is tight, so set llm.min_interval_seconds if you hit throttling. "
+    "To work without any credential, run with --investigator skeleton, which uses the "
+    "deterministic heuristic and calls no model."
+)
+
 _ANTHROPIC_HELP = (
     "No Anthropic credential found. Either export ANTHROPIC_API_KEY, or sign in with "
     "`ant auth login` so the SDK can read the profile. A Claude Pro subscription includes a "
@@ -44,6 +52,15 @@ def build_provider(name: str, model: str, config: LLMConfig) -> LLMProvider:
             "real provider, or run with --investigator skeleton."
         )
 
+    if name == "gemini":
+        import os
+
+        if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
+            raise MissingCredentialError(_GEMINI_HELP)
+        from mistify.llm.gemini import GeminiProvider
+
+        return GeminiProvider(model=model, min_interval_seconds=config.min_interval_seconds)
+
     if name == "anthropic":
         try:
             from mistify.llm.anthropic import AnthropicProvider
@@ -56,7 +73,9 @@ def build_provider(name: str, model: str, config: LLMConfig) -> LLMProvider:
             raise MissingCredentialError(_ANTHROPIC_HELP)
         return AnthropicProvider(model=model, effort=config.effort)
 
-    raise MissingCredentialError(f"unknown llm provider {name!r}. Known: anthropic, scripted")
+    raise MissingCredentialError(
+        f"unknown llm provider {name!r}. Known: gemini, anthropic, scripted"
+    )
 
 
 def _has_auth_profile() -> bool:

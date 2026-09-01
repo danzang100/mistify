@@ -171,10 +171,10 @@ written as one it would pass everything.
 |---|---|
 | Package name | `mistify` throughout — distribution, package and CLI. The scaffolding doc's `log-agent/` is superseded. |
 | Chunking config | `chunk_window_minutes` and `chunk_overlap_minutes` dropped. No pipeline stage consumed them; the investigator slices on demand via `get_slice`. Overlapping windows remain a recorded future improvement. |
-| Loop model | `claude-opus-5` |
-| Adversarial model | `claude-sonnet-5` — must differ from the loop model (architecture §6.3). Enforced by a test. |
-| Bootstrapper model | `claude-haiku-4-5` — narrow structured-output task behind a match-rate gate. |
-| Entailment judge model | `claude-opus-5` — distinct from the adversarial model. |
+| Loop model | ~~`claude-opus-5`~~ — superseded, see [The default provider is Gemini](#the-default-provider-is-gemini). |
+| Adversarial model | ~~`claude-sonnet-5`~~ — superseded. The rule it served stands: must differ from the loop model (architecture §6.3), enforced by a test. |
+| Bootstrapper model | ~~`claude-haiku-4-5`~~ — superseded. Still a narrow structured-output task behind a match-rate gate. |
+| Entailment judge model | ~~`claude-opus-5`~~ — superseded. Still distinct from the adversarial model. |
 | `LogRecord.message` | Added alongside `raw`. `raw` stays the unmodified source line; `message` is the free-text portion the templater clusters on. Templating a whole JSON line produces templates full of key names. |
 | Phase 1 redaction entities | `email`, `ipv4`, `api_key`. The rest arrive in Phase 2 with their false-positive corpus. |
 
@@ -341,3 +341,65 @@ denied by the authorizer, which is what makes a separate file genuinely isolated
   whole templates table to build a set.
 - The report states how many templates it is showing out of how many exist, instead of
   presenting a truncated list as complete.
+
+---
+
+## Phase 3 additions
+
+### The default provider is Gemini
+
+**Superseded:** the model table above pins four Claude models. No Anthropic credential is
+available on this machine, so those defaults named a provider that could not run.
+
+The seam already existed for exactly this, and switching providers is the first thing that
+proved it was real rather than decorative. Shipped defaults:
+
+| Role | Model |
+|---|---|
+| Loop | `gemini-3.5-flash-lite` |
+| Adversarial | `gemini-3.5-flash` |
+| Bootstrapper | `gemini-3.5-flash-lite` |
+| Entailment judge | `gemini-3.5-flash` |
+
+The cheap tiers, deliberately. An investigation is roughly fifteen loop calls to the
+critique's one, so the critique is the cheapest place to spend more — which is also what
+satisfies §6.3's different-model requirement rather than working around it. A free AI Studio
+key is real API access, and `GEMINI_API_KEY` is read from the environment or from a `.env`
+file the CLI loads on startup.
+
+`AnthropicProvider` is unchanged and still selectable with `llm.provider: anthropic`. Nothing
+above the seam moved.
+
+### A second adapter is what made the seam's gap visible
+
+Issue #7 recorded that the seam drops thinking blocks, rated Medium, priced as a token cost
+on long loops. On Gemini it is not a cost: a `functionCall` replayed without its
+`thought_signature` is rejected with `400 INVALID_ARGUMENT`, so the second turn of every
+investigation failed outright. `ToolCall` now carries an opaque `signature` that adapters
+populate and hand back verbatim.
+
+Opaque is load-bearing. Nothing above the seam reads it, because the moment the field acquires
+a meaning it stops being a seam and becomes one vendor's data model leaking upward.
+
+Worth recording *how* it was found: not in review, and not by any test. With one adapter there
+was nothing for the seam to disagree with. The second adapter surfaced it on its first real
+run. That is the argument for two adapters, demonstrated rather than asserted.
+
+### Provider differences are declared, not assumed
+
+Two capabilities the Gemini adapter answers differently, both already expressible:
+
+- **Task budgets.** `supports_task_budget` is False, so the loop falls back to its own
+  tool-call cap and forced convergence. The config setting is kept and ignored rather than
+  removed, since it still applies to Anthropic.
+- **Throttling is routine.** Free-tier quotas are per-minute, so a 429 mid-investigation is
+  expected rather than exceptional. The adapter retries with full-jitter backoff; a fixed
+  schedule would march its own retries into the next rate-limit window together.
+  `llm.min_interval_seconds` spaces calls out for anyone whose quota that is not enough for.
+
+Three translation details are load-bearing and documented at the top of
+`src/mistify/llm/gemini.py`: tool use is detected from `function_call` parts rather than the
+finish reason (Gemini returns `STOP` either way, so reading the finish reason would end every
+investigation on its first tool call), function responses are matched by name rather than by
+call id, and `additionalProperties` is stripped from tool schemas because the parser rejects
+it.

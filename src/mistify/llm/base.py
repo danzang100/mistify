@@ -52,11 +52,19 @@ class ToolCall:
 
     `id` is the vendor's correlation handle; results must quote it back, so it is carried
     through rather than regenerated.
+
+    `signature` is an opaque provider blob attached to this call, carried so the adapter can
+    hand it back verbatim when it replays the conversation. Nothing above the seam looks
+    inside it, and nothing should: the moment this field acquires a meaning it stops being a
+    seam and becomes one vendor's data model leaking upward. Gemini requires its thought
+    signature to be replayed on every function call and rejects the request outright without
+    it; Anthropic has no equivalent and leaves it None.
     """
 
     id: str
     name: str
     arguments: dict[str, Any]
+    signature: Any = None
 
 
 @dataclass(frozen=True, slots=True)

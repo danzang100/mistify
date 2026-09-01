@@ -18,6 +18,36 @@ from tests.fixtures.synthetic_incident import write_incident
 
 INCIDENT_ID = "test-incident"
 
+#: Every credential any provider adapter looks for.
+_PROVIDER_CREDENTIALS = (
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GOOGLE_GENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_model_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make it impossible for a test to reach a real model.
+
+    The CLI loads a `.env` file on startup, which is right for a user and dangerous in a test
+    run: a command that defaults to the model-driven investigator would quietly spend real
+    quota and return a different answer every time. This already happened once — a test
+    asserting that a missing credential fails cleanly instead passed, because it had silently
+    performed a live investigation.
+
+    Autouse and unconditional. A test that genuinely wants a provider injects a fake one; no
+    test should ever need a real credential.
+    """
+    for name in _PROVIDER_CREDENTIALS:
+        monkeypatch.delenv(name, raising=False)
+    # Clearing the environment is not enough on its own: the CLI reloads `.env` on every
+    # invocation, which puts the key straight back.
+    monkeypatch.setattr("mistify.cli.load_dotenv", lambda *a, **k: False, raising=False)
+    monkeypatch.setattr("mistify.llm.registry._has_auth_profile", lambda: False, raising=False)
+
 
 def _scratch_config(directory: Path, **sections: dict[str, Any]) -> MistifyConfig:
     """Config with every output pointed inside `directory`, so runs never touch the repo.

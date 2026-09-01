@@ -195,17 +195,20 @@ class LLMConfig(_Strict):
 
     #: Provider for the investigation loop. `scripted` replays fixed turns and is what the
     #: tests use -- it needs no credential, so the whole loop is exercised without a bill.
-    provider: Literal["anthropic", "scripted"] = "anthropic"
-    model: str = "claude-opus-5"
+    provider: Literal["anthropic", "gemini", "scripted"] = "gemini"
+    #: Cheapest tier that still calls tools reliably -- verified against the live API.
+    model: str = "gemini-3.5-flash-lite"
 
     #: Provider and model for the adversarial pass. Defaulting to the same provider but a
     #: different model is the weaker half of §6.3; pointing this at another provider entirely
     #: is the stronger one.
-    adversarial_provider: Literal["anthropic", "scripted"] | None = None
-    adversarial_model: str = "claude-sonnet-5"
+    adversarial_provider: Literal["anthropic", "gemini", "scripted"] | None = None
+    #: One tier up from the loop. §6.3 needs a different model, and the critique is one
+    #: call against the loop's fifteen, so it is the cheapest place to spend more.
+    adversarial_model: str = "gemini-3.5-flash"
 
-    bootstrap_model: str = "claude-haiku-4-5"
-    judge_model: str = "claude-opus-5"
+    bootstrap_model: str = "gemini-3.5-flash-lite"
+    judge_model: str = "gemini-3.5-flash"
     effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
 
     #: Ceiling per model response. Not the investigation budget -- see `pipeline` for that.
@@ -214,6 +217,10 @@ class LLMConfig(_Strict):
     #: Token ceiling the model paces itself against, where the provider supports one. Ignored
     #: by providers that do not, which then rely on `pipeline.max_agent_tool_calls`.
     task_budget_tokens: int | None = Field(default=64000, ge=20000)
+
+    #: Enforced spacing between model calls, for providers with per-minute quotas. Zero
+    #: leaves pacing to retry-with-backoff, which is faster when the limit is generous.
+    min_interval_seconds: float = Field(default=0.0, ge=0.0)
 
     @model_validator(mode="after")
     def _adversarial_differs(self) -> LLMConfig:
