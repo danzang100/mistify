@@ -13,7 +13,12 @@ import json
 import pytest
 
 from mistify.agent.adversarial import run_adversarial_check, unexplained_signal_templates
-from mistify.agent.loop import INVESTIGATOR_NAME, InvestigationLoop, build_system_prompt
+from mistify.agent.loop import (
+    ELIDED,
+    INVESTIGATOR_NAME,
+    InvestigationLoop,
+    build_system_prompt,
+)
 from mistify.agent.tools import ToolBox
 from mistify.common.models import NoiseThresholds
 from mistify.llm.base import Turn, Usage
@@ -29,6 +34,8 @@ from mistify.metrics import (
     INVESTIGATE_BUDGET_LIMITED,
     INVESTIGATE_CACHED_INPUT_TOKENS,
     INVESTIGATE_CAVEAT,
+    INVESTIGATE_INPUT_GROWTH,
+    INVESTIGATE_INPUT_TOKENS_PER_STEP,
     INVESTIGATE_INVESTIGATOR,
     INVESTIGATE_OUTCOME,
     INVESTIGATE_TOOL_CALLS,
@@ -215,10 +222,40 @@ def _critique(payload: dict[str, object]) -> ScriptedProvider:
 
 
 def test_unexplained_signal_is_arithmetic_not_judgement(loaded_db: ScratchpadDB) -> None:
-    """The one adversarial test a model cannot talk its way out of."""
+    """The one adversarial test a model cannot talk its way out of.
+
+    Templates 8 and 9 are confined to the outage; 5 and 2 run the whole log.
+    """
     loaded_db.write_note(1, "only about template 9", {"template_ids": [9]}, "medium")
-    assert unexplained_signal_templates(loaded_db, [9, 5, 2]) == [5, 2]
-    assert unexplained_signal_templates(loaded_db, [9]) == []
+    assert unexplained_signal_templates(loaded_db, [9, 8]) == ([8], [])
+    assert unexplained_signal_templates(loaded_db, [9]) == ([], [])
+
+
+def test_a_chronic_template_is_not_counted_as_an_unexplained_finding(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """The permanent false warning this replaced.
+
+    The anomaly score has no duration term, so a steady background error stream ranks as
+    signal. An investigation that correctly treats it as pre-existing was then faulted for the
+    omission on every run, and a warning that always fires is one a reader learns to skip.
+    """
+    loaded_db.write_note(1, "only about template 9", {"template_ids": [9]}, "medium")
+
+    acute, chronic = unexplained_signal_templates(loaded_db, [9, 5, 2])
+
+    assert acute == []
+    assert chronic == [5, 2]
+
+
+def test_an_acute_template_is_still_counted(loaded_db: ScratchpadDB) -> None:
+    """Control for the exclusion above: it removes chronic templates, not the check itself."""
+    loaded_db.write_note(1, "only about template 9", {"template_ids": [9]}, "medium")
+
+    acute, chronic = unexplained_signal_templates(loaded_db, [9, 8, 5])
+
+    assert acute == [8]
+    assert chronic == [5]
 
 
 def test_a_sound_investigation_draws_no_objections(loaded_db: ScratchpadDB) -> None:
@@ -272,7 +309,7 @@ def test_an_evidenced_objection_gets_a_rebuttal(loaded_db: ScratchpadDB) -> None
 
     assert len(result.rebuttals) == 1
     assert result.outcome == "objections_answered"
-    assert result.unsupported_claims == ["pool exhausted"]
+    assert result.high_severity_objections == ["pool exhausted"]
 
 
 def test_a_conceded_objection_says_so(loaded_db: ScratchpadDB) -> None:
@@ -313,7 +350,7 @@ def test_nothing_to_check_when_the_loop_recorded_nothing(loaded_db: ScratchpadDB
 def test_the_critique_is_attributed(loaded_db: ScratchpadDB) -> None:
     """A report must be able to show the checker was not the reasoner (§6.3)."""
     loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
-    run_adversarial_check(loaded_db, _critique({"objections": []}), [9, 5])
+    run_adversarial_check(loaded_db, _critique({"objections": []}), [9, 8])
 
     view = MetricView(loaded_db.metrics("adversarial"))
     assert view.text(ADVERSARIAL_OUTCOME) == "no_objections"
@@ -323,10 +360,22 @@ def test_the_critique_is_attributed(loaded_db: ScratchpadDB) -> None:
 
 def test_unexplained_signal_reaches_the_report(loaded_db: ScratchpadDB) -> None:
     loaded_db.write_note(1, "only template 9", {"template_ids": [9]}, "high")
-    run_adversarial_check(loaded_db, _critique({"objections": []}), [9, 5, 2])
+    run_adversarial_check(loaded_db, _critique({"objections": []}), [9, 8])
 
     report = generate_report(loaded_db)
     assert "not accounted for by any note" in report
+
+
+def test_unexplained_chronic_templates_do_not_raise_a_warning(loaded_db: ScratchpadDB) -> None:
+    """Control for the warning above: it fires on acute omissions, and only those."""
+    loaded_db.write_note(1, "only template 9", {"template_ids": [9]}, "high")
+    run_adversarial_check(loaded_db, _critique({"objections": []}), [9, 5, 2])
+
+    report = generate_report(loaded_db)
+
+    assert "not accounted for by any note" not in report
+    # Still counted, as an observation rather than an alarm.
+    assert "| adversarial | unexplained_chronic_templates | 2 |" in report
 
 
 def test_running_past_the_script_is_an_error(loaded_db: ScratchpadDB) -> None:
@@ -643,3 +692,102 @@ def test_objections_are_numbered_from_one(loaded_db: ScratchpadDB) -> None:
     run_adversarial_check(loaded_db, _two_objections(), [9], rebut=False)
 
     assert [o["objection_id"] for o in loaded_db.adversarial_objections()] == ["o1", "o2"]
+
+
+# --------------------------------------------------- keeping the history bounded
+
+
+def _slice_script(db: ScratchpadDB, steps: int) -> list[Turn]:
+    """`steps` slice calls, then a conclusion. Each slice returns a table worth eliding."""
+    template = int(db.top_templates(limit=1, order_by="anomaly_score")[0]["template_id"])
+    script: list[Turn] = [
+        tool_call_turn("get_slice", {"template_id": template}, call_id=f"c{i}")
+        for i in range(steps)
+    ]
+    script.append(text_turn("done", usage=Usage(input_tokens=1000, output_tokens=10)))
+    return script
+
+
+def test_old_tool_output_is_reduced_to_its_summary_line(loaded_db: ScratchpadDB) -> None:
+    """The conversation is re-sent every step, so an early slice is paid for on every one.
+
+    What survives is the header the tool wrote -- how many rows matched, how many were shown,
+    what the filters were -- which is the part the model reasons about several steps later.
+    """
+    provider = ScriptedProvider(_slice_script(loaded_db, 5))
+    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=2).run()
+
+    last_sent = provider.calls[-1].messages
+    results = [r for m in last_sent for r in m.tool_results]
+
+    elided = [r for r in results if ELIDED in r.content]
+    assert elided, "no tool output was compacted"
+    # The header survives; the rows do not.
+    assert all("shown of" in r.content for r in elided)
+    assert all("|" not in r.content.split("\n")[1] for r in elided)
+
+
+def test_the_recent_window_is_kept_in_full(loaded_db: ScratchpadDB) -> None:
+    """Control for the compaction above: it trims the tail of the history, not all of it.
+
+    The model has to be able to read the rows it just asked for, or the tool call was pointless.
+    """
+    provider = ScriptedProvider(_slice_script(loaded_db, 5))
+    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=2).run()
+
+    results = [r for m in provider.calls[-1].messages for r in m.tool_results]
+    intact = [r for r in results if ELIDED not in r.content]
+
+    assert len(intact) == 2
+
+
+def test_compaction_can_be_turned_off(loaded_db: ScratchpadDB) -> None:
+    """Zero keeps everything, which is what the cost curve looked like before this existed."""
+    provider = ScriptedProvider(_slice_script(loaded_db, 5))
+    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=0).run()
+
+    results = [r for m in provider.calls[-1].messages for r in m.tool_results]
+
+    assert all(ELIDED not in r.content for r in results)
+
+
+def test_tool_calls_are_never_touched_by_compaction(loaded_db: ScratchpadDB) -> None:
+    """They carry the provider's thought signature, which must replay byte-identical.
+
+    Gemini rejects the whole request when it does not, so trimming a call rather than a result
+    would fail the investigation outright rather than degrade it.
+    """
+    provider = ScriptedProvider(_slice_script(loaded_db, 5))
+    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=1).run()
+
+    calls = [c for m in provider.calls[-1].messages for c in m.tool_calls]
+
+    assert [c.name for c in calls] == ["get_slice"] * 5
+    assert [c.arguments for c in calls] == [c.arguments for c in calls if c.arguments]
+
+
+def test_the_run_reports_its_input_growth(loaded_db: ScratchpadDB) -> None:
+    """The total hides the curve, and the curve is what decides whether a longer run is
+    affordable."""
+    script = [
+        tool_call_turn("query_templates", {}, call_id="c1", usage=Usage(input_tokens=100)),
+        tool_call_turn("query_templates", {}, call_id="c2", usage=Usage(input_tokens=400)),
+        text_turn("done", usage=Usage(input_tokens=900)),
+    ]
+    InvestigationLoop(loaded_db, ScriptedProvider(script), _toolbox(loaded_db)).run()
+
+    view = MetricView(loaded_db.metrics("investigate"))
+
+    assert view.text(INVESTIGATE_INPUT_TOKENS_PER_STEP) == "100,400,900"
+    assert view.number(INVESTIGATE_INPUT_GROWTH) == 9.0
+
+
+def test_flat_input_is_not_reported_as_growth(loaded_db: ScratchpadDB) -> None:
+    """Control for the factor above: it measures the curve, it is not a constant."""
+    script = [
+        tool_call_turn("query_templates", {}, call_id="c1", usage=Usage(input_tokens=100)),
+        text_turn("done", usage=Usage(input_tokens=100)),
+    ]
+    InvestigationLoop(loaded_db, ScriptedProvider(script), _toolbox(loaded_db)).run()
+
+    assert MetricView(loaded_db.metrics("investigate")).number(INVESTIGATE_INPUT_GROWTH) == 1.0

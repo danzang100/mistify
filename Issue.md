@@ -18,6 +18,49 @@ or one of the design documents, the fix column says which document to amend.
 | 5. Unimplemented adapters are dropped silently | Low | 4 |
 | 6. Noise thresholds are defined in two places | ~~Medium~~ | **Fixed** |
 | 7. The provider seam drops thinking blocks | ~~Medium~~ | **Fixed** — it was a hard requirement, not a cost |
+| 8. The anomaly score has no duration term | Medium | 4 — worked around, not solved |
+| 9. Conversation growth is bounded but not budgeted | Medium | 4 |
+
+---
+
+## 8 — The anomaly score has no duration term
+
+**Problem.** Severity, burstiness and rarity say nothing about how long a template was active.
+A steady background error stream — 350 events spread evenly across the whole log — scores as
+signal, ranks above templates confined to the outage, and is then held against the
+investigation for not explaining it.
+
+**Symptom, now fixed downstream.** `unexplained_signal_templates` faulted every run on the
+sample incident for ignoring two chronic templates that were correctly ignored. A warning that
+fires on every run is one a reader learns to skip, which costs more than the check is worth.
+
+**What landed.** Chronic templates — active for at least `CHRONIC_SHARE` of the log's own span —
+are excluded from the unexplained-signal warning and counted separately as an observation. The
+report labels them, and an issue resting entirely on chronic templates is marked *background*.
+
+**What has not.** The ranking itself is unchanged, so a chronic template still outranks an
+acute one in the digest the investigator is handed first. Fixing that means a duration term in
+the score and a re-run of the calibration tests, which is its own change.
+
+**Where.** `ScratchpadDB.chronic_template_ids` defines it once; `mistify/scratchpad/anomaly.py`
+is where the score would gain the term.
+
+---
+
+## 9 — Conversation growth is bounded but not budgeted
+
+**Problem.** The loop re-sends the whole conversation on every step, so cost is quadratic in
+steps. `pipeline.max_agent_tool_calls` caps calls, not context.
+
+**What landed.** Three things, all measured rather than assumed: slices return 60 lines by
+default instead of 200 and say how many they withheld; tool output older than
+`pipeline.tool_result_history_steps` is reduced to the summary line the tool wrote; and
+`investigate.input_growth_factor` warns when the last step's input is more than five times the
+first's.
+
+**What has not.** There is still no token ceiling. A run that grows anyway is reported, not
+stopped. The mechanism to stop it already exists — `_converge` takes the tools away and demands
+a conclusion — and wiring a `llm.max_run_tokens` into it is the remaining work.
 
 ---
 

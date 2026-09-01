@@ -257,6 +257,28 @@ INVESTIGATE_CACHED_INPUT_TOKENS = Metric(
     "investigate", "cached_input_tokens", "int", token_role="cached_input"
 )
 
+#: Input tokens on each step, in order. The loop re-sends the whole conversation every step, so
+#: this is the curve that decides what a long investigation costs -- and the total alone hides
+#: it completely. A detail metric: the shape is for reading, the growth factor below is for
+#: acting on.
+INVESTIGATE_INPUT_TOKENS_PER_STEP = Metric("investigate", "input_tokens_per_step", "str")
+
+#: Last step's input divided by the first step's. Growth is expected -- the conversation
+#: accumulates -- but a large factor means the history is carrying more than the reasoning
+#: needs, and on a longer incident it is what runs into the context ceiling.
+INVESTIGATE_INPUT_GROWTH = Metric(
+    "investigate",
+    "input_growth_factor",
+    "float",
+    load_bearing=True,
+    threshold=5.0,
+    comparison="gt",
+)
+
+#: How many times old tool results were replaced by their summary line. Zero on a short
+#: investigation is correct; zero on a long one means compaction is not running.
+INVESTIGATE_HISTORY_COMPACTIONS = Metric("investigate", "history_compactions", "int")
+
 # ---------------------------------------------------------------- adversarial
 
 ADVERSARIAL_PROVIDER = Metric("adversarial", "provider", "str")
@@ -266,11 +288,28 @@ ADVERSARIAL_MODEL = Metric("adversarial", "model", "str")
 ADVERSARIAL_OBJECTIONS = Metric(
     "adversarial", "objections", "int", load_bearing=True, threshold=0, comparison="gt"
 )
-ADVERSARIAL_UNSUPPORTED_CLAIMS = Metric(
-    "adversarial", "unsupported_claims", "int", load_bearing=True, threshold=0, comparison="gt"
+#: Objections raised at high severity that cite rows. Counted *before* the rebuttal, so this
+#: is how much was thrown at the investigation, not how much stuck. It was called
+#: `unsupported_claims` and drove a warning, which asserted that claims were unsupported on the
+#: strength of an accusation the investigation had not yet answered.
+ADVERSARIAL_HIGH_SEVERITY_OBJECTIONS = Metric("adversarial", "high_severity_objections", "int")
+
+#: High-severity objections the investigation never answered at all. Counted after the
+#: rebuttal, and load-bearing: a conceded objection is bad news that the report states plainly,
+#: and an answered one is the system working, but an unanswered one means nothing checked it.
+ADVERSARIAL_UNREBUTTED_HIGH_SEVERITY = Metric(
+    "adversarial",
+    "unrebutted_high_severity",
+    "int",
+    load_bearing=True,
+    threshold=0,
+    comparison="gt",
 )
-#: High-anomaly templates the conclusion never accounted for -- the one mechanical test the
-#: adversarial pass performs that does not depend on a model's judgement.
+
+#: Acute high-anomaly templates the conclusion never accounted for -- the one mechanical test
+#: the adversarial pass performs that does not depend on a model's judgement. Chronic templates
+#: are excluded and counted separately: a template active across the whole log was not part of
+#: the incident, so declining to explain it is correct rather than an omission.
 ADVERSARIAL_UNEXPLAINED_SIGNAL = Metric(
     "adversarial",
     "unexplained_signal_templates",
@@ -279,6 +318,11 @@ ADVERSARIAL_UNEXPLAINED_SIGNAL = Metric(
     threshold=0,
     comparison="gt",
 )
+
+#: Chronic signal templates no note cites. An observation, deliberately not load-bearing: on
+#: any log with a steady error stream this is permanently non-zero, and a warning that always
+#: fires is one a reader learns to skip.
+ADVERSARIAL_UNEXPLAINED_CHRONIC = Metric("adversarial", "unexplained_chronic_templates", "int")
 ADVERSARIAL_REBUTTED = Metric("adversarial", "objections_rebutted", "int")
 ADVERSARIAL_OUTCOME = Metric("adversarial", "outcome", "str")
 #: Model calls the critique and rebuttal made between them. Without it the token counts below
@@ -349,11 +393,16 @@ ALL_METRICS: tuple[Metric, ...] = (
     INVESTIGATE_INPUT_TOKENS,
     INVESTIGATE_OUTPUT_TOKENS,
     INVESTIGATE_CACHED_INPUT_TOKENS,
+    INVESTIGATE_INPUT_TOKENS_PER_STEP,
+    INVESTIGATE_INPUT_GROWTH,
+    INVESTIGATE_HISTORY_COMPACTIONS,
     ADVERSARIAL_PROVIDER,
     ADVERSARIAL_MODEL,
     ADVERSARIAL_OBJECTIONS,
-    ADVERSARIAL_UNSUPPORTED_CLAIMS,
+    ADVERSARIAL_HIGH_SEVERITY_OBJECTIONS,
+    ADVERSARIAL_UNREBUTTED_HIGH_SEVERITY,
     ADVERSARIAL_UNEXPLAINED_SIGNAL,
+    ADVERSARIAL_UNEXPLAINED_CHRONIC,
     ADVERSARIAL_REBUTTED,
     ADVERSARIAL_MODEL_CALLS,
     ADVERSARIAL_INPUT_TOKENS,

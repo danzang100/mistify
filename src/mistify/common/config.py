@@ -40,6 +40,12 @@ class _Strict(BaseModel):
 class PipelineConfig(_Strict):
     max_agent_tool_calls: int = Field(default=20, ge=1)
 
+    #: How many recent steps keep their tool output in full. The loop re-sends the whole
+    #: conversation every step, so a slice pulled early is paid for again on every step after
+    #: it; older results are reduced to the summary line the tool already wrote. Zero keeps
+    #: everything, which is what the cost curve looked like before this existed.
+    tool_result_history_steps: int = Field(default=3, ge=0)
+
 
 class AdaptersConfig(_Strict):
     auto_detect: bool = True

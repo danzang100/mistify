@@ -21,12 +21,18 @@ from mistify.common.models import (
     NoiseThresholds,
     ScratchpadNote,
     TemplateSummary,
+    parse_timestamp,
 )
 from mistify.metrics import Metric
 
 __all__ = ["MIGRATIONS", "ReadOnlyViolation", "ScratchpadDB"]
 
 MIGRATIONS: tuple[str, ...] = ("0001_init", "0002_adversarial", "0003_objection_ids")
+
+#: A template active for at least this share of the log's own span is chronic rather than part
+#: of the event. Defined here because both the report and the adversarial check need the same
+#: answer, and a threshold with two definitions drifts.
+CHRONIC_SHARE = 0.9
 
 _EVENT_BATCH = 1000
 
@@ -387,6 +393,36 @@ class ScratchpadDB:
 
     # ------------------------------------------------- deterministic summaries
 
+    def chronic_template_ids(self, share: float = CHRONIC_SHARE) -> set[int]:
+        """Templates active across essentially the whole log.
+
+        A template that was firing before the incident began and kept firing after it ended is
+        background, not event. Two readers need this answer -- the report, to label an issue,
+        and the adversarial check, to avoid faulting an investigation for not explaining
+        something that was never part of the incident -- so it is defined here once rather
+        than in both. That mistake has already been made in this codebase with the noise
+        thresholds.
+        """
+        first_ts, last_ts = self.time_bounds()
+        if not first_ts or not last_ts:
+            return set()
+        span = (parse_timestamp(last_ts) - parse_timestamp(first_ts)).total_seconds()
+        if span <= 0:
+            return set()
+
+        rows = self._conn.execute(
+            "SELECT template_id, first_seen, last_seen FROM templates"
+            " WHERE first_seen IS NOT NULL AND last_seen IS NOT NULL"
+        )
+        chronic = set()
+        for row in rows:
+            active = (
+                parse_timestamp(row["last_seen"]) - parse_timestamp(row["first_seen"])
+            ).total_seconds()
+            if active >= span * share:
+                chronic.add(int(row["template_id"]))
+        return chronic
+
     def severity_counts(self) -> dict[str, int]:
         """Events per severity. The shape of the file, computed rather than described."""
         rows = self._conn.execute(
@@ -565,6 +601,43 @@ class ScratchpadDB:
         numerous, which is rarely what the investigation is about. Asking for a specific
         `template_id` overrides it -- that is a deliberate request, not a default.
         """
+        where, params = self._slice_clauses(start_ts, end_ts, source, severity, template_id, noise)
+        rows = self._conn.execute(
+            "SELECT id, ts, source, severity, template_id, raw, message"
+            f" FROM log_events{where} ORDER BY ts, id LIMIT ?",
+            [*params, max_lines],
+        )
+        return [dict(row) for row in rows]
+
+    def slice_match_count(
+        self,
+        start_ts: str | None = None,
+        end_ts: str | None = None,
+        source: str | None = None,
+        severity: str | None = None,
+        template_id: int | None = None,
+        noise: NoiseThresholds | None = None,
+    ) -> int:
+        """How many lines the same filters match, before `max_lines` truncates them.
+
+        Without this the investigator learns only that it hit the cap, not whether it withheld
+        four lines or forty thousand -- which is the difference between "look at the rest" and
+        "narrow the window". Same clauses as `get_slice` by construction, so the two cannot
+        drift into answering about different sets of rows.
+        """
+        where, params = self._slice_clauses(start_ts, end_ts, source, severity, template_id, noise)
+        row = self._conn.execute(f"SELECT COUNT(*) AS n FROM log_events{where}", params).fetchone()
+        return int(row["n"])
+
+    def _slice_clauses(
+        self,
+        start_ts: str | None,
+        end_ts: str | None,
+        source: str | None,
+        severity: str | None,
+        template_id: int | None,
+        noise: NoiseThresholds | None,
+    ) -> tuple[str, list[Any]]:
         clauses: list[str] = []
         params: list[Any] = []
         if noise is not None and template_id is None:
@@ -587,14 +660,7 @@ class ScratchpadDB:
         if template_id is not None:
             clauses.append("template_id = ?")
             params.append(template_id)
-        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        params.append(max_lines)
-        rows = self._conn.execute(
-            "SELECT id, ts, source, severity, template_id, raw, message"
-            f" FROM log_events{where} ORDER BY ts, id LIMIT ?",
-            params,
-        )
-        return [dict(row) for row in rows]
+        return (f" WHERE {' AND '.join(clauses)}" if clauses else "", params)
 
     def events_by_id(self, ids: Sequence[int]) -> list[dict[str, Any]]:
         if not ids:

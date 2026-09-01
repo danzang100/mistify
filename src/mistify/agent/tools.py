@@ -60,8 +60,15 @@ TEMPLATE_LIMIT_DEFAULT: Final = 15
 TEMPLATE_LIMIT_MAX: Final = 50
 
 #: Raw-line pulls. The hard cap is what stops one call spending the entire context on lines.
-SLICE_LINES_DEFAULT: Final = 200
-SLICE_LINES_MAX: Final = 500
+#: Lines a slice returns by default, and the ceiling on asking for more.
+#:
+#: Lowered from 200/500. A slice is by far the largest thing that enters the conversation, and
+#: it stays there for every remaining step -- 200 near-identical lines of one template is a few
+#: thousand tokens re-sent a dozen times to say what forty lines already said. The tool now
+#: reports how many lines matched in total, so a narrower default costs the investigation
+#: nothing it cannot ask for: it knows what it did not see.
+SLICE_LINES_DEFAULT: Final = 60
+SLICE_LINES_MAX: Final = 200
 
 #: Rows returned from model-authored SQL. Lower than the scratchpad's own 500 because an
 #: unconstrained `SELECT *` is the easiest way for the model to flood its own context.
@@ -434,14 +441,26 @@ class ToolBox:
             if template_id is not None
             else "noise templates suppressed"
         )
+        matched = self.db.slice_match_count(
+            start_ts=start_ts,
+            end_ts=end_ts,
+            source=source,
+            severity=severity,
+            template_id=template_id,
+            noise=self.noise,
+        )
         header = (
-            f"lines: {len(rows)} returned of max_lines {max_lines}; "
+            f"lines: {len(rows)} shown of {matched} matching (max_lines {max_lines}); "
             f"filters: {filters or 'none'}; {suppression}."
         )
-        if len(rows) == max_lines:
+        withheld = matched - len(rows)
+        if withheld > 0:
+            # The count, not just the fact of truncation: four withheld lines and forty
+            # thousand are the difference between reading the rest and narrowing the window,
+            # and the investigation cannot tell them apart from "hit the cap".
             header += (
-                f" Result hit the {max_lines}-line cap, so more lines match than are shown "
-                "-- narrow the window or filter further."
+                f" {withheld} matching line(s) are not shown. Narrow the window or filter "
+                "further rather than raising max_lines."
             )
         table = _table(
             ("id", "ts", "source", "severity", "template_id", "text"),

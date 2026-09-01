@@ -25,12 +25,15 @@ from dataclasses import dataclass, field
 
 from mistify.agent.tools import ToolBox
 from mistify.common.models import ScratchpadNote
-from mistify.llm.base import LLMProvider, Message, ToolSpec, Turn, Usage
+from mistify.llm.base import LLMProvider, Message, ToolResult, ToolSpec, Turn, Usage
 from mistify.metrics import (
     INVESTIGATE_BUDGET_LIMITED,
     INVESTIGATE_CACHED_INPUT_TOKENS,
     INVESTIGATE_CAVEAT,
+    INVESTIGATE_HISTORY_COMPACTIONS,
+    INVESTIGATE_INPUT_GROWTH,
     INVESTIGATE_INPUT_TOKENS,
+    INVESTIGATE_INPUT_TOKENS_PER_STEP,
     INVESTIGATE_INVESTIGATOR,
     INVESTIGATE_MODEL,
     INVESTIGATE_NOTES_WRITTEN,
@@ -43,7 +46,13 @@ from mistify.metrics import (
 )
 from mistify.scratchpad.db import ScratchpadDB
 
-__all__ = ["INVESTIGATOR_NAME", "InvestigationLoop", "InvestigationResult", "build_system_prompt"]
+__all__ = [
+    "ELIDED",
+    "INVESTIGATOR_NAME",
+    "InvestigationLoop",
+    "InvestigationResult",
+    "build_system_prompt",
+]
 
 INVESTIGATOR_NAME = "agent-loop"
 
@@ -83,6 +92,23 @@ Be direct. If the logs do not support a root cause, say that instead of inventin
 """
 
 
+#: Marks a tool result whose rows have been dropped. Checked to make compaction idempotent, and
+#: visible to the model so it knows the rows existed rather than thinking the tool returned
+#: nothing.
+ELIDED = "[rows elided to keep the conversation bounded; re-run the tool to see them again]"
+
+
+def _summarise(outcome: ToolResult) -> ToolResult:
+    """One tool result reduced to its first line -- the header the tool already wrote."""
+    if outcome.is_error or ELIDED in outcome.content:
+        # An error is short and is the whole message; there is nothing to trim.
+        return outcome
+    head, _, rest = outcome.content.partition("\n")
+    if not rest.strip():
+        return outcome
+    return ToolResult(call_id=outcome.call_id, content=f"{head}\n{ELIDED}", is_error=False)
+
+
 @dataclass(slots=True)
 class InvestigationResult:
     notes: list[ScratchpadNote] = field(default_factory=list)
@@ -91,6 +117,17 @@ class InvestigationResult:
     budget_limited: bool = False
     stop_reason: str = "end_turn"
     usage: Usage = field(default_factory=Usage)
+    #: Input tokens on each step, in order. The total hides the curve, and the curve is what
+    #: decides whether a longer incident is affordable.
+    input_per_step: list[int] = field(default_factory=list)
+    compactions: int = 0
+
+    @property
+    def input_growth(self) -> float:
+        """Last step's input over the first step's. 1.0 when there is nothing to compare."""
+        if len(self.input_per_step) < 2 or not self.input_per_step[0]:
+            return 1.0
+        return self.input_per_step[-1] / self.input_per_step[0]
 
 
 def build_system_prompt(db: ScratchpadDB, digest_limit: int = 40) -> str:
@@ -138,6 +175,7 @@ class InvestigationLoop:
         max_tool_calls: int = 20,
         max_tokens: int = 8192,
         task_budget_tokens: int | None = None,
+        tool_result_history_steps: int = 3,
     ) -> None:
         self.db = db
         self.provider = provider
@@ -145,6 +183,9 @@ class InvestigationLoop:
         self.max_tool_calls = max_tool_calls
         self.max_tokens = max_tokens
         self.task_budget_tokens = task_budget_tokens
+        #: How many recent steps keep their tool output in full. Older ones are reduced to the
+        #: summary line the tool already writes. Zero disables compaction.
+        self.tool_result_history_steps = tool_result_history_steps
 
     def run(self, incident_context: str = "") -> InvestigationResult:
         system = build_system_prompt(self.db)
@@ -160,6 +201,7 @@ class InvestigationLoop:
             turn = self._converse(system, messages, specs)
             result.steps += 1
             result.usage = result.usage + turn.usage
+            result.input_per_step.append(turn.usage.input_tokens)
             result.stop_reason = turn.stop_reason
 
             if not turn.wants_tools:
@@ -171,6 +213,7 @@ class InvestigationLoop:
             # All results from one assistant turn go back in a single user message. Splitting
             # them trains the model out of asking for tools in parallel.
             messages.append(Message(role="user", tool_results=tuple(results)))
+            result.compactions += self._compact(messages)
 
             if result.tool_calls >= self.max_tool_calls:
                 result.budget_limited = True
@@ -180,6 +223,48 @@ class InvestigationLoop:
         self._record(result)
         result.notes = self.db.notes()
         return result
+
+    def _compact(self, messages: list[Message]) -> int:
+        """Reduce tool output older than the recent window to its summary line, in place.
+
+        The whole conversation is re-sent on every step, so a slice pulled at step two is paid
+        for again at every step after it -- and a slice is the largest thing that ever enters
+        the conversation. Left alone this makes cost quadratic in steps, which is what runs a
+        long investigation into the context ceiling rather than into its tool-call budget.
+
+        What survives is the header each tool writes: how many rows matched, how many were
+        shown, what the filters were. That is the part the model reasons about several steps
+        later; the rows themselves it has either already used or already cited, and the
+        citation resolves against the scratchpad rather than against the transcript. Nothing is
+        lost that the report reads.
+
+        Tool *calls* are never touched. They carry the provider's thought signature, which has
+        to be replayed byte-identical or the request is rejected outright.
+
+        Returns how many messages were compacted, so a run can report whether this ran at all.
+        """
+        if self.tool_result_history_steps <= 0:
+            return 0
+
+        carrying = [i for i, message in enumerate(messages) if message.tool_results]
+        stale = carrying[: -self.tool_result_history_steps] if carrying else []
+
+        compacted = 0
+        for index in stale:
+            message = messages[index]
+            trimmed = tuple(_summarise(outcome) for outcome in message.tool_results)
+            if trimmed == message.tool_results:
+                # Already compacted on an earlier pass. Counting it again would report work
+                # that did not happen.
+                continue
+            messages[index] = Message(
+                role=message.role,
+                text=message.text,
+                tool_calls=message.tool_calls,
+                tool_results=trimmed,
+            )
+            compacted += 1
+        return compacted
 
     def _converse(self, system: str, messages: list[Message], specs: list[ToolSpec]) -> Turn:
         budget = self.task_budget_tokens if self.provider.supports_task_budget else None
@@ -247,6 +332,12 @@ class InvestigationLoop:
                 (INVESTIGATE_INPUT_TOKENS, result.usage.input_tokens),
                 (INVESTIGATE_OUTPUT_TOKENS, result.usage.output_tokens),
                 (INVESTIGATE_CACHED_INPUT_TOKENS, result.usage.cached_input_tokens),
+                (
+                    INVESTIGATE_INPUT_TOKENS_PER_STEP,
+                    ",".join(str(n) for n in result.input_per_step),
+                ),
+                (INVESTIGATE_INPUT_GROWTH, round(result.input_growth, 2)),
+                (INVESTIGATE_HISTORY_COMPACTIONS, result.compactions),
                 (
                     INVESTIGATE_OUTCOME,
                     "budget_limited"

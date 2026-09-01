@@ -22,7 +22,7 @@ from mistify.common.models import SEVERITIES, parse_timestamp
 from mistify.metrics import (
     ADVERSARIAL_OUTCOME,
     ADVERSARIAL_UNEXPLAINED_SIGNAL,
-    ADVERSARIAL_UNSUPPORTED_CLAIMS,
+    ADVERSARIAL_UNREBUTTED_HIGH_SEVERITY,
     ALL_METRICS,
     ANOMALY_NEEDLE_POSITION,
     ANOMALY_SIGNAL_TEMPLATE_IDS,
@@ -469,15 +469,19 @@ def _health_warnings(view: MetricView) -> list[str]:
     if view.triggers(ADVERSARIAL_UNEXPLAINED_SIGNAL):
         unexplained = int(_triggered_value(view, ADVERSARIAL_UNEXPLAINED_SIGNAL))
         warnings.append(
-            f"{unexplained} high-anomaly template(s) are not accounted for by any note. The "
-            "ranking flagged them as signal and the conclusion does not mention them."
+            f"{unexplained} high-anomaly template(s) active during the incident are not "
+            "accounted for by any note. The ranking flagged them as signal and no finding "
+            "mentions them."
         )
 
-    if view.triggers(ADVERSARIAL_UNSUPPORTED_CLAIMS):
-        unsupported = int(_triggered_value(view, ADVERSARIAL_UNSUPPORTED_CLAIMS))
+    # An objection that was answered is the system working, and one that was conceded is
+    # stated plainly in the overview. Only an objection nobody replied to means the challenge
+    # went unanswered, which is the case worth an alarm.
+    if view.triggers(ADVERSARIAL_UNREBUTTED_HIGH_SEVERITY):
+        unrebutted = int(_triggered_value(view, ADVERSARIAL_UNREBUTTED_HIGH_SEVERITY))
         warnings.append(
-            f"The adversarial pass raised {unsupported} evidence-backed objection(s) at high "
-            "severity against claims in this report."
+            f"{unrebutted} evidence-backed objection(s) at high severity were never answered. "
+            "The challenge to those claims stands unchallenged in turn."
         )
 
     if view.triggers(TEMPLATING_CALIBRATION_STATUS):

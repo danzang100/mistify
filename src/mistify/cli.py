@@ -256,6 +256,7 @@ def _run_agent(db: ScratchpadDB, config: MistifyConfig, adversarial: bool) -> In
         max_tool_calls=config.pipeline.max_agent_tool_calls,
         max_tokens=config.llm.max_tokens,
         task_budget_tokens=config.llm.task_budget_tokens,
+        tool_result_history_steps=config.pipeline.tool_result_history_steps,
     )
     result = loop.run()
 

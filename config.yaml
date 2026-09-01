@@ -3,6 +3,10 @@
 
 pipeline:
   max_agent_tool_calls: 20
+  # The whole conversation is re-sent every step, so an early slice is paid for on every step
+  # after it. Older tool output is reduced to the summary line the tool already wrote; this is
+  # how many recent steps keep their rows in full. 0 keeps everything.
+  tool_result_history_steps: 3
 
 adapters:
   auto_detect: true

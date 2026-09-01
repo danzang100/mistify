@@ -257,12 +257,25 @@ def test_max_lines_is_capped_and_the_cap_is_reported(box: ToolBox) -> None:
 
     assert len(returned) == SLICE_LINES_MAX
     assert f"max_lines {SLICE_LINES_MAX}" in result.content
-    assert f"hit the {SLICE_LINES_MAX}-line cap" in result.content
+    assert "not shown" in result.content
+
+
+def test_a_truncated_slice_says_how_many_lines_it_withheld(box: ToolBox) -> None:
+    """Four withheld lines and forty thousand call for opposite next moves.
+
+    "Hit the cap" cannot tell them apart, so the investigation could not decide between
+    reading the rest and narrowing the window.
+    """
+    result = call(box, "get_slice", max_lines=10)
+    matched = box.db.slice_match_count(noise=box.noise)
+
+    assert f"10 shown of {matched} matching" in result.content
+    assert f"{matched - 10} matching line(s) are not shown" in result.content
 
 
 def test_a_slice_under_the_cap_does_not_claim_truncation(box: ToolBox) -> None:
     result = call(box, "get_slice", severity="FATAL", max_lines=SLICE_LINES_MAX)
-    assert "cap" not in result.content
+    assert "not shown" not in result.content
     assert len(rows(result)) < SLICE_LINES_MAX
 
 

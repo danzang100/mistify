@@ -33,6 +33,7 @@ from typing import Any
 from mistify.llm.base import LLMProvider, Message, Usage
 from mistify.metrics import (
     ADVERSARIAL_CACHED_INPUT_TOKENS,
+    ADVERSARIAL_HIGH_SEVERITY_OBJECTIONS,
     ADVERSARIAL_INPUT_TOKENS,
     ADVERSARIAL_MODEL,
     ADVERSARIAL_MODEL_CALLS,
@@ -42,8 +43,9 @@ from mistify.metrics import (
     ADVERSARIAL_PROVIDER,
     ADVERSARIAL_REBUTTAL_MODEL,
     ADVERSARIAL_REBUTTED,
+    ADVERSARIAL_UNEXPLAINED_CHRONIC,
     ADVERSARIAL_UNEXPLAINED_SIGNAL,
-    ADVERSARIAL_UNSUPPORTED_CLAIMS,
+    ADVERSARIAL_UNREBUTTED_HIGH_SEVERITY,
 )
 from mistify.scratchpad.db import ScratchpadDB
 
@@ -126,8 +128,12 @@ class AdversarialResult:
     assessment: str = ""
     objections: list[Objection] = field(default_factory=list)
     alternative: str = ""
+    #: Acute signal templates no note cites. Chronic ones are held separately, because
+    #: declining to explain something that was happening all along is correct.
     unexplained_signal: list[int] = field(default_factory=list)
-    unsupported_claims: list[str] = field(default_factory=list)
+    unexplained_chronic: list[int] = field(default_factory=list)
+    #: Evidenced objections raised at high severity, counted before the answer.
+    high_severity_objections: list[str] = field(default_factory=list)
     rebuttals: list[dict[str, Any]] = field(default_factory=list)
     outcome: str = "not_run"
     #: What the critique and the rebuttal cost between them. Recorded because the pass is one
@@ -147,18 +153,44 @@ class AdversarialResult:
     def evidenced_objections(self) -> list[Objection]:
         return [o for o in self.objections if o.cites_evidence]
 
+    def unrebutted_high_severity(self, answered: set[str]) -> list[str]:
+        """High-severity objections the investigation never answered at all.
 
-def unexplained_signal_templates(db: ScratchpadDB, signal_ids: list[int]) -> list[int]:
-    """Signal templates no note cites.
+        Conceding is an answer, and a bad one the report states plainly; being answered and not
+        conceded is the system working. Never being answered is the only case where nothing
+        checked the objection, and it is the one worth warning about.
+        """
+        return [
+            o.claim
+            for o in self.objections
+            if o.severity == "high" and o.cites_evidence and o.id not in answered
+        ]
+
+
+def unexplained_signal_templates(
+    db: ScratchpadDB, signal_ids: list[int]
+) -> tuple[list[int], list[int]]:
+    """Signal templates no note cites, split into acute and chronic.
 
     The mechanical half of the check. `signal_ids` came from the anomaly ranking, which no
     model touched, so this answer cannot be argued with -- which is exactly why it is worth
     having next to two checks that can.
+
+    The split is what stops it firing forever. The anomaly score has no term for duration, so a
+    steady background error stream scores as signal, and an investigation that correctly
+    ignores it as pre-existing gets faulted for the omission on every single run. A warning
+    that always fires is one a reader learns to skip, which costs more than the check is worth.
+    Chronic templates are still counted -- as an observation, not an alarm.
     """
     cited: set[int] = set()
     for note in db.notes():
         cited.update(int(i) for i in note.evidence.get("template_ids", []))
-    return [tid for tid in signal_ids if tid not in cited]
+    chronic = db.chronic_template_ids()
+    missing = [tid for tid in signal_ids if tid not in cited]
+    return (
+        [tid for tid in missing if tid not in chronic],
+        [tid for tid in missing if tid in chronic],
+    )
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -214,7 +246,9 @@ def run_adversarial_check(
     loop's: the point of the rebuttal is that the *original reasoning* gets to respond.
     """
     result = AdversarialResult()
-    result.unexplained_signal = unexplained_signal_templates(db, signal_template_ids)
+    result.unexplained_signal, result.unexplained_chronic = unexplained_signal_templates(
+        db, signal_template_ids
+    )
 
     notes = db.notes()
     if not notes:
@@ -258,7 +292,7 @@ def run_adversarial_check(
         )
         for index, raw in enumerate(parsed.get("objections", []), start=1)
     ]
-    result.unsupported_claims = [
+    result.high_severity_objections = [
         o.claim for o in result.objections if o.severity == "high" and o.cites_evidence
     ]
 
@@ -375,6 +409,15 @@ def _paired_objections(result: AdversarialResult) -> list[dict[str, Any]]:
     return rows
 
 
+def _answered_ids(result: AdversarialResult) -> set[str]:
+    """Objection ids the investigation actually replied to, conceding or not."""
+    return {
+        str(reply.get("objection_id", ""))
+        for reply in result.rebuttals
+        if reply.get("objection_id")
+    }
+
+
 def _record(db: ScratchpadDB, provider: LLMProvider, result: AdversarialResult) -> None:
     # What the critique *said*, not just how much of it there was. A count cannot tell a
     # reader that the investigation conceded, or what to check instead.
@@ -390,8 +433,13 @@ def _record(db: ScratchpadDB, provider: LLMProvider, result: AdversarialResult) 
             (ADVERSARIAL_PROVIDER, provider.name),
             (ADVERSARIAL_MODEL, provider.model),
             (ADVERSARIAL_OBJECTIONS, len(result.objections)),
-            (ADVERSARIAL_UNSUPPORTED_CLAIMS, len(result.unsupported_claims)),
+            (ADVERSARIAL_HIGH_SEVERITY_OBJECTIONS, len(result.high_severity_objections)),
+            (
+                ADVERSARIAL_UNREBUTTED_HIGH_SEVERITY,
+                len(result.unrebutted_high_severity(_answered_ids(result))),
+            ),
             (ADVERSARIAL_UNEXPLAINED_SIGNAL, len(result.unexplained_signal)),
+            (ADVERSARIAL_UNEXPLAINED_CHRONIC, len(result.unexplained_chronic)),
             (ADVERSARIAL_REBUTTED, len(result.rebuttals)),
             (ADVERSARIAL_OUTCOME, result.outcome),
             (ADVERSARIAL_MODEL_CALLS, result.model_calls),

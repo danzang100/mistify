@@ -163,6 +163,7 @@ investigation was given the objections and allowed to answer. Outcome: **{{ adve
 
 - Objection: {{ objection.objection }}
 - Cites: {% if objection.template_ids %}templates {{ objection.template_ids | join(", ") }}{% endif %}{% if objection.template_ids and objection.log_event_ids %}, {% endif %}{% if objection.log_event_ids %}events {{ objection.log_event_ids | join(", ") }}{% endif %}{% if not objection.template_ids and not objection.log_event_ids %}nothing — an objection citing no rows cannot outweigh a conclusion that cites them{% endif %}
+
 {% if objection.response is not none %}
 - Answer{% if objection.conceded %} (**conceded**){% endif %}: {{ objection.response }}
 {% else %}
@@ -174,6 +175,13 @@ investigation was given the objections and allowed to answer. Outcome: **{{ adve
 No objections were raised.
 {% endif %}
 
+{% if glance.chronic_template_ids %}
+Template(s) {{ glance.chronic_template_ids | join(", ") }} were active across the whole log and
+are not part of this incident. Whether any finding mentions them is recorded in the appendix as
+an observation, not a warning: on a log with a steady background error stream this would
+otherwise fire on every run, and a warning that always fires is one a reader learns to skip.
+
+{% endif %}
 {% if adversarial.alternative %}
 ### Alternative explanation offered
 

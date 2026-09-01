@@ -71,7 +71,8 @@ match. The loop is roughly fifteen calls to the critique's one, so the critique 
 place to spend more.
 
 Free-tier quotas are per-minute. The adapter retries throttling with backoff; if that is not
-enough, set `llm.min_interval_seconds` to space calls out.
+enough, set `llm.min_interval_seconds` to space calls out. A run over the sample incident costs
+roughly 48k tokens end to end — see `docs/baseline.md`.
 
 Gemini is the only real provider that ships. The seam it sits behind (`src/mistify/llm/`) took
 a second adapter once and would take another; an Anthropic implementation lived there and was
@@ -115,13 +116,34 @@ Responder-facing, in order:
    into an hour-long one.
 4. **Findings** — every recorded hypothesis with its cited rows.
 5. **The challenge** — what the critique actually argued, what it cited, and what the
-   investigation conceded.
+   investigation conceded. Objections carry ids the rebuttal quotes back, so an answer lands on
+   the objection it was written for rather than on whichever one shared its position in a list.
 6. **Templates by anomaly score**.
 
 Then an appendix: run signals, token usage, the investigation trail, and pipeline
 configuration. It is there so a conclusion can be checked, not because a responder needs it.
 
 ### What a run costs
+
+`docs/baseline.md` records the reference numbers for the sample incident. Compare against it
+rather than against memory.
+
+The loop re-sends the whole conversation on every step, so an early slice is paid for again on
+every step after it. Three things keep that bounded, and all three are measured rather than
+assumed:
+
+- `get_slice` returns 60 lines by default (ceiling 200) and states how many matched in total,
+  so a narrower default costs nothing the investigation cannot ask for — it knows what it did
+  not see.
+- Tool output older than `pipeline.tool_result_history_steps` keeps the summary line the tool
+  wrote and loses the rows. Citations resolve against the scratchpad, not the transcript, so
+  nothing the report reads is lost. Set it to 0 to keep everything.
+- `investigate.input_tokens_per_step` records the curve and `investigate.input_growth_factor`
+  warns above 5×. The total hides the shape, and the shape is what decides whether a longer
+  incident is affordable.
+
+There is no token ceiling yet — a run that grows anyway is reported, not stopped.
+
 
 Every report carries a **Token usage** table: one row per stage that called a model, with the
 model it used, how many calls it made, input and output tokens, and how much of the input was

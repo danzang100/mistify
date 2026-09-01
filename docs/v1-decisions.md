@@ -406,3 +406,67 @@ finish reason (Gemini returns `STOP` either way, so reading the finish reason wo
 investigation on its first tool call), function responses are matched by name rather than by
 call id, and `additionalProperties` is stripped from tool schemas because the parser rejects
 it.
+
+### The critique's argument is scratchpad state, not a metric
+
+`run_adversarial_check` produced objections with citations, an alternative explanation,
+rebuttals and a revised confidence. All of it was discarded — the CLI dropped the return value
+and only counts reached `run_metadata`. A report could say "2 evidence-backed objections at
+high severity" and not what they were, what they cited, or that the investigation had conceded
+both.
+
+Migration `0002` persists them; `0003` gives each objection an id. The ids are assigned by us
+and quoted back by the model, because the rebuttal names the objection it is answering in free
+text and that is not something to key on. Positional pairing held only while the model returned
+exactly as many responses as there were objections; when it did not, a concession landed on a
+claim that never drew it, which reads as an admission the investigation never made. A response
+naming no known objection is now kept and reported as unmatched rather than guessed at.
+
+### An objection is not a verdict, and a count is not a claim
+
+`adversarial.unsupported_claims` counted evidenced high-severity objections and drove a warning
+saying claims in the report were unsupported. Two things wrong with that: the name asserted the
+conclusion of an argument that had not happened yet, and it was computed *before* the rebuttal,
+so a claim the investigation successfully defended still counted against it.
+
+Split in two. `high_severity_objections` counts what was thrown, before the answer, and is a
+display metric. `unrebutted_high_severity` counts what was never answered at all, after the
+rebuttal, and is the one that warns. Conceding is an answer — a bad one, stated plainly in the
+overview — and being answered without conceding is the system working. Only silence means
+nothing checked it.
+
+### A warning that always fires is worse than no warning
+
+The anomaly score has no duration term, so a background error stream running the length of the
+log ranks as signal. `unexplained_signal_templates` then faulted the investigation for not
+explaining it, on every run, on a fixture that contains exactly that red herring by design.
+
+Chronic templates are now excluded from that warning and counted as an observation instead.
+`ScratchpadDB.chronic_template_ids` is the single definition — the report labels issues with it
+and the adversarial check filters with it — because this project has already shipped one
+threshold defined in two places and does not need a second. The ranking itself is untouched;
+see issue 8.
+
+### Conversation growth is attacked where it is created
+
+The loop re-sends the whole conversation every step, so a slice pulled at step two is paid for
+again on every step after it, and cost is quadratic in steps. Measured: 177k input tokens for
+700 output tokens over ten steps.
+
+Three changes, in order of how much they buy:
+
+- **Tool output is compacted.** Results older than `pipeline.tool_result_history_steps` keep
+  the summary line the tool already wrote — how many rows matched, how many were shown, the
+  filters — and lose the rows. That header is what the model reasons about several steps later;
+  the rows it has either used or cited, and citations resolve against the scratchpad rather
+  than the transcript. Tool *calls* are never touched: they carry the thought signature, which
+  has to replay byte-identical.
+- **Slices are smaller and honest about it.** `SLICE_LINES_DEFAULT` drops from 200 to 60 and
+  the ceiling from 500 to 200. `get_slice` now reports how many lines matched in total, so a
+  narrower default costs nothing the investigation cannot ask for — it knows what it did not
+  see. "Hit the cap" could not distinguish four withheld lines from forty thousand.
+- **The curve is recorded.** `investigate.input_tokens_per_step` keeps the shape and
+  `investigate.input_growth_factor` warns above 5×. The total hides the curve entirely, and the
+  curve is what decides whether a longer incident is affordable.
+
+No token ceiling yet; see issue 9.
