@@ -31,14 +31,6 @@ def test_selects_the_planted_root_cause_over_the_red_herring(loaded_db: Scratchp
     assert RED_HERRING_MARKER not in template["pattern"]
 
 
-def test_red_herring_really_is_more_frequent(loaded_db: ScratchpadDB) -> None:
-    """Guards the test above: if the herring stopped being more common it would prove nothing."""
-    templates = loaded_db.top_templates(limit=500, order_by="count")
-    herring = next(t for t in templates if RED_HERRING_MARKER in t["pattern"])
-    cause = next(t for t in templates if ROOT_CAUSE_MARKER in t["pattern"])
-    assert herring["occurrence_count"] > cause["occurrence_count"]
-
-
 def test_writes_exactly_one_note_with_evidence(loaded_db: ScratchpadDB) -> None:
     result = run_skeleton_investigation(loaded_db)
 

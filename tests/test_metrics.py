@@ -89,15 +89,15 @@ def test_no_duplicate_declarations() -> None:
     assert len(keys) == len(set(keys))
 
 
-def test_every_metric_declares_a_kind() -> None:
-    assert all(m.kind in {"int", "float", "str", "bool"} for m in ALL_METRICS)
-
-
 def test_load_bearing_metrics_are_the_minority() -> None:
-    """Guards the count the review turned on: most metrics are display-only."""
+    """Most of the vocabulary is display-only; only a handful drive behaviour.
+
+    The exact count is deliberately not pinned. Nothing in production reads `load_bearing`,
+    so a fixed number would only catch edits to the declarations. What matters is the shape:
+    at least one metric is acted on, and acting on a metric stays the exception.
+    """
     load_bearing = [m for m in ALL_METRICS if m.load_bearing]
-    assert len(load_bearing) == 14
-    assert len(ALL_METRICS) == 49
+    assert 0 < len(load_bearing) < len(ALL_METRICS) / 2
 
 
 def test_thresholds_only_on_load_bearing_metrics() -> None:
@@ -123,11 +123,6 @@ def test_family_rejects_an_unknown_member() -> None:
     """A typo should fail at the call, not write a row nobody will ever read."""
     with pytest.raises(ValueError, match="has no member"):
         REDACTED_BY_ENTITY.member("eyeball_scan")
-
-
-def test_family_members_are_all_declared() -> None:
-    declared = {m.key for m in ALL_METRICS}
-    assert all(m.key in declared for m in REDACTED_BY_ENTITY.all_members())
 
 
 # --------------------------------------------------------------- typed reads

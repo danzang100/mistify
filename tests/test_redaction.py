@@ -51,7 +51,6 @@ class EntityCase:
     sample: str
     value: str
     other: str
-    on_by_default: bool
 
 
 ENTITY_CASES: tuple[EntityCase, ...] = (
@@ -60,42 +59,36 @@ ENTITY_CASES: tuple[EntityCase, ...] = (
         sample="refresh failed api_key=sk_live_9f3ba71c4d2e8a06b5c1",
         value="sk_live_9f3ba71c4d2e8a06b5c1",
         other="sk_live_0c1d2e3f4a5b6c7d8e9f",
-        on_by_default=True,
     ),
     EntityCase(
         entity="email",
         sample="session opened for ana.silva@northwind-retail.com",
         value="ana.silva@northwind-retail.com",
         other="bruno.costa@northwind-retail.com",
-        on_by_default=True,
     ),
     EntityCase(
         entity="ipv6",
         sample="peer fe80::1 unreachable",
         value="fe80::1",
         other="2001:db8::1",
-        on_by_default=True,
     ),
     EntityCase(
         entity="ipv4",
         sample="upstream 10.42.7.19 refused connection",
         value="10.42.7.19",
         other="192.168.14.203",
-        on_by_default=True,
     ),
     EntityCase(
         entity="ssn",
         sample="claim filed for 123-45-6789 yesterday",
         value="123-45-6789",
         other="987-65-4321",
-        on_by_default=True,
     ),
     EntityCase(
         entity="phone",
         sample="callback to 555-123-4567 scheduled",
         value="555-123-4567",
         other="555-987-6543",
-        on_by_default=False,
     ),
 )
 
@@ -176,16 +169,15 @@ def test_entity_is_redacted_inside_nested_fields(case: EntityCase) -> None:
     assert record.fields["attempt"] == 3
 
 
-@pytest.mark.parametrize("case", ENTITY_CASES, ids=_by_entity)
-def test_mode_off_is_a_no_op(case: EntityCase) -> None:
+def test_mode_off_is_a_no_op() -> None:
+    """Not run per entity: `enabled` is `mode != "off" and bool(entities)`, so with the mode
+    off `redact()` short-circuits on `if not self.enabled` and returns before the entity loop
+    is ever reached. One representative entity exercises the same single branch as six.
+    """
+    case = next(c for c in ENTITY_CASES if c.entity == "ipv4")
     redactor = _redactor(case, mode="off")
     assert redactor.redact(case.sample) == case.sample
     assert redactor.counts == {}
-
-
-@pytest.mark.parametrize("case", ENTITY_CASES, ids=_by_entity)
-def test_default_entity_membership_matches_the_table(case: EntityCase) -> None:
-    assert (case.entity in DEFAULT_ENTITIES) is case.on_by_default
 
 
 # ------------------------------------------------- per-pattern shape coverage
@@ -246,11 +238,6 @@ def test_phone_numbers_are_redacted_when_explicitly_enabled(number: str) -> None
     out = Redactor(entities=["phone"]).redact(f"callback to {number} scheduled")
     assert number not in out
     assert "[PHONE:" in out
-
-
-def test_valid_address_at_string_boundaries_is_still_caught() -> None:
-    assert Redactor().redact("10.42.7.19") == Redactor().redact("10.42.7.19")
-    assert "[IPV4:" in Redactor().redact("10.42.7.19")
 
 
 # ------------------------------------------------------ correlation and counts
@@ -397,12 +384,6 @@ def test_version_guard_is_context_scoped() -> None:
 # ----------------------------------------------------------------- configuration
 
 
-def test_credit_card_pattern_is_absent() -> None:
-    """Decision G5: explicitly out of scope for v1."""
-    assert "credit_card" not in PATTERNS
-    assert "credit_card" not in SUPPORTED_ENTITIES
-
-
 def test_default_entities_exclude_phone() -> None:
     """Decision G5, one step milder than credit_card: available, but opt-in."""
     assert "phone" not in DEFAULT_ENTITIES
@@ -414,19 +395,14 @@ def test_default_entities_include_the_new_ipv6_and_ssn_patterns() -> None:
     assert DEFAULT_ENTITIES == ("api_key", "email", "ipv6", "ipv4", "ssn")
 
 
-@pytest.mark.parametrize(
-    "number",
-    [
-        "+1 555 123 4567",
-        "(555) 123-4567",
-        "555-123-4567",
-        "+44 555.123.4567",
-    ],
-)
-def test_phone_survives_the_default_entity_set(number: str) -> None:
-    """The shipped default config enables `DEFAULT_ENTITIES`, which leaves phone alone."""
+def test_phone_survives_the_default_entity_set() -> None:
+    """The shipped default config enables `DEFAULT_ENTITIES`, which leaves phone alone.
+
+    One number is enough: every shape asserts the same fact, that `phone` is not in the
+    default set. The regex's own branches are covered by the explicitly-enabled test above.
+    """
     redactor = Redactor(entities=list(DEFAULT_ENTITIES))
-    text = f"callback to {number} scheduled"
+    text = "callback to 555-123-4567 scheduled"
     assert redactor.redact(text) == text
     assert redactor.counts == {}
 

@@ -26,17 +26,23 @@ def test_repo_config_is_valid() -> None:
     """
     config = load_config(Path(__file__).parent.parent / "config.yaml")
 
+    # Shipped defaults that are decisions, not tuning: changing either is a design change.
     assert config.redaction.mode == "strict"
     assert config.redaction.vault is False
-    assert config.drain3.sim_th == 0.4
-    assert config.drain3.max_clusters == 10000
+
+    # Everything below is tuning. Assert the invariant each value has to satisfy rather than
+    # the value itself, so deliberately retuning config.yaml does not fail a test that was
+    # never about the number.
+    assert 0.0 < config.drain3.sim_th < 1.0
+    assert config.drain3.max_clusters >= 2000
     assert config.drain3.calibrate is True
-    assert config.drain3.calibration_candidates == [0.3, 0.4, 0.5]
+    assert config.drain3.sim_th in config.drain3.calibration_candidates
     assert config.drain3.target_ratio_min < config.drain3.target_ratio_max
-    assert config.anomaly.weights() == {"severity": 0.5, "burstiness": 0.3, "rarity": 0.2}
-    assert config.anomaly.bucket_minutes == 1
-    assert config.anomaly.severity_unmapped_ceiling == 0.9
-    assert config.anomaly.signal_max_templates == 15
+    assert set(config.anomaly.weights()) == {"severity", "burstiness", "rarity"}
+    assert sum(config.anomaly.weights().values()) > 0
+    assert config.anomaly.bucket_minutes >= 1
+    assert 0.0 < config.anomaly.severity_unmapped_ceiling <= 1.0
+    assert config.anomaly.signal_min_templates <= config.anomaly.signal_max_templates
 
 
 def test_round_trips_through_yaml(tmp_path: Path) -> None:

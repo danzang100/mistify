@@ -16,6 +16,7 @@ or one of the design documents, the fix column says which document to amend.
 | 3. The anomaly baseline is the incident itself | High | 4/5 — promote from "Future" |
 | 4. No index for trace correlation | Medium | 3 |
 | 5. Unimplemented adapters are dropped silently | Low | 4 |
+| 6. Noise thresholds are defined in two places | Medium | 3 — blocks the agent loop |
 
 ---
 
@@ -143,3 +144,32 @@ the first adapter that can be named but not built.
 `config.yaml`.
 
 **Target phase.** 4.
+
+## 6. Noise thresholds are defined in two places
+
+**Problem.** `noise_template_ids`, `top_templates` and `get_slice` in
+`src/mistify/scratchpad/db.py` each default `share_threshold`/`noise_share` to `0.15` and
+`anomaly_ceiling`/`noise_ceiling` to `0.35`. The same two numbers are also
+`anomaly.noise_share_threshold` and `anomaly.noise_anomaly_ceiling` in `config.yaml`, which
+the config module documents as the single source of truth for pipeline behaviour. Four copies
+of two numbers.
+
+**Why it matters.** It is latent today only because no production caller passes
+`exclude_noise=True` without naming both thresholds: the skeleton investigator and the report
+both omit it, so only tests exercise the defaults. It stops being latent the moment the Phase 3
+agent calls `get_slice(exclude_noise=True)` — which is exactly what noise suppression was built
+for. The agent would then be handed a threshold `config.yaml` never set, and tuning the config
+would silently change nothing.
+
+**Recommended fix.** Make the thresholds required arguments at those three call sites and
+delete the defaults, so the only way to suppress noise is to say what counts as noise. The
+Phase 3 tool layer then threads `config.anomaly` through, the way every other tuned value
+already reaches the code that uses it.
+
+**Where.** `src/mistify/scratchpad/db.py`; `src/mistify/common/config.py` lines 121-122.
+
+**Target phase.** 3, and before the agent loop rather than after — it is cheaper to thread
+config through three signatures than to explain later why a documented setting had no effect.
+
+**Note.** This was raised as its own candidate in the Phase 2 architecture review and did not
+make it into this register at the time. Recorded now so it is not rediscovered a third time.

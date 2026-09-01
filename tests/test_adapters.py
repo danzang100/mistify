@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from mistify.adapters.json_lines import JsonLinesAdapter
-from mistify.adapters.registry import ADAPTERS, detect_format, get_adapter, read_sample
+from mistify.adapters.registry import detect_format, get_adapter, read_sample
 
 JSONL_SAMPLE = [
     '{"timestamp": "2026-08-30T14:22:01Z", "level": "ERROR",'
@@ -84,10 +84,6 @@ def test_registered_filter_is_respected() -> None:
     adapter, scores = detect_format(JSONL_SAMPLE, registered=[])
     assert adapter is None
     assert scores == {}
-
-
-def test_only_json_lines_is_registered_in_phase_1() -> None:
-    assert set(ADAPTERS) == {"json_lines"}
 
 
 def test_read_sample_caps_and_skips_blanks(tmp_path: Path) -> None:

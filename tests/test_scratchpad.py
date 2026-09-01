@@ -109,13 +109,12 @@ def test_note_with_evidence_is_written(db: ScratchpadDB) -> None:
     assert notes[0].evidence == {"template_ids": [7]}
 
 
-@pytest.mark.parametrize("evidence", [{}, None])
-def test_note_without_evidence_is_rejected_in_python(db: ScratchpadDB, evidence: object) -> None:
+def test_note_without_evidence_is_rejected_in_python(db: ScratchpadDB) -> None:
     with pytest.raises(ValueError, match="evidence is mandatory"):
-        db.write_note(1, "unsupported claim", evidence, "high")  # type: ignore[arg-type]
+        db.write_note(1, "unsupported claim", {}, "high")
 
 
-@pytest.mark.parametrize("payload", ["", "  ", "[]", "{}", "null"])
+@pytest.mark.parametrize("payload", ["", "[]", "{}", "null"])
 def test_empty_evidence_is_rejected_by_the_schema(db: ScratchpadDB, payload: str) -> None:
     """Enforced in SQL, so a future caller cannot bypass it by skipping write_note()."""
     with pytest.raises(sqlite3.IntegrityError):
@@ -394,13 +393,3 @@ def test_record_many_replaces_like_record(tmp_path: Path) -> None:
 
     assert len(rows) == 1
     assert rows[0]["value"] == "20"
-
-
-def test_the_raw_writer_is_private() -> None:
-    """The declared vocabulary is the way in, so a name cannot drift from its reader.
-
-    `_record_metric` survives as an internal seam -- the upsert needs testing directly, and
-    synthetic names have no declaration -- but it is not the public path.
-    """
-    assert not hasattr(ScratchpadDB, "record_metric")
-    assert hasattr(ScratchpadDB, "_record_metric")

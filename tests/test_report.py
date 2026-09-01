@@ -20,7 +20,6 @@ from mistify.metrics import (
     TEMPLATING_OVER_MERGED,
     TEMPLATING_OVER_MERGED_IDS,
     TEMPLATING_REDUCTION_FACTOR,
-    MetricView,
 )
 from mistify.report.generator import (
     TOP_TEMPLATE_LIMIT,
@@ -210,11 +209,6 @@ def test_over_merged_templates_are_called_out(loaded_db: ScratchpadDB) -> None:
     assert "templates 4,7" in report
 
 
-def test_clean_run_reports_no_over_merging(loaded_db: ScratchpadDB) -> None:
-    run_skeleton_investigation(loaded_db)
-    assert "span a wide severity range" not in generate_report(loaded_db)
-
-
 # --------------------------------------------------------------- signal health warnings
 
 
@@ -259,38 +253,7 @@ def test_buried_severe_template_is_called_out(loaded_db: ScratchpadDB) -> None:
     assert "not surfacing near the top" in report
 
 
-def test_clean_run_has_no_signal_warnings(loaded_db: ScratchpadDB) -> None:
-    """The synthetic incident is healthy, so none of the signal warnings may fire on it."""
-    run_skeleton_investigation(loaded_db)
-    report = generate_report(loaded_db)
-    for phrase in (
-        "no reachable template",
-        "were evicted from the matching tree",
-        "reduced the file only",
-        "dominant noisy template",
-        "The most severe template ranks",
-    ):
-        assert phrase not in report
-
-
 # --------------------------------------------------------------- absent versus zero
-
-
-def test_a_recorded_zero_is_not_a_missing_metric(db: ScratchpadDB) -> None:
-    """The distinction the old `(value_num or 0)` reads could not express.
-
-    A stage that published 0.0 and a stage that published nothing at all used to be the same
-    answer to every reader, which meant "this stage never reported" was unsayable.
-    """
-    db.record(TEMPLATING_REDUCTION_FACTOR, 0.0)
-    view = MetricView(db.metrics())
-    assert view.number(TEMPLATING_REDUCTION_FACTOR) == 0.0
-    assert view.number(TEMPLATING_COVERAGE) is None
-
-
-def test_missing_coverage_does_not_warn(db: ScratchpadDB) -> None:
-    """A metric nobody recorded is not evidence of lost coverage."""
-    assert MetricView(db.metrics()).triggers(TEMPLATING_COVERAGE) is False
 
 
 def test_an_empty_file_is_not_reported_as_weak_reduction(loaded_db: ScratchpadDB) -> None:

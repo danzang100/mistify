@@ -345,15 +345,8 @@ def test_reveal_all_lists_entity_token_and_value(runner: CliRunner, vault_config
     assert {line.split("\t")[0] for line in lines} == {"email", "ipv4"}
     assert "ana.silva@northwind-retail.com" in result.stdout
     assert "10.42.7.19" in result.stdout
+    # The warning goes to stderr so a redirected dump stays machine-readable.
     assert "unredacted" in result.stderr
-
-
-def test_reveal_warns_before_printing(runner: CliRunner, vault_config: Path) -> None:
-    """The warning is on stderr so a redirected dump stays machine-readable."""
-    result = runner.invoke(
-        cli, ["reveal", "--incident-id", INCIDENT, "--all", "--config", str(vault_config)]
-    )
-    assert "warning" in result.stderr
     assert "warning" not in result.stdout
 
 
@@ -440,9 +433,3 @@ def test_reveal_of_an_empty_vault_says_so(
     assert result.exit_code == 0, result.output
     assert "vault is empty" in result.stderr
     assert result.stdout.strip() == ""
-
-
-def test_reveal_appears_in_help(runner: CliRunner) -> None:
-    result = runner.invoke(cli, ["--help"])
-    assert result.exit_code == 0
-    assert "reveal" in result.output
