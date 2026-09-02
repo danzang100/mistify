@@ -28,6 +28,8 @@ from mistify.metrics import (
     ANOMALY_WEIGHTS,
     INGEST_DETECT_CONFIDENCE,
     INGEST_EVENTS_LOADED,
+    INGEST_FALLBACK,
+    INGEST_FALLBACK_REASON,
     INGEST_FORMAT,
     INGEST_LINES_READ,
     INGEST_PARSE_ERRORS,
@@ -81,10 +83,21 @@ __all__ = [
 Entries = list[tuple[Metric, Any]]
 
 
-def ingest_metrics(adapter: LogAdapter, scores: dict[str, float], events_loaded: int) -> Entries:
-    """Adapter counters. Malformed lines are skipped, so these are how you know they were."""
+def ingest_metrics(
+    adapter: LogAdapter,
+    scores: dict[str, float],
+    events_loaded: int,
+    fallback_reason: str | None = None,
+) -> Entries:
+    """Adapter counters. Malformed lines are skipped, so these are how you know they were.
+
+    `fallback_reason` is set only when no adapter recognised the file and it was read line by
+    line. Recorded as its own metric rather than inferred from `format`, because a reader
+    checking whether the timestamps mean anything should not have to know which format names
+    happen to be fallbacks.
+    """
     stats = adapter.stats
-    return [
+    entries: Entries = [
         (INGEST_FORMAT, adapter.format_name),
         (INGEST_DETECT_CONFIDENCE, round(scores.get(adapter.format_name, 0.0), 3)),
         (INGEST_LINES_READ, stats.lines_read),
@@ -93,6 +106,10 @@ def ingest_metrics(adapter: LogAdapter, scores: dict[str, float], events_loaded:
         (INGEST_UNMAPPED_SEVERITY, stats.unmapped_severity),
         (INGEST_UNPARSEABLE_TIMESTAMP, stats.unparseable_timestamp),
     ]
+    if fallback_reason is not None:
+        entries.append((INGEST_FALLBACK, adapter.format_name))
+        entries.append((INGEST_FALLBACK_REASON, fallback_reason))
+    return entries
 
 
 def redaction_metrics(

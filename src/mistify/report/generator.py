@@ -33,6 +33,8 @@ from mistify.metrics import (
     ALL_METRICS,
     ANOMALY_NEEDLE_POSITION,
     ANOMALY_SIGNAL_TEMPLATE_IDS,
+    INGEST_FALLBACK,
+    INGEST_FALLBACK_REASON,
     INGEST_PARSE_ERRORS,
     INGEST_UNMAPPED_SEVERITY,
     INVESTIGATE_BUDGET_LIMITED,
@@ -326,6 +328,16 @@ def _health_warnings(view: MetricView) -> list[str]:
     which is the only half a reader actually owns.
     """
     warnings: list[str] = []
+
+    # First, because it changes how every later number in the report should be read.
+    if view.triggers(INGEST_FALLBACK):
+        detail = view.text(INGEST_FALLBACK_REASON) or "no reason recorded"
+        warnings.append(
+            "No adapter recognised this file, so it was read one line at a time "
+            f"({detail}). There are no parsed timestamps: the incident window and the "
+            "burstiness term describe the order lines appear in the file, not when anything "
+            "happened, and severity was guessed from the text of each line."
+        )
 
     if view.triggers(INGEST_PARSE_ERRORS):
         errors = int(_triggered_value(view, INGEST_PARSE_ERRORS))

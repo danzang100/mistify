@@ -13,6 +13,7 @@ a harness that reported only the best run would call them the same.
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,7 +44,20 @@ class RunReport:
 
     @property
     def passed(self) -> bool:
+        """Every check passed *and* the run completed.
+
+        A run that errored partway is never a full pass even when its checks are green: the
+        stages after the failure never ran, so the report it would have produced does not
+        exist. The checks are still recorded and still counted per check, because "the
+        investigation was correct and the critique timed out" is a different fact from "the
+        investigation was wrong", and one number cannot carry both.
+        """
         return self.error is None and all(check.passed for check in self.checks)
+
+    @property
+    def scored(self) -> bool:
+        """Whether the scratchpad got far enough to be graded at all."""
+        return bool(self.checks)
 
 
 @dataclass(slots=True)
@@ -101,7 +115,7 @@ def run_case(
     case: EvalCase,
     config: MistifyConfig,
     workspace: Path,
-    runs: int = 3,
+    runs: int = 1,
     adversarial: bool = True,
     judge: bool = False,
     baseline: str | None = None,
@@ -122,12 +136,38 @@ def run_case(
     workspace.mkdir(parents=True, exist_ok=True)
     source = case.source(workspace)
 
+    # Ingested once, then copied per run. Parse, redact, template and score are deterministic
+    # given the same file and config -- only the investigation varies -- so re-ingesting per
+    # run repeated a second of identical work and measured nothing. The test suite already
+    # settled this the same way; the harness had not.
+    try:
+        master = ingest(source, config, incident_id=f"eval-{case.name}-master")
+    except Exception as exc:
+        # A sweep covers several cases. One whose fixture will not ingest should be reported
+        # as that, not take the other cases down with it.
+        failure = f"{type(exc).__name__}: {exc}"
+        report.runs = [
+            RunReport(case=case.name, index=index, error=failure)
+            for index in range(1, (1 if baseline else runs) + 1)
+        ]
+        return report
+
     for index in range(1, (1 if baseline else runs) + 1):
         incident_id = f"eval-{case.name}-{index}"
         run = RunReport(case=case.name, index=index)
         try:
-            result = ingest(source, config, incident_id=incident_id)
-            with ScratchpadDB(result.scratchpad_path) as db:
+            # Copied rather than shared: a run writes notes, metrics and query-log rows into
+            # its scratchpad, and a shared handle would leak one run's findings into the next.
+            scratchpad = config.scratchpad_path(incident_id)
+            scratchpad.parent.mkdir(parents=True, exist_ok=True)
+            # Removed before copying, not merely overwritten. Scratchpads persist in .cache
+            # between invocations, and a sweep that reused an id once scored a run against
+            # notes an earlier, interrupted run had left behind -- three findings on a
+            # baseline that writes one. Starting from nothing makes that impossible rather
+            # than unlikely.
+            scratchpad.unlink(missing_ok=True)
+            shutil.copyfile(master.scratchpad_path, scratchpad)
+            with ScratchpadDB(scratchpad) as db:
                 if baseline:
                     from mistify.eval.baselines import run_baseline
 
@@ -139,9 +179,18 @@ def run_case(
                     # from the notes themselves rather than from a stage that never ran.
                     run.metrics["notes"] = len(db.notes())
                 else:
-                    run_investigation(db, config, adversarial=adversarial)
+                    try:
+                        run_investigation(db, config, adversarial=adversarial)
+                    except Exception as exc:
+                        # Scored anyway. None of the deterministic checks needs the critique:
+                        # they read notes and citations out of the scratchpad, which the loop
+                        # has already written by the time a later stage fails. One OTLP run
+                        # lost a complete 4/4 investigation because the adversarial call timed
+                        # out after it, and the whole run was discarded as an error.
+                        run.error = f"{type(exc).__name__}: {exc}"
+
                 run.checks = score_run(db, case)
-                if judge and not baseline:
+                if judge and not baseline and run.error is None:
                     from mistify.eval.judge import judge_notes, judgement_checks
 
                     judge_provider = build_provider(

@@ -248,7 +248,12 @@ def run_command(
     multiple=True,
     help="Case to run. Repeatable. Defaults to every case.",
 )
-@click.option("--runs", default=3, show_default=True, help="Runs per case.")
+@click.option(
+    "--runs",
+    default=1,
+    show_default=True,
+    help="Investigations per case. Raise it deliberately when measuring a rate, not by habit.",
+)
 @click.option(
     "--baseline",
     type=click.Choice(["naive", "templated"]),
@@ -342,7 +347,11 @@ def _echo_case(report: CaseReport) -> None:
     click.echo(f"  {report.pass_rate:>7}  runs fully passing")
     for run in report.runs:
         if run.error:
-            click.echo(f"  run {run.index} did not complete: {run.error}")
+            passed = sum(1 for c in run.checks if c.passed)
+            scored = (
+                f" (scored anyway: {passed}/{len(run.checks)} checks passed)" if run.checks else ""
+            )
+            click.echo(f"  run {run.index} did not complete{scored}: {run.error}")
         elif run.metrics.get("baseline"):
             m = run.metrics
             click.echo(

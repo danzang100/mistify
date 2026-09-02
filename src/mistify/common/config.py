@@ -55,6 +55,13 @@ class AdaptersConfig(_Strict):
     #: unknown-format bootstrapper takes over (Phase 4).
     min_detect_confidence: float = Field(default=0.6, ge=0.0, le=1.0)
 
+    #: What to do when nothing matches. `raw_lines` reads the file line by line and records
+    #: that it did; `error` refuses it. Falling back is the default because an investigation
+    #: that cannot start is not safer than one that starts with less -- templating, ranking and
+    #: search all work on message text alone -- and the degradation is recorded rather than
+    #: hidden. Set to `error` where a wrong-looking parse is worse than no parse at all.
+    on_unknown_format: Literal["raw_lines", "error"] = "raw_lines"
+
 
 class BootstrapConfig(_Strict):
     """Unknown-format bootstrapper settings. Consumed from Phase 4 onward."""

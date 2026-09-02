@@ -14,6 +14,10 @@ adapters:
   # honestly, and hand-authored ones get the quirks wrong that the adapters exist to absorb.
   registered: [json_lines, otlp]
   min_detect_confidence: 0.6
+  # raw_lines | error. When nothing matches, read the file line by line and say so in the
+  # report, rather than refusing it. An investigation that cannot start is not safer than one
+  # that starts with less.
+  on_unknown_format: raw_lines
 
 bootstrap:            # consumed from Phase 4
   sample_size: 100
@@ -84,10 +88,11 @@ llm:
   # Must differ from whichever model writes the conclusion -- the loop's, or the synthesis
   # model when one is set. The critique cannot share a model with the thing it is checking
   # (architecture §6.3). Enforced at config load.
-  # A tier above the loop, and above the judge too: with the loop on flash-lite and the judge
-  # on 3.5-flash, all three roles are now distinct models, which is what §6.3 asks for and what
-  # `mistify eval --judge` otherwise warns about.
-  adversarial_model: gemini-3.6-flash
+  # A tier above the loop. gemini-3.6-flash was tried here and timed out repeatedly on the
+  # critique prompt, taking a run's whole retry budget with it; 3.5-flash is the fallback.
+  # Note this now matches judge_model, so `mistify eval --judge` will warn that the judge is
+  # not independent of the critique -- true, and worth seeing rather than silently accepting.
+  adversarial_model: gemini-3.5-flash
   bootstrap_model: gemini-3.5-flash-lite
   judge_model: gemini-3.5-flash
   max_tokens: 8192

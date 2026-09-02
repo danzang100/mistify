@@ -99,6 +99,7 @@ def ingest(
 
     # --- format selection -------------------------------------------------
     adapter: LogAdapter | None
+    fallback_reason: str | None = None
     if format_name and format_name != "auto":
         try:
             adapter = get_adapter(format_name)
@@ -116,12 +117,17 @@ def ingest(
         )
         if adapter is None:
             best = max(scores.values(), default=0.0)
-            raise UnknownFormatError(
-                f"no registered adapter matched {source_path} "
-                f"(best confidence {best:.2f}, threshold "
-                f"{config.adapters.min_detect_confidence:.2f}). "
-                "The unknown-format bootstrapper arrives in Phase 4."
+            reason = (
+                f"no registered adapter matched (best confidence {best:.2f}, threshold "
+                f"{config.adapters.min_detect_confidence:.2f})"
             )
+            if config.adapters.on_unknown_format == "error":
+                raise UnknownFormatError(f"{reason} for {source_path}")
+            # Degrade rather than refuse, and record that it happened. The metric is
+            # load-bearing: a raw-line read has no real timestamps, so the incident window and
+            # the burstiness term describe line order, and the report has to say so.
+            adapter = get_adapter("raw_lines")
+            fallback_reason = reason
 
     # Opt-in reversible redaction. The vault is its own file, never a table in the
     # scratchpad: the investigator's read-only SQL channel can read any table in the database
@@ -242,7 +248,7 @@ def ingest(
         # Each stage describes its own run; the pipeline only decides when they are written.
         db.record_many(
             [
-                *ingest_metrics(adapter, scores, events_loaded),
+                *ingest_metrics(adapter, scores, events_loaded, fallback_reason),
                 *redaction_metrics(config, redactor, vault, vault_path),
                 *templating_metrics(config, templater, sim_th, coverage, calibration, over_merged),
                 *anomaly_metrics(

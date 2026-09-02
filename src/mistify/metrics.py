@@ -121,6 +121,18 @@ INGEST_UNMAPPED_SEVERITY = Metric(
 )
 INGEST_UNPARSEABLE_TIMESTAMP = Metric("ingest", "unparseable_timestamp", "int")
 
+#: Set when no adapter recognised the file and it was read line by line instead. Load-bearing:
+#: a raw-line read has no real timestamps and no parsed severity, so the incident window and
+#: half the anomaly score describe the file's line order rather than the incident. A report
+#: that did not say so would present those numbers as facts.
+INGEST_FALLBACK = Metric(
+    "ingest", "fallback", "str", load_bearing=True, trigger_values=frozenset({"raw_lines"})
+)
+
+#: Why the fallback happened -- the best confidence any adapter managed, and against what
+#: threshold. Detail rather than a trigger: it explains a warning that has already fired.
+INGEST_FALLBACK_REASON = Metric("ingest", "fallback_reason", "str", load_bearing=True)
+
 # ------------------------------------------------------------------ redaction
 
 REDACTION_MODE = Metric(
@@ -376,6 +388,8 @@ ALL_METRICS: tuple[Metric, ...] = (
     INGEST_PARSE_ERRORS,
     INGEST_UNMAPPED_SEVERITY,
     INGEST_UNPARSEABLE_TIMESTAMP,
+    INGEST_FALLBACK,
+    INGEST_FALLBACK_REASON,
     REDACTION_MODE,
     REDACTION_ENTITIES,
     REDACTION_TOTAL,

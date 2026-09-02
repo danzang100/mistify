@@ -417,3 +417,96 @@ def test_an_unknown_baseline_is_refused(loaded_db: ScratchpadDB) -> None:
 
     with pytest.raises(ValueError, match="templated"):
         run_baseline(loaded_db, "regex-magic")  # type: ignore[arg-type]
+
+
+def test_a_stale_scratchpad_cannot_contaminate_a_run(
+    tmp_path: Path, config: object, incident_file: Path
+) -> None:
+    """Scratchpads persist between invocations, and ids repeat.
+
+    An interrupted sweep left notes behind under an id a later sweep reused, and the baseline
+    -- which writes exactly one note -- was scored against three findings. A run must start
+    from the freshly ingested master and nothing else.
+    """
+    from mistify.eval.harness import run_case
+
+    case = get_case("quiet-hour")
+    stale = config.scratchpad_path("eval-quiet-hour-1")  # type: ignore[attr-defined]
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    with ScratchpadDB(stale) as db:
+        db.create_incident("eval-quiet-hour-1", source="stale")
+        db.write_note(99, "a finding from a previous sweep", {"template_ids": [1]}, "high")
+
+    report = run_case(case, config, tmp_path / "work", runs=1, baseline="templated")  # type: ignore[arg-type]
+
+    assert report.runs[0].metrics["notes"] == 0
+
+
+def test_a_run_whose_critique_fails_is_still_scored(
+    tmp_path: Path, config: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The failure that nearly threw away a correct answer.
+
+    An OTLP run investigated the incident correctly -- root cause and precursor both cited --
+    and then the adversarial call timed out. The whole run was recorded as an error and never
+    scored, so a complete 4/4 result had to be recovered by hand afterwards.
+
+    None of the deterministic checks needs the critique: they read notes and citations out of
+    the scratchpad, which the loop has already written by the time a later stage fails.
+    """
+    from mistify.agent import runner
+    from mistify.eval.harness import run_case
+
+    def investigate_then_fail(db: ScratchpadDB, cfg: object, adversarial: bool = True) -> None:
+        db.write_note(1, "nothing here is an incident", {"template_ids": [1]}, "low")
+        raise RuntimeError("Gemini call failed: 504 DEADLINE_EXCEEDED")
+
+    monkeypatch.setattr(runner, "run_investigation", investigate_then_fail)
+
+    report = run_case(get_case("quiet-hour"), config, tmp_path / "work", runs=1)  # type: ignore[arg-type]
+    run = report.runs[0]
+
+    assert run.error is not None and "504" in run.error
+    assert run.scored, "a run that got as far as writing notes must be graded"
+    assert {c.name: c.passed for c in run.checks}["invents-no-incident"] is True
+
+
+def test_a_run_that_errored_is_not_counted_as_a_full_pass(
+    tmp_path: Path, config: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Control for the above: scoring a partial run must not turn it into a clean one.
+
+    The stages after the failure never ran, so the report it would have produced does not
+    exist. "Correct but incomplete" and "correct" are different facts.
+    """
+    from mistify.agent import runner
+    from mistify.eval.harness import run_case
+
+    def investigate_then_fail(db: ScratchpadDB, cfg: object, adversarial: bool = True) -> None:
+        db.write_note(1, "nothing here is an incident", {"template_ids": [1]}, "low")
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(runner, "run_investigation", investigate_then_fail)
+
+    report = run_case(get_case("quiet-hour"), config, tmp_path / "work", runs=1)  # type: ignore[arg-type]
+
+    assert all(c.passed for c in report.runs[0].checks)
+    assert report.runs[0].passed is False
+    assert report.pass_rate == "0/1"
+
+
+def test_a_run_that_never_reached_the_scratchpad_is_not_scored(
+    tmp_path: Path, config: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Control on `scored`: an empty check list means "not graded", not "graded and failed"."""
+    from mistify.eval import harness
+
+    def explode(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("ingest failed")
+
+    monkeypatch.setattr(harness, "ingest", explode)
+
+    report = harness.run_case(get_case("quiet-hour"), config, tmp_path / "work", runs=1)  # type: ignore[arg-type]
+
+    assert report.runs[0].error is not None
+    assert report.runs[0].scored is False

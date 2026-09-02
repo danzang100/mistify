@@ -174,14 +174,14 @@ def test_pdf_is_written_as_pdf_bytes(
     assert written.read_bytes().startswith(b"%PDF-")
 
 
-def test_unknown_format_reports_the_handoff(
+def test_an_unrecognised_file_is_read_line_by_line(
     runner: CliRunner, config_file: Path, tmp_path: Path
 ) -> None:
     source = tmp_path / "syslog.log"
     source.write_text("Aug 30 14:22:01 host sshd[1]: Accepted password\n" * 20, encoding="utf-8")
     result = runner.invoke(cli, ["ingest", "--source", str(source), "--config", str(config_file)])
-    assert result.exit_code != 0
-    assert "Phase 4" in result.output
+    assert result.exit_code == 0, result.output
+    assert "raw_lines" in result.output
 
 
 def test_missing_source_is_rejected_by_click(runner: CliRunner, config_file: Path) -> None:

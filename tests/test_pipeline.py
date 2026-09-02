@@ -18,6 +18,8 @@ from mistify.eval.fixtures import (
     ROOT_CAUSE_MARKER,
 )
 from mistify.metrics import (
+    INGEST_FALLBACK,
+    INGEST_FALLBACK_REASON,
     INGEST_LINES_READ,
     INGEST_PARSE_ERRORS,
     REDACTION_MODE,
@@ -164,11 +166,59 @@ def test_parse_errors_are_surfaced(tmp_path: Path, config: MistifyConfig) -> Non
     assert result.parse_errors == 1
 
 
-def test_unknown_format_raises_until_phase_4(tmp_path: Path, config: MistifyConfig) -> None:
+def _syslog(tmp_path: Path) -> Path:
     source = tmp_path / "syslog.log"
-    source.write_text("Aug 30 14:22:01 host sshd[1]: Accepted password\n" * 20, encoding="utf-8")
-    with pytest.raises(UnknownFormatError, match="Phase 4"):
-        ingest(source, config, incident_id="syslog")
+    source.write_text(
+        ("Aug 30 14:22:01 host sshd[1]: Accepted password" + chr(10)) * 20, encoding="utf-8"
+    )
+    return source
+
+
+def test_an_unrecognised_file_falls_back_to_raw_lines(
+    tmp_path: Path, config: MistifyConfig
+) -> None:
+    """Degrade rather than refuse.
+
+    An investigation that cannot start is not safer than one that starts with less: templating,
+    ranking and search all work on message text alone.
+    """
+    result = ingest(_syslog(tmp_path), config, incident_id="syslog")
+
+    assert result.format_name == "raw_lines"
+    assert result.events_loaded == 20
+
+
+def test_the_fallback_records_why_it_happened(tmp_path: Path, config: MistifyConfig) -> None:
+    """The load-bearing half.
+
+    A raw-line read has no parsed timestamps, so the incident window and the burstiness term
+    describe the order lines appear in the file. A report that did not say so would present
+    those numbers as facts about the incident.
+    """
+    ingest(_syslog(tmp_path), config, incident_id="syslog")
+
+    with ScratchpadDB(config.scratchpad_path("syslog")) as db:
+        view = MetricView(db.metrics())
+
+    assert view.text(INGEST_FALLBACK) == "raw_lines"
+    assert "best confidence" in (view.text(INGEST_FALLBACK_REASON) or "")
+
+
+def test_a_recognised_file_records_no_fallback(incident_file: Path, config: MistifyConfig) -> None:
+    """Control: the marker means something happened, so it must be absent when it did not."""
+    ingest(incident_file, config, incident_id="known")
+
+    with ScratchpadDB(config.scratchpad_path("known")) as db:
+        assert MetricView(db.metrics()).text(INGEST_FALLBACK) is None
+
+
+def test_the_fallback_can_be_turned_off(tmp_path: Path, config: MistifyConfig) -> None:
+    """Where a wrong-looking parse is worse than no parse, refusing is the right answer."""
+    strict = config.model_copy(deep=True)
+    strict.adapters.on_unknown_format = "error"
+
+    with pytest.raises(UnknownFormatError, match="no registered adapter matched"):
+        ingest(_syslog(tmp_path), strict, incident_id="syslog")
 
 
 def test_unregistered_forced_format_raises_unknown_format(
