@@ -23,14 +23,23 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 __all__ = [
+    "FIXTURE_VERSION",
     "PLANTED_API_KEY",
     "PLANTED_EMAILS",
     "PLANTED_IPS",
     "RED_HERRING_MARKER",
     "ROOT_CAUSE_MARKER",
     "generate_incident",
+    "generate_quiet_hour",
     "write_incident",
+    "write_quiet_hour",
 ]
+
+#: Bumped whenever a generator changes what it plants. Recorded with every eval result,
+#: because a fixture that changes silently makes every historical score incomparable -- and
+#: comparing two things that were not the same measurement is exactly how this project talked
+#: itself into a regression that never happened.
+FIXTURE_VERSION = 1
 
 #: Substrings that identify the planted templates in a generated report.
 ROOT_CAUSE_MARKER = "Database connection pool exhausted"
@@ -211,3 +220,104 @@ if __name__ == "__main__":  # pragma: no cover - manual fixture generation
     destination = sys.argv[1] if len(sys.argv) > 1 else "examples/sample_incident.jsonl"
     written = write_incident(destination)
     print(f"wrote {written}")
+
+
+# --------------------------------------------------------------- the quiet hour
+
+
+def generate_quiet_hour(total_lines: int = 5000, seed: int = 20260901) -> list[dict[str, object]]:
+    """An hour of healthy service, with nothing wrong in it.
+
+    The negative control, and the one case the rest of the suite cannot cover: every other
+    fixture asks whether the investigation finds the planted answer, and this one asks whether
+    it invents one when there is no answer to find. An agent that always produces a confident
+    root cause is useless in exactly the situation an on-call engineer most needs to trust it
+    -- the page that turns out to be nothing.
+
+    Built from the same background generator as the incident fixture, so the two differ in
+    what was planted rather than in how they were written. Deliberately not *featureless*:
+    there are WARNs, retries, and one slow request template, because a file with no variation
+    at all would let a system pass by noticing there is only one kind of line. The point is
+    that nothing here is severe, concentrated in time, or causally linked to anything else.
+    """
+    rng = random.Random(seed)
+    random.seed(seed)
+
+    records: list[dict[str, object]] = []
+    for _ in range(total_lines):
+        ts = _START + timedelta(seconds=rng.uniform(0, 3600))
+        service = rng.choice(_SERVICES)
+        roll = rng.random()
+        if roll < 0.50:
+            records.append(
+                _line(
+                    ts,
+                    service,
+                    "INFO",
+                    f"Handled GET /api/v2/catalog/{rng.choice(_SKUS)} in {rng.randint(4, 120)}ms",
+                    client_ip=rng.choice(PLANTED_IPS),
+                    region=rng.choice(_REGIONS),
+                )
+            )
+        elif roll < 0.72:
+            records.append(
+                _line(
+                    ts,
+                    service,
+                    "INFO",
+                    f"Cache hit ratio {rng.uniform(0.72, 0.98):.2f} over "
+                    f"{rng.randint(50, 400)} lookups",
+                    region=rng.choice(_REGIONS),
+                )
+            )
+        elif roll < 0.84:
+            records.append(
+                _line(ts, service, "DEBUG", f"Heartbeat ok, uptime {rng.randint(1000, 90000)}s")
+            )
+        elif roll < 0.92:
+            records.append(
+                _line(
+                    ts,
+                    service,
+                    "INFO",
+                    f"Session opened for {rng.choice(PLANTED_EMAILS)} "
+                    f"from {rng.choice(PLANTED_IPS)}",
+                    user_email=rng.choice(PLANTED_EMAILS),
+                )
+            )
+        elif roll < 0.97:
+            # Retries happen in healthy systems. Present so that "there is a WARN here" cannot
+            # by itself be read as an incident.
+            records.append(
+                _line(
+                    ts,
+                    service,
+                    "WARN",
+                    f"Retrying inventory sync for {rng.choice(_SKUS)}, attempt {rng.randint(2, 3)}",
+                )
+            )
+        else:
+            # Spread evenly across the hour and never severe: a slow request is a fact about a
+            # busy service, not an outage.
+            records.append(
+                _line(
+                    ts,
+                    service,
+                    "WARN",
+                    f"Slow response {rng.randint(900, 2400)}ms for /api/v2/search, "
+                    f"budget {rng.choice((800, 1200))}ms",
+                )
+            )
+
+    records.sort(key=lambda r: str(r["timestamp"]))
+    return records
+
+
+def write_quiet_hour(path: str | Path, total_lines: int = 5000, seed: int = 20260901) -> Path:
+    """Write the quiet hour as JSON Lines and return the path."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w", encoding="utf-8") as handle:
+        for record in generate_quiet_hour(total_lines=total_lines, seed=seed):
+            handle.write(json.dumps(record) + "\n")
+    return target

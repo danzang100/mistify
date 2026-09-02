@@ -209,9 +209,19 @@ class LLMConfig(_Strict):
     #: different model is the weaker half of §6.3; pointing this at another provider entirely
     #: is the stronger one.
     adversarial_provider: Literal["gemini", "scripted"] | None = None
-    #: One tier up from the loop. §6.3 needs a different model, and the critique is one
-    #: call against the loop's fifteen, so it is the cheapest place to spend more.
-    adversarial_model: str = "gemini-3.5-flash"
+    #: Must differ from whichever model writes the conclusion -- the loop's, or the synthesis
+    #: model when one is set. §6.3 wants the critique independent of the reasoning it checks,
+    #: and the critique is one call against the loop's fifteen, so it is a cheap place to spend.
+    adversarial_model: str = "gemini-3.6-flash"
+
+    #: Writes the final conclusion from the scratchpad, once, after the loop has finished
+    #: searching. Search is mechanical and cheap; concluding is one call where being slightly
+    #: better is worth paying for. Set to None to let the loop's own last note stand.
+    synthesis_provider: Literal["gemini", "scripted"] | None = None
+    #: None leaves the loop's own last note as the conclusion, which is the shipped default:
+    #: a stronger model writing the conclusion is a plausible improvement with no measurement
+    #: behind it yet, and `mistify eval` exists to settle that before the default moves.
+    synthesis_model: str | None = None
 
     bootstrap_model: str = "gemini-3.5-flash-lite"
     judge_model: str = "gemini-3.5-flash"
@@ -231,14 +241,43 @@ class LLMConfig(_Strict):
 
     @model_validator(mode="after")
     def _adversarial_differs(self) -> LLMConfig:
-        provider = self.adversarial_provider or self.provider
-        if provider == self.provider and self.adversarial_model == self.model:
-            raise ValueError(
-                "the adversarial pass must not use the same provider and model as the loop "
-                "(architecture §6.3: a shared model gives the reasoner and its checker one "
-                "blind spot). Change llm.adversarial_model or llm.adversarial_provider."
-            )
+        """The critique must differ from whatever wrote the thing it is checking.
+
+        That used to mean "differ from the loop", because the loop wrote the conclusion. With a
+        synthesis model the conclusion has a different author, and the rule follows the author:
+        a critique sharing a model with the synthesis is marking its own homework, which is the
+        exact failure §6.3 exists to prevent and the one hardest to see in a finished report.
+        """
+        critic = (self.adversarial_provider or self.provider, self.adversarial_model)
+        for role, author in self.conclusion_authors():
+            if critic == author:
+                raise ValueError(
+                    f"the adversarial pass must not use the same provider and model as the "
+                    f"{role} (architecture §6.3: a shared model gives the reasoner and its "
+                    f"checker one blind spot). Change llm.adversarial_model, or the "
+                    f"{role}'s model."
+                )
         return self
+
+    def conclusion_authors(self) -> list[tuple[str, tuple[str, str]]]:
+        """Every (role, provider, model) that contributes to the conclusion under check.
+
+        The loop is always one of them: it writes the notes the conclusion rests on, so a
+        critique sharing its model inherits its blind spots even when a different model did
+        the final writing.
+        """
+        # Annotated rather than inferred: the literal provider type makes the list invariant
+        # against the wider tuple the signature promises.
+        authors: list[tuple[str, tuple[str, str]]] = [("loop", (self.provider, self.model))]
+        if self.synthesis_model is not None:
+            authors.append(
+                ("synthesis", (self.synthesis_provider or self.provider, self.synthesis_model))
+            )
+        return authors
+
+    def synthesis_provider_name(self) -> str:
+        """Provider for the synthesis, defaulting to the loop's when unset."""
+        return self.synthesis_provider or self.provider
 
     def adversarial_provider_name(self) -> str:
         """Provider for the critique, defaulting to the loop's when unset."""

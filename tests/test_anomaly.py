@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from mistify.agent.skeleton import run_skeleton_investigation
+from mistify.eval.fixtures import RED_HERRING_MARKER, ROOT_CAUSE_MARKER
 from mistify.scratchpad.anomaly import (
     DEFAULT_WEIGHTS,
     AnomalyComponents,
@@ -12,7 +13,6 @@ from mistify.scratchpad.anomaly import (
     select_signal_templates,
 )
 from mistify.scratchpad.db import ScratchpadDB
-from tests.fixtures.synthetic_incident import RED_HERRING_MARKER, ROOT_CAUSE_MARKER
 
 #: Buckets spanning the whole incident, for the pure-scoring tests below.
 BUCKETS = 60

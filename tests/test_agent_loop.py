@@ -21,6 +21,7 @@ from mistify.agent.loop import (
 )
 from mistify.agent.tools import ToolBox
 from mistify.common.models import NoiseThresholds
+from mistify.eval.fixtures import ROOT_CAUSE_MARKER
 from mistify.llm.base import Turn, Usage
 from mistify.llm.scripted import ScriptedProvider, text_turn, tool_call_turn
 from mistify.metrics import (
@@ -44,7 +45,6 @@ from mistify.metrics import (
 )
 from mistify.report.generator import generate_report
 from mistify.scratchpad.db import ScratchpadDB
-from tests.fixtures.synthetic_incident import ROOT_CAUSE_MARKER
 
 NOISE = NoiseThresholds(share=0.15, anomaly_ceiling=0.35)
 

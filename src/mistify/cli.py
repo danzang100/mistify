@@ -17,8 +17,9 @@ from mistify.redaction.vault import RedactionVault
 from mistify.report.generator import ProviderMissing, write_report
 from mistify.scratchpad.db import ScratchpadDB
 
-if TYPE_CHECKING:  # pragma: no cover - the agent stack is imported only when used
+if TYPE_CHECKING:
     from mistify.agent.loop import InvestigationResult
+    from mistify.eval.harness import CaseReport
 
 __all__ = ["cli"]
 
@@ -240,51 +241,122 @@ def run_command(
     click.echo(f"report {output}")
 
 
-def _run_agent(db: ScratchpadDB, config: MistifyConfig, adversarial: bool) -> InvestigationResult:
-    """Drive the model loop, then let the critique answer it.
+@cli.command(name="eval")
+@click.option(
+    "--case",
+    "case_names",
+    multiple=True,
+    help="Case to run. Repeatable. Defaults to every case.",
+)
+@click.option("--runs", default=3, show_default=True, help="Runs per case.")
+@click.option("--list", "list_only", is_flag=True, help="List the cases and exit.")
+@click.option("--no-adversarial", is_flag=True, help="Skip the critique, to halve the cost.")
+@click.option(
+    "--judge",
+    is_flag=True,
+    help="Also ask llm.judge_model whether each claim follows from the rows it cites (G8).",
+)
+@click.option("--out", default=None, type=click.Path(path_type=Path), help="Where to write JSON.")
+@_config_option
+def eval_command(
+    case_names: tuple[str, ...],
+    runs: int,
+    list_only: bool,
+    no_adversarial: bool,
+    judge: bool,
+    out: Path | None,
+    config_path: Path | None,
+) -> None:
+    """Run the evaluation cases and score them against their known answers.
 
-    Credentials are resolved here rather than at import, so every deterministic command keeps
-    working on a machine with no account anywhere.
+    Every case is a log file whose answer is known by construction, so the score is arithmetic
+    rather than judgement. Cases run independently -- `--case quiet-hour` is one case, which
+    matters on a free tier where a full sweep is several minutes of quota.
     """
-    from mistify.agent.adversarial import run_adversarial_check
-    from mistify.agent.loop import InvestigationLoop
-    from mistify.agent.tools import ToolBox
-    from mistify.llm.registry import MissingCredentialError, build_provider
-    from mistify.metrics import ANOMALY_SIGNAL_TEMPLATE_IDS, MetricView
+    import tempfile
+
+    from mistify.eval.cases import CASES, get_case
+    from mistify.eval.cases import case_names as known_cases
+    from mistify.eval.harness import run_case, write_results
+
+    if list_only:
+        for case in CASES:
+            click.echo(f"{case.name}\n  {case.summary}")
+            for note in case.notes:
+                click.echo(f"  - {note}")
+        return
 
     try:
-        provider = build_provider(config.llm.provider, config.llm.model, config.llm)
+        cases = [get_case(name) for name in case_names] if case_names else list(CASES)
+    except KeyError as exc:
+        raise click.ClickException(str(exc).strip("\"'")) from exc
+    if not cases:  # pragma: no cover - CASES is never empty
+        raise click.ClickException(f"no cases to run. Known: {', '.join(known_cases())}")
+
+    config = load_config(config_path)
+    if judge and config.llm.judge_model in {config.llm.model, config.llm.adversarial_model}:
+        # Not fatal, because the judge is opt-in tooling rather than a shipped guarantee -- but
+        # a judge sharing a model with the thing it judges is the correlated-blind-spot problem
+        # §6.3 exists to prevent, and it should not pass silently.
+        click.echo(
+            f"warning: judge_model {config.llm.judge_model!r} is also the loop's or the "
+            "critique's model, so its verdicts are not independent (architecture §6.3).",
+            err=True,
+        )
+    reports = []
+    with tempfile.TemporaryDirectory(prefix="mistify-eval-") as workspace:
+        for case in cases:
+            click.echo(f"\n{case.name}: {case.summary}")
+            report = run_case(
+                case,
+                config,
+                Path(workspace),
+                runs=runs,
+                adversarial=not no_adversarial,
+                judge=judge,
+            )
+            reports.append(report)
+            _echo_case(report)
+
+    destination = write_results(reports, out or Path(config.report.output_dir))
+    click.echo(f"\nresults {destination}")
+
+    if any(not run.passed for report in reports for run in report.runs):
+        # A failing eval exits non-zero so it can gate anything, but the report is printed
+        # first: the numbers are the point, and an exit code nobody can read is not a result.
+        raise SystemExit(1)
+
+
+def _echo_case(report: CaseReport) -> None:
+    """Per-check rates, not just an aggregate: an aggregate cannot say which question failed."""
+    for name in report.check_names():
+        click.echo(f"  {report.rate_for(name):>7}  {name}")
+    click.echo(f"  {report.pass_rate:>7}  runs fully passing")
+    for run in report.runs:
+        if run.error:
+            click.echo(f"  run {run.index} did not complete: {run.error}")
+        else:
+            metrics = run.metrics
+            click.echo(
+                f"  run {run.index}: {metrics.get('steps')} steps, "
+                f"{metrics.get('notes')} note(s), {metrics.get('total_tokens'):,} tokens, "
+                f"nudges {metrics.get('coverage_nudges')}"
+            )
+
+
+def _run_agent(db: ScratchpadDB, config: MistifyConfig, adversarial: bool) -> InvestigationResult:
+    """The investigation, with credential failures turned into usage errors.
+
+    The run itself lives in `mistify.agent.runner` so the eval harness drives exactly what this
+    command drives; all this adds is the CLI's error vocabulary.
+    """
+    from mistify.agent.runner import run_investigation
+    from mistify.llm.registry import MissingCredentialError
+
+    try:
+        return run_investigation(db, config, adversarial=adversarial)
     except MissingCredentialError as exc:
         raise click.ClickException(str(exc)) from exc
-
-    toolbox = ToolBox(db, noise=config.anomaly.noise_thresholds())
-    loop = InvestigationLoop(
-        db=db,
-        provider=provider,
-        toolbox=toolbox,
-        max_tool_calls=config.pipeline.max_agent_tool_calls,
-        max_tokens=config.llm.max_tokens,
-        task_budget_tokens=config.llm.task_budget_tokens,
-        tool_result_history_steps=config.pipeline.tool_result_history_steps,
-    )
-    result = loop.run()
-
-    if adversarial:
-        try:
-            critic = build_provider(
-                config.llm.adversarial_provider_name(), config.llm.adversarial_model, config.llm
-            )
-        except MissingCredentialError as exc:
-            raise click.ClickException(str(exc)) from exc
-
-        view = MetricView(db.metrics("anomaly"))
-        raw_ids = view.text(ANOMALY_SIGNAL_TEMPLATE_IDS) or ""
-        signal_ids = [int(part) for part in raw_ids.split(",") if part.strip()]
-        run_adversarial_check(
-            db, critic, signal_ids, rebuttal_provider=provider, max_tokens=config.llm.max_tokens
-        )
-
-    return result
 
 
 def main() -> int:

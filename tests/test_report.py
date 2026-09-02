@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from mistify.agent.skeleton import INVESTIGATOR_NAME, run_skeleton_investigation
+from mistify.eval.fixtures import PLANTED_API_KEY, PLANTED_EMAILS, ROOT_CAUSE_MARKER
 from mistify.metrics import (
     ANOMALY_NEEDLE_POSITION,
     INGEST_PARSE_ERRORS,
@@ -30,7 +31,6 @@ from mistify.report.generator import (
 )
 from mistify.scratchpad.db import ScratchpadDB
 from mistify.templating.calibration import CalibrationStatus
-from tests.fixtures.synthetic_incident import PLANTED_API_KEY, PLANTED_EMAILS, ROOT_CAUSE_MARKER
 
 TRUNCATED_LIMIT = 3
 

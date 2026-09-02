@@ -194,6 +194,43 @@ the part that stays true.
 Reports are written to `report.output_dir` in `config.yaml`, which defaults to `./reports`,
 one file per incident id.
 
+### Evaluate
+
+Every eval case is a log file whose answer is known by construction, so the score is arithmetic
+rather than judgement:
+
+```bash
+uv run mistify eval --case quiet-hour --runs 3
+```
+
+`--list` shows the cases and what passing means for each. `--case` is repeatable and defaults
+to all of them; running one at a time matters on a free tier where a full sweep is several
+minutes of quota. `--no-adversarial` halves the cost. Results print per check — an aggregate
+pass rate cannot tell you *which* question failed — and are written as JSON so two sweeps can
+be diffed rather than remembered.
+
+Two cases ship today:
+
+- **pool-exhaustion** — the original incident. Must cite the pool exhaustion *and* the latency
+  precursor, and must not lead with the red herring, which fires 350 times against the root
+  cause's 40.
+- **quiet-hour** — an hour of healthy service with nothing planted. The bar is that no finding
+  is recorded at high confidence: a low or medium note describing normal operation is fine,
+  inventing a root cause is not. This is the only case that asks whether the agent makes
+  something up, which is the failure that matters most on a page that turns out to be nothing.
+
+`--judge` adds the semantic half of decision G8: a model is asked whether each claim actually
+follows from the rows it cites. `verify_citations` proves the ids exist and cannot prove the
+rows say what the note says — a measured run cited two genuine log events, both unrelated INFO
+lines from other services, for a claim about database credentials. Off by default because it
+costs a model call per note.
+
+External corpora are the plan's Phase 5 work: Loghub-2k for template precision and recall,
+LogDx-CI for end-to-end diagnosis. `EvalCase.source` is a callable that returns a path, so those
+arrive as cases rather than as a second kind of thing. Nothing here has yet been measured
+against logs this project did not generate, and the templating numbers in `docs/baseline.md`
+should be read with that in mind.
+
 ## Develop
 
 ```bash

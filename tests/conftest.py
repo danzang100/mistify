@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -12,9 +12,9 @@ import pytest
 import yaml
 
 from mistify.common.config import MistifyConfig
+from mistify.eval.fixtures import write_incident, write_quiet_hour
 from mistify.pipeline import IngestResult, ingest
 from mistify.scratchpad.db import ScratchpadDB
-from tests.fixtures.synthetic_incident import write_incident
 
 INCIDENT_ID = "test-incident"
 
@@ -157,4 +157,28 @@ def ingested(
 def loaded_db(ingested: IngestResult) -> ScratchpadDB:
     """A scratchpad loaded with the synthetic incident."""
     with ScratchpadDB(ingested.scratchpad_path) as database:
+        yield database
+
+
+@pytest.fixture(scope="session")
+def _quiet_master(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[IngestResult, MistifyConfig]:
+    """The quiet hour, ingested once per session. Same reasoning as the incident master."""
+    directory = tmp_path_factory.mktemp("quiet-master")
+    config = _scratch_config(directory)
+    source = write_quiet_hour(directory / "quiet_hour.jsonl")
+    return ingest(source, config, incident_id="quiet-hour"), config
+
+
+@pytest.fixture
+def quiet_db(
+    _quiet_master: tuple[IngestResult, MistifyConfig], config: MistifyConfig
+) -> Iterator[ScratchpadDB]:
+    """A scratchpad loaded with the negative control: an hour with nothing wrong in it."""
+    master, _ = _quiet_master
+    scratchpad = config.scratchpad_path(master.incident_id)
+    scratchpad.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(master.scratchpad_path, scratchpad)
+    with ScratchpadDB(scratchpad) as database:
         yield database

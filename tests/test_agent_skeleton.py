@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from mistify.agent.skeleton import INVESTIGATOR_NAME, run_skeleton_investigation
+from mistify.eval.fixtures import RED_HERRING_MARKER, ROOT_CAUSE_MARKER
 from mistify.metrics import (
     INVESTIGATE_INVESTIGATOR,
     INVESTIGATE_NOTES_WRITTEN,
@@ -10,7 +11,6 @@ from mistify.metrics import (
     MetricView,
 )
 from mistify.scratchpad.db import ScratchpadDB
-from tests.fixtures.synthetic_incident import RED_HERRING_MARKER, ROOT_CAUSE_MARKER
 
 
 def test_selects_the_planted_root_cause_over_the_red_herring(loaded_db: ScratchpadDB) -> None:

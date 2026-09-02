@@ -26,9 +26,9 @@ from mistify.agent.tools import (
     ToolBox,
 )
 from mistify.common.models import SEVERITIES, LogRecord, NoiseThresholds
+from mistify.eval.fixtures import RED_HERRING_MARKER, ROOT_CAUSE_MARKER
 from mistify.llm.base import ToolCall, ToolResult, ToolSpec
 from mistify.scratchpad.db import ScratchpadDB, _trace_id
-from tests.fixtures.synthetic_incident import RED_HERRING_MARKER, ROOT_CAUSE_MARKER
 
 #: The configured definition of noise (`anomaly.noise_share_threshold` /
 #: `noise_anomaly_ceiling`), stated literally so a config default drifting cannot quietly

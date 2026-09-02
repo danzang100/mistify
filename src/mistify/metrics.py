@@ -284,6 +284,30 @@ INVESTIGATE_HISTORY_COMPACTIONS = Metric("investigate", "history_compactions", "
 #: how often it had to fire.
 INVESTIGATE_COVERAGE_NUDGES = Metric("investigate", "coverage_nudges", "int")
 
+# ------------------------------------------------------------------ synthesis
+
+SYNTHESIS_PROVIDER = Metric("synthesis", "provider", "str")
+SYNTHESIS_MODEL = Metric("synthesis", "model", "str")
+SYNTHESIS_OUTCOME = Metric(
+    "synthesis",
+    "outcome",
+    "str",
+    load_bearing=True,
+    trigger_values=frozenset({"unreadable", "no_usable_citations", "empty"}),
+)
+SYNTHESIS_MODEL_CALLS = Metric("synthesis", "model_calls", "int")
+SYNTHESIS_INPUT_TOKENS = Metric("synthesis", "input_tokens", "int", token_role="input")
+SYNTHESIS_OUTPUT_TOKENS = Metric("synthesis", "output_tokens", "int", token_role="output")
+SYNTHESIS_CACHED_INPUT_TOKENS = Metric(
+    "synthesis", "cached_input_tokens", "int", token_role="cached_input"
+)
+#: Ids the conclusion named that no note had cited, and which were therefore dropped. The
+#: synthesis model has no tools and cannot gather evidence; reaching for some anyway is worth
+#: counting even when the reach is harmless.
+SYNTHESIS_DROPPED_CITATIONS = Metric(
+    "synthesis", "dropped_citations", "int", load_bearing=True, threshold=0, comparison="gt"
+)
+
 # ---------------------------------------------------------------- adversarial
 
 ADVERSARIAL_PROVIDER = Metric("adversarial", "provider", "str")
@@ -402,6 +426,14 @@ ALL_METRICS: tuple[Metric, ...] = (
     INVESTIGATE_INPUT_GROWTH,
     INVESTIGATE_HISTORY_COMPACTIONS,
     INVESTIGATE_COVERAGE_NUDGES,
+    SYNTHESIS_PROVIDER,
+    SYNTHESIS_MODEL,
+    SYNTHESIS_OUTCOME,
+    SYNTHESIS_MODEL_CALLS,
+    SYNTHESIS_INPUT_TOKENS,
+    SYNTHESIS_OUTPUT_TOKENS,
+    SYNTHESIS_CACHED_INPUT_TOKENS,
+    SYNTHESIS_DROPPED_CITATIONS,
     ADVERSARIAL_PROVIDER,
     ADVERSARIAL_MODEL,
     ADVERSARIAL_OBJECTIONS,
@@ -507,6 +539,7 @@ class StageTokens:
 #: A stage absent from here still reports its tokens, just without attribution.
 _TOKEN_CONTEXT: dict[str, tuple[Metric, Metric]] = {
     "investigate": (INVESTIGATE_MODEL, INVESTIGATE_STEPS),
+    "synthesis": (SYNTHESIS_MODEL, SYNTHESIS_MODEL_CALLS),
     "adversarial": (ADVERSARIAL_MODEL, ADVERSARIAL_MODEL_CALLS),
 }
 

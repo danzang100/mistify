@@ -9,7 +9,7 @@ import pytest
 from click.testing import CliRunner
 
 from mistify.cli import cli
-from tests.fixtures.synthetic_incident import ROOT_CAUSE_MARKER
+from mistify.eval.fixtures import ROOT_CAUSE_MARKER
 
 
 @pytest.fixture

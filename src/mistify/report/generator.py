@@ -19,6 +19,7 @@ from typing import Any
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
 from mistify import __version__
+from mistify.agent.synthesis import SYNTHESIS_MARKER
 from mistify.common.models import SEVERITIES, parse_timestamp
 from mistify.metrics import (
     ADVERSARIAL_OUTCOME,
@@ -134,9 +135,13 @@ def _rank_notes(notes: list[dict[str, Any]], scores: dict[int, float]) -> list[d
     loses the other.
     """
 
-    def key(note: dict[str, Any]) -> tuple[float, int, int]:
+    def key(note: dict[str, Any]) -> tuple[int, float, int, int]:
         cited = [int(i) for i in note["evidence"].get("template_ids", [])]
         return (
+            # A synthesis note *is* the conclusion, written from the whole scratchpad after
+            # the search finished. It leads by construction rather than by out-scoring the
+            # notes it was written from.
+            1 if note["evidence"].get(SYNTHESIS_MARKER) else 0,
             max((scores.get(i, 0.0) for i in cited), default=0.0),
             _CONFIDENCE_RANK.get(str(note["confidence"]).lower(), 0),
             -int(note["step"]),
@@ -184,6 +189,7 @@ def _describe_issues(
                 "confidence": note["confidence"],
                 "template_ids": cited,
                 "top_score": max((scores.get(i, 0.0) for i in cited), default=0.0),
+                "synthesis": bool(note["evidence"].get(SYNTHESIS_MARKER)),
                 # Only when every template it rests on is chronic. One acute template among
                 # them means the note is about the event, whatever else it mentions.
                 "chronic": bool(cited) and all(i in chronic for i in cited),

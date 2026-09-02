@@ -11,6 +11,12 @@ import pytest
 
 from mistify.common.config import MistifyConfig
 from mistify.common.models import severity_rank
+from mistify.eval.fixtures import (
+    PLANTED_API_KEY,
+    PLANTED_EMAILS,
+    PLANTED_IPS,
+    ROOT_CAUSE_MARKER,
+)
 from mistify.metrics import (
     INGEST_LINES_READ,
     INGEST_PARSE_ERRORS,
@@ -25,12 +31,6 @@ from mistify.metrics import (
 from mistify.pipeline import IngestResult, UnknownFormatError, derive_incident_id, ingest
 from mistify.scratchpad.db import ScratchpadDB
 from mistify.templating.drain_wrapper import read_snapshot
-from tests.fixtures.synthetic_incident import (
-    PLANTED_API_KEY,
-    PLANTED_EMAILS,
-    PLANTED_IPS,
-    ROOT_CAUSE_MARKER,
-)
 
 # --------------------------------------------------------------- basic load
 
