@@ -351,3 +351,69 @@ def test_scoring_a_tiny_annotated_dataset_end_to_end(tmp_path: Path) -> None:
     assert score.annotated_templates == 2
     assert score.grouping_accuracy == 1.0
     assert score.template_ratio == score.parsed_templates / 2
+
+
+# ------------------------------------------------------------- the grep baseline
+
+
+def test_the_baseline_leads_with_the_red_herring(loaded_db: ScratchpadDB) -> None:
+    """The comparison the whole fixture was built to make.
+
+    350 payment-gateway timeouts against 40 pool exhaustions: ranking error-level lines by
+    frequency picks the herring, which is what the agent has to beat to be worth its calls.
+    """
+    from mistify.eval.baselines import run_baseline
+
+    outcome = run_baseline(loaded_db, "templated")
+
+    assert outcome.top_template_id == _template_id(loaded_db, RED_HERRING_MARKER)
+    checks = _checks(loaded_db, INCIDENT_CASE)
+    assert checks[f"does-not-lead-with[{RED_HERRING_MARKER}]"] is False
+    assert checks[f"cites[{ROOT_CAUSE_MARKER}]"] is False
+
+
+def test_the_baseline_greps_the_raw_line_not_the_parsed_message(loaded_db: ScratchpadDB) -> None:
+    """Severity lives in a JSON field the message text never mentions.
+
+    Filtering the extracted message found six lines on a file with 396 at ERROR or above --
+    a baseline handicapped by a parsing stage it does not have, which flatters the agent.
+    """
+    from mistify.eval.baselines import run_baseline
+
+    assert run_baseline(loaded_db, "templated").matched_lines > 300
+
+
+def test_the_baseline_claims_nothing_on_a_quiet_file(quiet_db: ScratchpadDB) -> None:
+    """grep wins the negative control outright: no matches, so nothing to assert.
+
+    Worth stating plainly, because it is the one axis where the shell pipeline is unbeatable
+    and the agent currently is not.
+    """
+    from mistify.eval.baselines import run_baseline
+
+    outcome = run_baseline(quiet_db, "templated")
+
+    assert outcome.matched_lines == 0
+    assert quiet_db.notes() == []
+    assert _checks(quiet_db, QUIET_CASE)["invents-no-incident"] is True
+
+
+def test_the_naive_baseline_groups_worse_than_the_templated_one(loaded_db: ScratchpadDB) -> None:
+    """Control on the two baselines being different opponents.
+
+    Identical-line grouping is defeated by embedded numbers and ids; conceding this project's
+    clustering to the baseline is what makes it a fair fight rather than a straw man.
+    """
+    from mistify.eval.baselines import run_baseline
+
+    naive = run_baseline(loaded_db, "naive")
+    templated = run_baseline(loaded_db, "templated")
+
+    assert naive.groups >= templated.groups
+
+
+def test_an_unknown_baseline_is_refused(loaded_db: ScratchpadDB) -> None:
+    from mistify.eval.baselines import run_baseline
+
+    with pytest.raises(ValueError, match="templated"):
+        run_baseline(loaded_db, "regex-magic")  # type: ignore[arg-type]

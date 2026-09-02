@@ -249,6 +249,12 @@ def run_command(
     help="Case to run. Repeatable. Defaults to every case.",
 )
 @click.option("--runs", default=3, show_default=True, help="Runs per case.")
+@click.option(
+    "--baseline",
+    type=click.Choice(["naive", "templated"]),
+    default=None,
+    help="Score a grep baseline instead of the agent. No model is called.",
+)
 @click.option("--list", "list_only", is_flag=True, help="List the cases and exit.")
 @click.option("--no-adversarial", is_flag=True, help="Skip the critique, to halve the cost.")
 @click.option(
@@ -261,6 +267,7 @@ def run_command(
 def eval_command(
     case_names: tuple[str, ...],
     runs: int,
+    baseline: str | None,
     list_only: bool,
     no_adversarial: bool,
     judge: bool,
@@ -314,6 +321,7 @@ def eval_command(
                 runs=runs,
                 adversarial=not no_adversarial,
                 judge=judge,
+                baseline=baseline,
             )
             reports.append(report)
             _echo_case(report)
@@ -335,12 +343,17 @@ def _echo_case(report: CaseReport) -> None:
     for run in report.runs:
         if run.error:
             click.echo(f"  run {run.index} did not complete: {run.error}")
-        else:
-            metrics = run.metrics
+        elif run.metrics.get("baseline"):
+            m = run.metrics
             click.echo(
-                f"  run {run.index}: {metrics.get('steps')} steps, "
-                f"{metrics.get('notes')} note(s), {metrics.get('total_tokens'):,} tokens, "
-                f"nudges {metrics.get('coverage_nudges')}"
+                f"  run {run.index}: grep matched {m.get('matched_lines')} line(s) in "
+                f"{m.get('groups')} group(s), {m.get('notes')} note(s), no model calls"
+            )
+        else:
+            m = run.metrics
+            click.echo(
+                f"  run {run.index}: {m.get('steps')} steps, {m.get('notes')} note(s), "
+                f"{m.get('total_tokens'):,} tokens, nudges {m.get('coverage_nudges')}"
             )
 
 

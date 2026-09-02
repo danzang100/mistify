@@ -213,3 +213,37 @@ Worth keeping from the sweep: the coverage nudge did not fire once, which is cor
 template on a quiet file spans the whole hour, so all of them are chronic, and chronic templates
 are excluded from the unexplained-signal check. The exclusion added for the pool-exhaustion case
 turns out to be what keeps the negative control quiet as well.
+
+## The grep baseline
+
+`mistify eval --baseline templated` — no model calls, scored by the same checks as an agent
+run, because comparing a number to an anecdote is not a comparison.
+
+Two opponents. **naive** is the literal pipeline: severity-keyword filter, group identical
+lines, rank by count. **templated** concedes this project's own clustering to the baseline
+before ranking, which asks the harder question — does the *investigation* add anything beyond
+ranking error-level templates by frequency?
+
+| Check | grep (naive) | grep (templated) | agent |
+|---|---|---|---|
+| cites the root cause | 0/1 | 0/1 | 11/11 |
+| cites the precursor | 0/1 | 0/1 | 1/11 |
+| does not lead with the herring | 0/1 | 0/1 | 11/11 |
+| quiet hour: invents nothing | 1/1 | 1/1 | 0/3 |
+| Tokens | 0 | 0 | 35k–99k |
+
+**The two fail in opposite directions, and that is the finding.** On the incident, grep matches
+396 lines and leads with the red herring in both variants — 350 payment-gateway timeouts drown
+40 pool exhaustions, which is exactly what the fixture was built to provoke. The agent never
+once led with the herring and always cited the root cause. On the quiet hour, grep matches
+nothing, writes nothing, and wins outright; the agent wrote a confident finding all three times.
+
+So the model calls buy discrimination on a real incident, and cost restraint on a quiet one.
+That is a defensible trade to state out loud, and it is the first time this project has had a
+floor to measure against rather than only a ceiling.
+
+One correction worth recording. The first version filtered the *extracted message* and found
+six matching lines on a file with 396 at ERROR or above, because the JSON fixture carries
+severity in a `level` field the message text never mentions. That baseline scored better than
+it deserved on the herring check and flattered the agent. `grep` reads the raw line, so the
+filter now does too.

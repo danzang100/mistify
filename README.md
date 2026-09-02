@@ -219,6 +219,11 @@ Two cases ship today:
   inventing a root cause is not. This is the only case that asks whether the agent makes
   something up, which is the failure that matters most on a page that turns out to be nothing.
 
+`--baseline naive|templated` replaces the investigation with a grep pipeline and scores it
+with the same checks — no model calls. On the incident both variants lead with the red herring;
+on the quiet hour both correctly claim nothing. The agent is the mirror image. See
+`docs/baseline.md`.
+
 `--judge` adds the semantic half of decision G8: a model is asked whether each claim actually
 follows from the rows it cites. `verify_citations` proves the ids exist and cannot prove the
 rows say what the note says — a measured run cited two genuine log events, both unrelated INFO

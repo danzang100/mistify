@@ -104,11 +104,16 @@ def run_case(
     runs: int = 3,
     adversarial: bool = True,
     judge: bool = False,
+    baseline: str | None = None,
 ) -> CaseReport:
     """Run one case `runs` times and score each one.
 
     `judge` adds the semantic check from decision G8, which costs a model call per note and is
     off by default for that reason.
+
+    `baseline` replaces the investigation with a grep pipeline, scored by the same checks. It
+    calls no model, so `runs` is forced to one: the baseline is deterministic and repeating it
+    would only repeat the same answer at the cost of the ingest.
     """
     from mistify.agent.runner import run_investigation
     from mistify.llm.registry import build_provider
@@ -117,15 +122,26 @@ def run_case(
     workspace.mkdir(parents=True, exist_ok=True)
     source = case.source(workspace)
 
-    for index in range(1, runs + 1):
+    for index in range(1, (1 if baseline else runs) + 1):
         incident_id = f"eval-{case.name}-{index}"
         run = RunReport(case=case.name, index=index)
         try:
             result = ingest(source, config, incident_id=incident_id)
             with ScratchpadDB(result.scratchpad_path) as db:
-                run_investigation(db, config, adversarial=adversarial)
+                if baseline:
+                    from mistify.eval.baselines import run_baseline
+
+                    outcome = run_baseline(db, baseline)  # type: ignore[arg-type]
+                    run.metrics["baseline"] = outcome.name
+                    run.metrics["matched_lines"] = outcome.matched_lines
+                    run.metrics["groups"] = outcome.groups
+                    # The baseline records no investigate metrics, so the note count comes
+                    # from the notes themselves rather than from a stage that never ran.
+                    run.metrics["notes"] = len(db.notes())
+                else:
+                    run_investigation(db, config, adversarial=adversarial)
                 run.checks = score_run(db, case)
-                if judge:
+                if judge and not baseline:
                     from mistify.eval.judge import judge_notes, judgement_checks
 
                     judge_provider = build_provider(
@@ -134,7 +150,12 @@ def run_case(
                     run.checks += judgement_checks(
                         judge_notes(db, judge_provider, max_tokens=config.llm.max_tokens)
                     )
-                run.metrics = _collect_metrics(db)
+                # Baseline-specific keys win: `_collect_metrics` reports None for every stage
+                # the baseline did not run, and a None would overwrite a real count.
+                run.metrics = {
+                    **_collect_metrics(db),
+                    **{k: v for k, v in run.metrics.items() if v is not None},
+                }
         except Exception as exc:
             # One run failing must not lose the runs already done. Quota exhaustion mid-sweep
             # is routine on a free tier, and a harness that discards four good runs because
