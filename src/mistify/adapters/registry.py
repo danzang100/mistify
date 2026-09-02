@@ -22,6 +22,7 @@ __all__ = [
 class UnknownAdapterError(ValueError):
     """`adapters.registered` names a format nothing implements."""
 
+
 #: Elastic and Loki are still outstanding: their export shapes are conventions rather than a
 #: specification, and the build plan is explicit that hand-authored fixtures for them get the
 #: nesting and label conventions subtly wrong, which is the whole reason those adapters exist.

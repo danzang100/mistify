@@ -194,6 +194,25 @@ the part that stays true.
 Reports are written to `report.output_dir` in `config.yaml`, which defaults to `./reports`,
 one file per incident id.
 
+### Unknown formats
+
+A file no adapter recognises is read anyway. With `bootstrap.enabled`, the pipeline tries to
+work the format out: structural inspection first — timestamp shapes, severity words, field
+order — which costs nothing and handles most real formats, then a model only if that fails, and
+in either case a match-rate gate against lines the inference never saw. Nothing is persisted or
+used below `bootstrap.min_match_rate`, and a schema that clears it is saved so the next file
+from that source skips inference entirely.
+
+The model is never asked for a regex. It is asked to quote the substrings — which part is the
+timestamp, which is the severity — and each claim is checked against the line it came from
+before a schema is built. A quoted substring can be verified; a generated pattern can only be
+trusted, and a persisted one would be a pattern nobody reviewed running on every future file.
+
+Failing all that, the file is read line by line: no real timestamps, severity guessed from the
+text, and the report says so in words rather than presenting the resulting incident window as a
+fact. It is off by default — the architecture calls this stage's failure mode silent, and it is
+opted into rather than inherited.
+
 ### Evaluate
 
 Every eval case is a log file whose answer is known by construction, so the score is arithmetic

@@ -84,6 +84,54 @@ def derive_incident_id(source: str | Path) -> str:
     return f"{datetime.now(UTC):%Y-%m-%d}-{slug}"
 
 
+def _bootstrap(
+    source_path: Path, config: MistifyConfig, reason: str
+) -> tuple[LogAdapter, str] | None:
+    """Try to work out an unknown format, returning an adapter and what to record about it.
+
+    Returns None when nothing cleared the match-rate gate, which leaves the caller on its
+    existing path -- raw lines, or refusal. A bootstrapper that returned a low-confidence
+    schema rather than nothing would be the silent failure the architecture warns about.
+
+    The provider is built only when the structural pass has already been given its chance, and
+    a missing credential is not fatal here: inference is an improvement on reading raw lines,
+    never a requirement for it.
+    """
+    from mistify.bootstrap import bootstrap_format, load_schemas, save_schema
+    from mistify.bootstrap.adapter import InferredAdapter
+
+    schema_dir = Path(".cache") / "inferred"
+    lines = read_sample(source_path, max(config.bootstrap.sample_size * 10, 1000))
+
+    provider = None
+    if config.bootstrap.use_model:
+        try:
+            from mistify.llm.registry import build_provider
+
+            provider = build_provider(config.llm.provider, config.llm.bootstrap_model, config.llm)
+        except Exception:
+            # Inference improves on reading raw lines but is never required for it, so
+            # nothing here is allowed to fail the ingest.
+            provider = None
+
+    result = bootstrap_format(
+        lines,
+        known=load_schemas(schema_dir),
+        provider=provider,
+        min_match_rate=config.bootstrap.min_match_rate,
+        sample_size=config.bootstrap.sample_size,
+    )
+    if result.schema is None:
+        return None
+
+    name = f"inferred_{result.schema.timestamp}"
+    if not result.route.startswith("known:"):
+        # Persisted only once it has passed the gate, so the next file from this source skips
+        # inference entirely -- and so a schema nobody validated never reaches the cache.
+        save_schema(result.schema, schema_dir, name)
+    return InferredAdapter(result.schema, name=name), f"{reason}; {result.reason}"
+
+
 def ingest(
     source: str | Path,
     config: MistifyConfig,
@@ -121,13 +169,19 @@ def ingest(
                 f"no registered adapter matched (best confidence {best:.2f}, threshold "
                 f"{config.adapters.min_detect_confidence:.2f})"
             )
-            if config.adapters.on_unknown_format == "error":
+            if config.bootstrap.enabled:
+                bootstrapped = _bootstrap(source_path, config, reason)
+                if bootstrapped is not None:
+                    adapter, fallback_reason = bootstrapped
+
+            if adapter is None and config.adapters.on_unknown_format == "error":
                 raise UnknownFormatError(f"{reason} for {source_path}")
-            # Degrade rather than refuse, and record that it happened. The metric is
-            # load-bearing: a raw-line read has no real timestamps, so the incident window and
-            # the burstiness term describe line order, and the report has to say so.
-            adapter = get_adapter("raw_lines")
-            fallback_reason = reason
+            if adapter is None:
+                # Degrade rather than refuse, and record that it happened. The metric is
+                # load-bearing: a raw-line read has no real timestamps, so the incident window
+                # and the burstiness term describe line order, and the report has to say so.
+                adapter = get_adapter("raw_lines")
+                fallback_reason = reason
 
     # Opt-in reversible redaction. The vault is its own file, never a table in the
     # scratchpad: the investigator's read-only SQL channel can read any table in the database
@@ -152,7 +206,7 @@ def ingest(
     calibration = None
     sim_th = config.drain3.sim_th
     if config.drain3.calibrate:
-        sample_adapter = get_adapter(adapter.format_name)
+        sample_adapter = adapter.fresh()
         sample_messages: list[str] = []
         for record in sample_adapter.parse(source_path):
             sample_messages.append(redactor.redact(record.message))

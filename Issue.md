@@ -20,6 +20,7 @@ or one of the design documents, the fix column says which document to amend.
 | 7. The provider seam drops thinking blocks | ~~Medium~~ | **Fixed** — it was a hard requirement, not a cost |
 | 8. The anomaly score has no duration term | Medium | 4 — worked around, not solved |
 | 9. Conversation growth is bounded but not budgeted | Medium | 4 |
+| 13. `parse_timestamp` cannot read common log format | Low | 5 |
 | 12. Model requests had no timeout | ~~High~~ | **Fixed** |
 | 11. The quiet-hour bar cannot tell right from wrong | High | next |
 | 10. The investigator under-cites what it reasons over | ~~Medium~~ | **Fixed** — the check moved earlier, not a better prompt |
@@ -371,3 +372,25 @@ rather than any particular model.
 bounded including ones added later. The conversion to the SDK's milliseconds is its own tested
 function: the wrong factor gives a 120-millisecond timeout that fails everything or a
 120,000-second one that fails nothing, and neither is visible by reading the call site.
+
+---
+
+## 13 — `parse_timestamp` cannot read common log format
+
+**Problem.** `30/Aug/2026:14:22:01 +0000` — the Apache/nginx access-log timestamp — raises
+`ValueError`. The bootstrapper recognises the shape, so a CLF file infers a schema that matches
+every line and then produces zero records.
+
+**Currently contained, not fixed.** The match-rate gate now checks that the timestamp it
+extracts actually parses, so a CLF file fails the gate and falls to raw-line mode: readable,
+labelled, and honest. Before that check the same file validated at 100% and ingested nothing,
+silently — the exact failure the gate exists to prevent, and it was the gate that was letting it
+through.
+
+**Fix.** Teach `parse_timestamp` the CLF shape. It is a self-contained addition to one function
+with an existing test module; the reason it is not done here is that it belongs to the shared
+timestamp parser rather than to the bootstrapper, and widening a shared parser deserves its own
+change.
+
+**Where.** `mistify/common/models.py::parse_timestamp`, and the `clf` entry in
+`mistify/bootstrap/schema.py::TIMESTAMP_PATTERNS` documents the situation.

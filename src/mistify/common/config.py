@@ -66,6 +66,16 @@ class AdaptersConfig(_Strict):
 class BootstrapConfig(_Strict):
     """Unknown-format bootstrapper settings. Consumed from Phase 4 onward."""
 
+    #: Off by default. The architecture's risk table calls this stage's failure *silent* -- a
+    #: confidently wrong schema yields templates that are garbage with no error thrown -- so it
+    #: is opted into rather than inherited. The match-rate gate runs either way; this decides
+    #: whether inference is attempted at all.
+    enabled: bool = False
+
+    #: Whether the model may be asked when looking at the lines was not enough. The structural
+    #: pass costs nothing and handles most formats; this is the part that costs a call.
+    use_model: bool = True
+
     sample_size: int = Field(default=100, ge=1)
     llm_fallback_sample_size: int = Field(default=40, ge=1)
     min_match_rate: float = Field(default=0.85, ge=0.0, le=1.0)

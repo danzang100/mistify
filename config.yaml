@@ -19,7 +19,14 @@ adapters:
   # that starts with less.
   on_unknown_format: raw_lines
 
-bootstrap:            # consumed from Phase 4
+bootstrap:
+  # Off by default. The architecture calls this stage's failure silent -- a confidently wrong
+  # schema yields garbage templates with no error thrown -- so inference is opted into. The
+  # match-rate gate below runs either way and is never skipped.
+  enabled: false
+  # The structural pass costs nothing and handles most formats; this is the part that costs a
+  # model call, and it only runs when structure alone was not enough.
+  use_model: true
   sample_size: 100
   llm_fallback_sample_size: 40
   min_match_rate: 0.85
