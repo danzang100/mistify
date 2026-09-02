@@ -28,6 +28,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from mistify.common.models import SYNTHESIS_MARKER
 from mistify.llm.base import LLMProvider, Message, Usage
 from mistify.metrics import (
     SYNTHESIS_CACHED_INPUT_TOKENS,
@@ -41,12 +42,11 @@ from mistify.metrics import (
 )
 from mistify.scratchpad.db import ScratchpadDB
 
-__all__ = ["SYNTHESIS_MARKER", "SynthesisResult", "run_synthesis"]
+__all__ = ["SynthesisResult", "run_synthesis"]
 
 #: Marks the conclusion in a note's evidence. The report ranks it first, and the adversarial
 #: pass critiques it like any other note -- it is a note, not a separate kind of object, so
 #: everything downstream keeps working without knowing this step exists.
-SYNTHESIS_MARKER = "synthesis"
 
 SYNTHESIS_PROMPT = """You are writing the conclusion of a log investigation that has already
 been carried out.

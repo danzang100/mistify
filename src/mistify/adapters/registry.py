@@ -6,12 +6,17 @@ from pathlib import Path
 
 from mistify.adapters.base import LogAdapter
 from mistify.adapters.json_lines import JsonLinesAdapter
+from mistify.adapters.otlp import OtlpAdapter
 
 __all__ = ["ADAPTERS", "detect_format", "get_adapter", "read_sample"]
 
-#: Phase 4 registers elastic, loki and otlp here.
+#: Elastic and Loki are still outstanding: their export shapes are conventions rather than a
+#: specification, and the build plan is explicit that hand-authored fixtures for them get the
+#: nesting and label conventions subtly wrong, which is the whole reason those adapters exist.
+#: OTLP is a specification, so it can be written correctly without a running stack.
 ADAPTERS: dict[str, type[LogAdapter]] = {
     JsonLinesAdapter.format_name: JsonLinesAdapter,
+    OtlpAdapter.format_name: OtlpAdapter,
 }
 
 

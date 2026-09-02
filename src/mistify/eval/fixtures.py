@@ -32,6 +32,7 @@ __all__ = [
     "generate_incident",
     "generate_quiet_hour",
     "write_incident",
+    "write_incident_otlp",
     "write_quiet_hour",
 ]
 
@@ -320,4 +321,82 @@ def write_quiet_hour(path: str | Path, total_lines: int = 5000, seed: int = 2026
     with target.open("w", encoding="utf-8") as handle:
         for record in generate_quiet_hour(total_lines=total_lines, seed=seed):
             handle.write(json.dumps(record) + "\n")
+    return target
+
+
+# ------------------------------------------------------------------ OTLP export
+
+#: severityNumber for each level this fixture emits. The OTLP logs data model assigns four
+#: numbers per level; the middle of each band is used so the fixture is not accidentally
+#: testing the boundaries the adapter's own tests already cover.
+_OTLP_SEVERITY = {"DEBUG": 5, "INFO": 9, "WARN": 13, "ERROR": 17, "FATAL": 21}
+
+
+def _otlp_record(record: dict[str, object]) -> dict[str, object]:
+    """One generated line as an OTLP `LogRecord`."""
+    ts = datetime.fromisoformat(str(record["timestamp"]).replace("Z", "+00:00"))
+    level = str(record["level"])
+    attributes = [
+        {"key": key, "value": {"stringValue": str(value)}}
+        for key, value in record.items()
+        if key not in {"timestamp", "service", "level", "message", "trace_id"}
+    ]
+    return {
+        # int64 as a string, per the protobuf-JSON mapping: JSON cannot hold nanoseconds
+        # exactly as a number, and an exporter that emits one is out of spec.
+        "timeUnixNano": str(int(ts.timestamp() * 1_000_000_000)),
+        "observedTimeUnixNano": str(int(ts.timestamp() * 1_000_000_000)),
+        "severityNumber": _OTLP_SEVERITY.get(level, 9),
+        "severityText": level,
+        "body": {"stringValue": str(record["message"])},
+        "attributes": attributes,
+        "traceId": str(record["trace_id"]),
+    }
+
+
+def write_incident_otlp(path: str | Path, total_lines: int = 5000, seed: int = 20260830) -> Path:
+    """The same incident, exported as line-delimited OTLP logs.
+
+    Deliberately the *same* generator as `write_incident`. The eval case built on this asks one
+    question -- does an investigation reach the same conclusion when the format changes -- and
+    it can only ask that if the incident underneath is identical. A separate OTLP scenario would
+    have measured two things at once and attributed the difference to whichever was convenient.
+
+    One export request per service per batch, because that is what a collector emits: records
+    are grouped by resource, and an adapter that only ever sees one resource per request has
+    not been tested against the shape it will actually meet.
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    records = generate_incident(total_lines=total_lines, seed=seed)
+
+    # Batched by service in time order, so each request carries one resource and the file
+    # preserves the incident's ordering.
+    batches: list[tuple[str, list[dict[str, object]]]] = []
+    for record in records:
+        service = str(record["service"])
+        if not batches or batches[-1][0] != service or len(batches[-1][1]) >= 50:
+            batches.append((service, []))
+        batches[-1][1].append(record)
+
+    with target.open("w", encoding="utf-8") as handle:
+        for service, batch in batches:
+            request = {
+                "resourceLogs": [
+                    {
+                        "resource": {
+                            "attributes": [
+                                {"key": "service.name", "value": {"stringValue": service}}
+                            ]
+                        },
+                        "scopeLogs": [
+                            {
+                                "scope": {"name": "mistify.fixture", "version": "1"},
+                                "logRecords": [_otlp_record(r) for r in batch],
+                            }
+                        ],
+                    }
+                ]
+            }
+            handle.write(json.dumps(request) + "\n")
     return target

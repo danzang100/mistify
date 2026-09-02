@@ -10,8 +10,9 @@ pipeline:
 
 adapters:
   auto_detect: true
-  # Phase 4 adds: elastic, loki, otlp
-  registered: [json_lines]
+  # Elastic and Loki still outstanding -- their export shapes need a live stack to fixture
+  # honestly, and hand-authored ones get the quirks wrong that the adapters exist to absorb.
+  registered: [json_lines, otlp]
   min_detect_confidence: 0.6
 
 bootstrap:            # consumed from Phase 4

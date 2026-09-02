@@ -19,8 +19,13 @@ from typing import Any
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
 from mistify import __version__
-from mistify.agent.synthesis import SYNTHESIS_MARKER
-from mistify.common.models import SEVERITIES, parse_timestamp
+from mistify.common.models import SEVERITIES
+from mistify.findings import (
+    chronic_template_ids,
+    describe_issues,
+    duration_minutes,
+    rank_notes,
+)
 from mistify.metrics import (
     ADVERSARIAL_OUTCOME,
     ADVERSARIAL_UNEXPLAINED_SIGNAL,
@@ -110,94 +115,6 @@ def verify_citations(db: ScratchpadDB) -> tuple[dict[int, list[dict[str, Any]]],
     return cited_events, warnings
 
 
-#: Confidence as an order, so notes can be ranked without a model.
-_CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
-
-#: A template active for at least this share of the log is chronic rather than part of the
-#: event: it was already happening before the incident and did not stop after it.
-_CHRONIC_SHARE = 0.9
-
-
-def _rank_notes(notes: list[dict[str, Any]], scores: dict[int, float]) -> list[dict[str, Any]]:
-    """Every recorded hypothesis, most significant first.
-
-    Not in the order they were written. The loop is told to conclude last and does not reliably
-    comply -- across three runs of the same incident the first note was an early narrow
-    hypothesis twice, and the last one was a deliberate aside ("these timeouts are separate")
-    once. Neither position means anything.
-
-    Ranked on the anomaly score of the templates each note cites, which no model touched. Two
-    runs that reason differently but reach the same templates therefore order their issues the
-    same way, which is what makes one report comparable to the next.
-
-    This is an ordering, not a filter. Every note appears, because an investigation that found
-    two unrelated problems has found two problems, and a report with room for one of them
-    loses the other.
-    """
-
-    def key(note: dict[str, Any]) -> tuple[int, float, int, int]:
-        cited = [int(i) for i in note["evidence"].get("template_ids", [])]
-        return (
-            # A synthesis note *is* the conclusion, written from the whole scratchpad after
-            # the search finished. It leads by construction rather than by out-scoring the
-            # notes it was written from.
-            1 if note["evidence"].get(SYNTHESIS_MARKER) else 0,
-            max((scores.get(i, 0.0) for i in cited), default=0.0),
-            _CONFIDENCE_RANK.get(str(note["confidence"]).lower(), 0),
-            -int(note["step"]),
-        )
-
-    return sorted(notes, key=key, reverse=True)
-
-
-def _duration_minutes(first: str | None, last: str | None) -> float | None:
-    """Minutes between two scratchpad timestamps, or None if either is missing."""
-    if not first or not last:
-        return None
-    return (parse_timestamp(last) - parse_timestamp(first)).total_seconds() / 60
-
-
-def _chronic_template_ids(templates: list[dict[str, Any]], log_minutes: float | None) -> set[int]:
-    """Templates active across essentially the whole log.
-
-    A template that was firing before the incident began and kept firing after it ended is
-    background, not event. Saying so is what stops a chronic error stream from being read as
-    part of an outage it merely overlapped with.
-    """
-    if not log_minutes:
-        return set()
-    chronic = set()
-    for template in templates:
-        minutes = _duration_minutes(template["first_seen"], template["last_seen"])
-        if minutes is not None and minutes >= log_minutes * _CHRONIC_SHARE:
-            chronic.add(int(template["template_id"]))
-    return chronic
-
-
-def _describe_issues(
-    ranked: list[dict[str, Any]], scores: dict[int, float], chronic: set[int]
-) -> list[dict[str, Any]]:
-    """The ranked notes as the report's overview of what was found."""
-    issues = []
-    for position, note in enumerate(ranked, start=1):
-        cited = [int(i) for i in note["evidence"].get("template_ids", [])]
-        issues.append(
-            {
-                "rank": position,
-                "note": note["note"],
-                "step": note["step"],
-                "confidence": note["confidence"],
-                "template_ids": cited,
-                "top_score": max((scores.get(i, 0.0) for i in cited), default=0.0),
-                "synthesis": bool(note["evidence"].get(SYNTHESIS_MARKER)),
-                # Only when every template it rests on is chronic. One acute template among
-                # them means the note is about the event, whatever else it mentions.
-                "chronic": bool(cited) and all(i in chronic for i in cited),
-            }
-        )
-    return issues
-
-
 def _at_a_glance(
     db: ScratchpadDB,
     view: MetricView,
@@ -234,7 +151,7 @@ def _at_a_glance(
                 "template_id": template_id,
                 "first_seen": template["first_seen"],
                 "last_seen": template["last_seen"],
-                "minutes": _duration_minutes(template["first_seen"], template["last_seen"]),
+                "minutes": duration_minutes(template["first_seen"], template["last_seen"]),
                 "occurrence_count": template["occurrence_count"],
                 "max_severity": template["max_severity"],
                 "chronic": template_id in chronic,
@@ -248,7 +165,7 @@ def _at_a_glance(
         "window_is_from_verdict": bool(cited),
         "first_ts": first_ts,
         "last_ts": last_ts,
-        "duration_minutes": _duration_minutes(first_ts, last_ts),
+        "duration_minutes": duration_minutes(first_ts, last_ts),
         "spans": spans,
         "chronic_template_ids": sorted(chronic & set(signal_ids)),
         # Severity order, not alphabetical, and loudest first: a reader scans for FATAL.
@@ -329,10 +246,10 @@ def collect(db: ScratchpadDB) -> ReportData:
         int(t["template_id"]): float(t["anomaly_score"])
         for t in db.top_templates(limit=max(db.template_count(), 1), order_by="anomaly_score")
     }
-    ranked = _rank_notes(notes, scores)
+    ranked = rank_notes(notes, scores)
     headline = ranked[0] if ranked else None
     log_first, log_last = db.time_bounds()
-    chronic = _chronic_template_ids(top_templates, _duration_minutes(log_first, log_last))
+    chronic = chronic_template_ids(top_templates, duration_minutes(log_first, log_last))
     health_signals, health_detail = _split_health(metrics)
     objections = db.adversarial_objections()
 
@@ -369,7 +286,7 @@ def collect(db: ScratchpadDB) -> ReportData:
         "token_stages": token_stages,
         "token_total": total_tokens(token_stages),
         "headline": headline,
-        "issues": _describe_issues(ranked, scores, chronic),
+        "issues": describe_issues(ranked, scores, chronic),
         "glance": _at_a_glance(db, view, headline, top_templates, chronic),
         "health_signals": health_signals,
         "health_detail": health_detail,

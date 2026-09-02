@@ -16,7 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from mistify.eval.cases import EvalCase
-from mistify.report.generator import collect, verify_citations
+from mistify.findings import rank_notes
+from mistify.report.generator import verify_citations
 from mistify.scratchpad.db import ScratchpadDB
 
 __all__ = ["Check", "score_run"]
@@ -63,17 +64,29 @@ def _cited_templates(db: ScratchpadDB) -> set[int]:
 def _leading_templates(db: ScratchpadDB) -> set[int]:
     """Templates cited by the issue the report leads with.
 
-    Taken from `collect`, the report's own ranking, rather than recomputed here. A scorer that
-    ranked notes its own way would measure a document nobody reads, and would keep agreeing
-    with itself after the report changed.
+    Ranked by `findings.rank_notes`, the same function the report renders from, so the score
+    and the document cannot disagree about which finding leads. It used to call the report's
+    `collect()` -- building health warnings, token totals and the whole glance section -- to
+    read one list, which coupled scoring to the shape of a document instead of to the shape of
+    an investigation.
 
     "Leading" is one issue, not every high-confidence note. An investigation that concludes on
     the outage and separately records "these timeouts are a distinct pre-existing problem" has
     done the right thing with a red herring; failing it for mentioning the herring at all would
     push the model into ignoring it rather than dismissing it.
     """
-    issues = collect(db)["issues"]
-    return {int(i) for i in issues[0]["template_ids"]} if issues else set()
+    notes = [
+        {"note": n.note, "step": n.step, "confidence": n.confidence, "evidence": n.evidence}
+        for n in db.notes()
+    ]
+    if not notes:
+        return set()
+    scores = {
+        int(t["template_id"]): float(t["anomaly_score"])
+        for t in db.top_templates(limit=max(db.template_count(), 1), order_by="anomaly_score")
+    }
+    leading = rank_notes(notes, scores)[0]
+    return {int(i) for i in leading["evidence"].get("template_ids", [])}
 
 
 def score_run(db: ScratchpadDB, case: EvalCase) -> list[Check]:

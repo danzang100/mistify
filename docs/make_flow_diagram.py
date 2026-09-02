@@ -87,10 +87,10 @@ X1, WCOL = 40, 400
 y = 110
 
 stage(X1, y, WCOL, 92, "1 · Ingest", [
-    "adapters/registry · auto-detect by confidence",
-    "json_lines only · elastic, loki, otlp = Phase 4",
+    "json_lines + otlp · detect floor 0.6, no overlap",
+    "elastic / loki need a live stack to fixture honestly",
     "derive_incident_id · an incident begins here",
-], PARTIAL, "PHASE 1")
+], PARTIAL, "PHASE 1/4")
 arrow(X1 + WCOL / 2, y + 92, X1 + WCOL / 2, y + 122)
 y += 122
 
@@ -173,15 +173,15 @@ stage(X3, y3, 460, 128, "Eval harness", [
     "runs through the same entry point as the CLI",
     "scores the scratchpad, never the rendered report",
     "per-check rates · JSON output · FIXTURE_VERSION",
-    "692 tests · 97% coverage · ruff + mypy clean",
+    "720 tests · ruff + mypy clean · grep baseline scored",
 ], DONE, "PHASE 5")
 y3 += 158
 
-stage(X3, y3, 460, 110, "Case: pool-exhaustion", [
-    "root cause + precursor cited, herring not led with",
+stage(X3, y3, 460, 110, "Cases: pool-exhaustion (+otlp)", [
+    "same incident in two formats, one scorer",
+    "grep baseline leads with the herring: agent never did",
     "coverage nudge fixed 0/10 precursor citation",
-    "not yet swept under the harness",
-], PARTIAL, "MEASURED 1x")
+], PARTIAL, "MEASURED")
 y3 += 140
 
 stage(X3, y3, 460, 128, "Case: quiet-hour", [
@@ -201,7 +201,7 @@ stage(X3, y3, 460, 92, "Templating eval", [
 y3 += 122
 
 stage(X3, y3, 460, 92, "Not started", [
-    "Phase 4: elastic / loki / otlp adapters, bootstrapper",
+    "Phase 4: elastic / loki adapters, bootstrapper",
     "Phase 5: LogDx-CI end-to-end diagnosis eval",
     "Phase 6: MCP server, packaging",
 ], TODO, "PHASE 4-6")

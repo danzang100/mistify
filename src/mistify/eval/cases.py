@@ -23,6 +23,7 @@ from mistify.eval.fixtures import (
     RED_HERRING_MARKER,
     ROOT_CAUSE_MARKER,
     write_incident,
+    write_incident_otlp,
     write_quiet_hour,
 )
 
@@ -77,6 +78,22 @@ CASES: tuple[EvalCase, ...] = (
             "leads with it.",
             "The precursor is the case's real difficulty: it is WARN-level, ends before the "
             "outage begins, and every run measured before the coverage nudge omitted it.",
+        ),
+    ),
+    EvalCase(
+        name="pool-exhaustion-otlp",
+        summary="The same incident, exported as OTLP logs. Does the format survive the adapter?",
+        source=lambda directory: write_incident_otlp(directory / "pool_exhaustion_otlp.jsonl"),
+        expects_incident=True,
+        must_cite=(ROOT_CAUSE_MARKER, PRECURSOR_MARKER),
+        must_not_lead=(RED_HERRING_MARKER,),
+        notes=(
+            "Deliberately the same generator as pool-exhaustion, so the only variable is the "
+            "format. A separate OTLP scenario would have measured two things at once.",
+            "Severity moves from a JSON level field to a numeric severityNumber in bands, the "
+            "service name moves from the record to the resource, and timestamps become "
+            "nanosecond strings. Any of those read wrongly changes the ranking, not just the "
+            "parse.",
         ),
     ),
     EvalCase(

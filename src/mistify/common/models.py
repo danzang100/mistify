@@ -15,6 +15,7 @@ from dateutil import parser as date_parser
 
 __all__ = [
     "SEVERITIES",
+    "SYNTHESIS_MARKER",
     "LogRecord",
     "NoiseThresholds",
     "ScratchpadNote",
@@ -203,6 +204,14 @@ class TemplateSummary:
     @property
     def max_severity(self) -> str:
         return SEVERITIES[self.max_severity_rank]
+
+
+#: Evidence key marking a note as the synthesised conclusion rather than a step of the search.
+#: It lives here, beside the note it describes, because both the writer and every reader need
+#: it: the agent sets it, the report ranks on it, and the eval scores against it. Defining it in
+#: the writer made the report import from the agent, which is the wrong direction -- rendering
+#: should depend on the data model, never on whichever stage happened to produce the row.
+SYNTHESIS_MARKER = "synthesis"
 
 
 @dataclass(slots=True)
