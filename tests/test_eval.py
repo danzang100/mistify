@@ -510,3 +510,49 @@ def test_a_run_that_never_reached_the_scratchpad_is_not_scored(
 
     assert report.runs[0].error is not None
     assert report.runs[0].scored is False
+
+
+def test_each_run_is_reported_under_its_own_incident_id(tmp_path: Path, config: object) -> None:
+    """The copy carries the master's identity until it is retagged.
+
+    Every report rendered from a run named `...-master`, so a saved report misidentified which
+    run produced it -- the sort of thing that is trusted and then quietly misfiles a result.
+    """
+    from mistify.eval.harness import run_case
+
+    reports = tmp_path / "out"
+    report = run_case(
+        get_case("quiet-hour"),
+        config,
+        tmp_path / "work",
+        runs=1,  # type: ignore[arg-type]
+        baseline="templated",
+        report_dir=reports,
+    )
+
+    written = Path(report.runs[0].report_path or "")
+    assert written.name == "eval-quiet-hour-1.md"
+    assert "# Incident report: eval-quiet-hour-1" in written.read_text(encoding="utf-8")
+
+
+def test_a_sweep_keeps_the_report_behind_every_score(tmp_path: Path, config: object) -> None:
+    """The checks say whether a run passed; only the report says what it concluded.
+
+    A sweep that kept just the score could not be re-read afterwards to find out why, which is
+    exactly what happened to this project's first nine runs.
+    """
+    from mistify.eval.harness import run_case
+
+    reports = tmp_path / "out"
+    report = run_case(
+        get_case("pool-exhaustion"),
+        config,
+        tmp_path / "work",
+        runs=1,  # type: ignore[arg-type]
+        baseline="templated",
+        report_dir=reports,
+    )
+
+    body = Path(report.runs[0].report_path or "").read_text(encoding="utf-8")
+    assert "## What was found" in body
+    assert "grep baseline" in body

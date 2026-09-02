@@ -37,6 +37,11 @@ class RunReport:
     index: int
     checks: list[Check] = field(default_factory=list)
     metrics: dict[str, Any] = field(default_factory=dict)
+    #: Where this run's rendered report was written, when one was kept. The checks say whether
+    #: a run passed; only the report says what it actually concluded, and a sweep that keeps
+    #: just the score cannot be re-read afterwards to find out why.
+    report_path: str | None = None
+
     #: Set when the run never produced a scratchpad to score -- a missing credential, a
     #: provider that gave up. Distinct from a run that finished and failed its checks, which
     #: is a result rather than an absence.
@@ -119,6 +124,7 @@ def run_case(
     adversarial: bool = True,
     judge: bool = False,
     baseline: str | None = None,
+    report_dir: Path | None = None,
 ) -> CaseReport:
     """Run one case `runs` times and score each one.
 
@@ -168,6 +174,9 @@ def run_case(
             scratchpad.unlink(missing_ok=True)
             shutil.copyfile(master.scratchpad_path, scratchpad)
             with ScratchpadDB(scratchpad) as db:
+                # The copy carries the master's identity; without this every report rendered
+                # from a run names the wrong incident.
+                db.rename_incident(incident_id)
                 if baseline:
                     from mistify.eval.baselines import run_baseline
 
@@ -205,6 +214,12 @@ def run_case(
                     **_collect_metrics(db),
                     **{k: v for k, v in run.metrics.items() if v is not None},
                 }
+                if report_dir is not None:
+                    # Rendered from the scratchpad, so it costs nothing and is written even
+                    # for a run that errored -- those are the ones worth reading.
+                    from mistify.report.generator import write_report
+
+                    run.report_path = str(write_report(db, report_dir, incident_id))
         except Exception as exc:
             # One run failing must not lose the runs already done. Quota exhaustion mid-sweep
             # is routine on a free tier, and a harness that discards four good runs because
@@ -240,6 +255,7 @@ def write_results(reports: list[CaseReport], directory: Path) -> Path:
                                     for c in run.checks
                                 ],
                                 "metrics": run.metrics,
+                                "report": run.report_path,
                             }
                             for run in report.runs
                         ],

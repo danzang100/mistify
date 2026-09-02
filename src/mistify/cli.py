@@ -306,6 +306,9 @@ def eval_command(
         raise click.ClickException(f"no cases to run. Known: {', '.join(known_cases())}")
 
     config = load_config(config_path)
+    # One directory per sweep, so a result and the reports behind it stay together and an old
+    # sweep can be deleted in one go rather than by picking timestamps out of a shared folder.
+    results_dir = Path(out) if out else Path(config.report.output_dir) / "eval"
     if judge and config.llm.judge_model in {config.llm.model, config.llm.adversarial_model}:
         # Not fatal, because the judge is opt-in tooling rather than a shipped guarantee -- but
         # a judge sharing a model with the thing it judges is the correlated-blind-spot problem
@@ -327,11 +330,12 @@ def eval_command(
                 adversarial=not no_adversarial,
                 judge=judge,
                 baseline=baseline,
+                report_dir=results_dir / "reports",
             )
             reports.append(report)
             _echo_case(report)
 
-    destination = write_results(reports, out or Path(config.report.output_dir))
+    destination = write_results(reports, results_dir)
     click.echo(f"\nresults {destination}")
 
     if any(not run.passed for report in reports for run in report.runs):

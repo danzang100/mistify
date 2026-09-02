@@ -143,6 +143,17 @@ class ScratchpadDB:
         row = self._conn.execute("SELECT * FROM incidents ORDER BY created_at LIMIT 1").fetchone()
         return dict(row) if row else None
 
+    def rename_incident(self, incident_id: str) -> None:
+        """Retag this scratchpad as belonging to `incident_id`.
+
+        The eval harness ingests once per case and copies the scratchpad per run, so every
+        copy arrives carrying the master's identity and every report rendered from one named
+        the wrong run. A report that misidentifies itself is the kind of thing that gets
+        trusted and then quietly misfiles a result.
+        """
+        self._conn.execute("UPDATE incidents SET incident_id = ?", (incident_id,))
+        self._conn.commit()
+
     def bulk_insert_events(self, rows: Sequence[tuple[LogRecord, int]]) -> int:
         """Insert `(record, template_id)` pairs.
 

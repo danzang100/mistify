@@ -219,6 +219,11 @@ Two cases ship today:
   inventing a root cause is not. This is the only case that asks whether the agent makes
   something up, which is the failure that matters most on a page that turns out to be nothing.
 
+Each sweep writes into `reports/eval/<timestamp>.json` alongside `reports/eval/reports/`, one
+rendered report per run. The checks say whether a run passed; only the report says what it
+concluded, and a sweep that kept just the score cannot be re-read later to find out why — which
+is exactly what happened to this project's first nine runs.
+
 `--baseline naive|templated` replaces the investigation with a grep pipeline and scores it
 with the same checks — no model calls. On the incident both variants lead with the red herring;
 on the quiet hour both correctly claim nothing. The agent is the mirror image. See
