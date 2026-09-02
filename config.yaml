@@ -83,7 +83,10 @@ llm:
   # Must differ from whichever model writes the conclusion -- the loop's, or the synthesis
   # model when one is set. The critique cannot share a model with the thing it is checking
   # (architecture §6.3). Enforced at config load.
-  adversarial_model: gemini-3.5-flash
+  # A tier above the loop, and above the judge too: with the loop on flash-lite and the judge
+  # on 3.5-flash, all three roles are now distinct models, which is what §6.3 asks for and what
+  # `mistify eval --judge` otherwise warns about.
+  adversarial_model: gemini-3.6-flash
   bootstrap_model: gemini-3.5-flash-lite
   judge_model: gemini-3.5-flash
   max_tokens: 8192

@@ -65,9 +65,7 @@ def _rows_for(db: ScratchpadDB, event_ids: list[int]) -> str:
     )
 
 
-def judge_notes(
-    db: ScratchpadDB, provider: LLMProvider, max_tokens: int = 2048
-) -> list[Judgement]:
+def judge_notes(db: ScratchpadDB, provider: LLMProvider, max_tokens: int = 2048) -> list[Judgement]:
     """One call per note that cites individual rows.
 
     Notes citing only templates are skipped rather than judged: a template is a shape rather

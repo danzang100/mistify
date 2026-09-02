@@ -225,11 +225,36 @@ rows say what the note says — a measured run cited two genuine log events, bot
 lines from other services, for a claim about database credentials. Off by default because it
 costs a model call per note.
 
-External corpora are the plan's Phase 5 work: Loghub-2k for template precision and recall,
-LogDx-CI for end-to-end diagnosis. `EvalCase.source` is a callable that returns a path, so those
-arrive as cases rather than as a second kind of thing. Nothing here has yet been measured
-against logs this project did not generate, and the templating numbers in `docs/baseline.md`
-should be read with that in mind.
+### Template accuracy on somebody else's logs
+
+```bash
+uv run mistify eval-templating --sim-th 0.3 --sim-th 0.4 --sim-th 0.5
+```
+
+Scores clustering against [Loghub-2k](https://github.com/logpai/loghub)'s human-annotated event
+templates. No model is called — this measures the foundation everything else sits on, since a
+template that merged two conditions has lost the distinction before an investigation starts.
+The metric is Grouping Accuracy: a line counts as correct only when the set of lines sharing
+its parsed template is exactly the set sharing its annotated one, so a nearly-right cluster
+scores zero for every line in it.
+
+Measured, four systems across three thresholds — mean **0.907**:
+
+| System | GA @0.3 | @0.4 | @0.5 | Templates (ours/annotated) |
+|---|---|---|---|---|
+| Apache | 1.000 | 1.000 | 1.000 | 6 / 6 |
+| BGL | 0.931 | 0.969 | 0.963 | 105 / 120 |
+| Hadoop | 0.962 | 0.954 | 0.948 | 100 / 114 |
+| OpenSSH | 0.718 | 0.718 | 0.718 | 23 / 27 |
+
+OpenSSH is the standing weak spot and does not move with `sim_th` at all, which points at
+something structural rather than a threshold to tune. Data downloads on demand into `.cache/`
+and is never committed: Loghub is free for research use with citation terms, and a vendored
+corpus is a licence question nobody wants later. Cite the LogPub paper if you publish these.
+
+The remaining external work is LogDx-CI for end-to-end diagnosis quality. `EvalCase.source` is
+a callable returning a path, so it arrives as a case rather than as a second kind of thing. The
+model-driven cases have still only been measured against logs this project generated.
 
 ## Develop
 

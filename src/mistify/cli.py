@@ -344,6 +344,73 @@ def _echo_case(report: CaseReport) -> None:
             )
 
 
+@cli.command(name="eval-templating")
+@click.option(
+    "--system",
+    "systems",
+    multiple=True,
+    help="Loghub-2k system to score. Repeatable. Defaults to a spread across log families.",
+)
+@click.option("--dataset", default=None, type=click.Path(path_type=Path), help="Local CSV.")
+@click.option(
+    "--sim-th",
+    "thresholds",
+    multiple=True,
+    type=float,
+    help="Similarity threshold to score at. Repeatable, to sweep.",
+)
+@click.option("--cache", default=".cache/loghub", type=click.Path(path_type=Path))
+def eval_templating_command(
+    systems: tuple[str, ...],
+    dataset: Path | None,
+    thresholds: tuple[float, ...],
+    cache: Path,
+) -> None:
+    """Score template clustering against Loghub-2k's annotated ground truth.
+
+    No model is called. This measures the foundation everything else sits on: a template that
+    merged two conditions has lost the distinction before an investigation starts, and no
+    amount of reasoning downstream recovers it.
+
+    Data is downloaded on demand and never committed -- Loghub is free for research use with
+    citation terms, and a vendored corpus is a licence question nobody wants later.
+    """
+    from mistify.eval.templating_eval import fetch_loghub, score_dataset
+
+    # A spread rather than everything: these four are different enough in shape (SSH auth
+    # lines, a distributed scheduler, a supercomputer's console, a web server) that a parser
+    # doing well on all four is doing something general.
+    chosen = systems or ("OpenSSH", "Hadoop", "BGL", "Apache")
+    levels = thresholds or (0.4,)
+
+    click.echo(f"{'system':<12} {'sim_th':>7} {'lines':>6} {'GA':>7} {'ours':>6} {'truth':>6}")
+    rows = []
+    for level in levels:
+        for name in chosen:
+            try:
+                path = Path(dataset) if dataset else fetch_loghub(name, cache)
+                score = score_dataset(path, sim_th=level)
+            except Exception as exc:
+                click.echo(f"{name:<12} {level:>7} could not be scored: {exc}")
+                continue
+            rows.append(score)
+            click.echo(
+                f"{score.system:<12} {score.sim_th:>7} {score.lines:>6} "
+                f"{score.grouping_accuracy:>7.3f} {score.parsed_templates:>6} "
+                f"{score.annotated_templates:>6}"
+            )
+            if dataset:
+                break
+
+    if rows:
+        mean = sum(r.grouping_accuracy for r in rows) / len(rows)
+        mean_line = f"mean grouping accuracy over {len(rows)} dataset-threshold pair(s): {mean:.3f}"
+        click.echo("\n" + mean_line)
+        click.echo(
+            "Loghub-2k, github.com/logpai/loghub. Cite the LogPub paper if you publish these."
+        )
+
+
 def _run_agent(db: ScratchpadDB, config: MistifyConfig, adversarial: bool) -> InvestigationResult:
     """The investigation, with credential failures turned into usage errors.
 

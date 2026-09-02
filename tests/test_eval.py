@@ -275,3 +275,79 @@ def test_notes_citing_only_templates_are_not_judged(loaded_db: ScratchpadDB) -> 
 
     assert judge_notes(loaded_db, provider) == []
     assert provider.prompts == []
+
+
+# ---------------------------------------------------- templating against truth
+
+
+def test_perfect_clustering_scores_one() -> None:
+    from mistify.eval.templating_eval import grouping_accuracy
+
+    assert grouping_accuracy([1, 1, 2, 2], ["E1", "E1", "E2", "E2"]) == 1.0
+
+
+def test_relabelling_does_not_matter() -> None:
+    """Cluster ids are ours and arbitrary; only the partition is being scored."""
+    from mistify.eval.templating_eval import grouping_accuracy
+
+    assert grouping_accuracy([9, 9, 4, 4], ["E1", "E1", "E2", "E2"]) == 1.0
+
+
+def test_splitting_one_true_cluster_fails_every_line_in_it() -> None:
+    """Grouping accuracy is a property of the group, not of a line.
+
+    Half-right is scored as wrong on purpose: a cluster that is nearly correct is exactly the
+    failure that reads as success downstream, because the distinction it lost is invisible by
+    the time anything queries it.
+    """
+    from mistify.eval.templating_eval import grouping_accuracy
+
+    assert grouping_accuracy([1, 2, 3, 3], ["E1", "E1", "E2", "E2"]) == 0.5
+
+
+def test_merging_two_true_clusters_fails_both() -> None:
+    from mistify.eval.templating_eval import grouping_accuracy
+
+    assert grouping_accuracy([1, 1, 1, 1], ["E1", "E1", "E2", "E2"]) == 0.0
+
+
+def test_an_empty_dataset_scores_zero_rather_than_dividing_by_nothing() -> None:
+    from mistify.eval.templating_eval import grouping_accuracy
+
+    assert grouping_accuracy([], []) == 0.0
+
+
+def test_an_unknown_loghub_system_is_refused_before_the_download(tmp_path: Path) -> None:
+    """Naming the known set beats a 404 from a URL the caller never typed."""
+    from mistify.eval.templating_eval import fetch_loghub
+
+    with pytest.raises(ValueError, match="OpenSSH"):
+        fetch_loghub("NotASystem", tmp_path)
+
+
+def test_a_csv_without_the_annotation_columns_says_so(tmp_path: Path) -> None:
+    from mistify.eval.templating_eval import score_dataset
+
+    path = tmp_path / "Broken_2k.log_structured.csv"
+    path.write_text("Content,Something\nhello,1\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="EventId"):
+        score_dataset(path)
+
+
+def test_scoring_a_tiny_annotated_dataset_end_to_end(tmp_path: Path) -> None:
+    """The real templater over a file with a known partition, so the wiring is covered too."""
+    from mistify.eval.templating_eval import score_dataset
+
+    path = tmp_path / "Tiny_2k.log_structured.csv"
+    rows = ["Content,EventId"]
+    rows += [f"Connection closed by 10.0.0.{n} port {n}00,E1" for n in range(1, 9)]
+    rows += [f"Accepted password for alice from 10.0.0.{n},E2" for n in range(1, 9)]
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    score = score_dataset(path)
+
+    assert score.lines == 16
+    assert score.annotated_templates == 2
+    assert score.grouping_accuracy == 1.0
+    assert score.template_ratio == score.parsed_templates / 2
