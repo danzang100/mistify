@@ -50,6 +50,10 @@ def build_provider(name: str, model: str, config: LLMConfig) -> LLMProvider:
             raise MissingCredentialError(_GEMINI_HELP)
         from mistify.llm.gemini import GeminiProvider
 
-        return GeminiProvider(model=model, min_interval_seconds=config.min_interval_seconds)
+        return GeminiProvider(
+            model=model,
+            min_interval_seconds=config.min_interval_seconds,
+            timeout_seconds=config.request_timeout_seconds,
+        )
 
     raise MissingCredentialError(f"unknown llm provider {name!r}. Known: gemini, scripted")

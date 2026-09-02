@@ -960,3 +960,25 @@ def test_the_advertised_delay_is_read_from_either_quoting_style() -> None:
     assert _advertised_delay(Exception("{'retryDelay': '54s'}")) == 54.0
     assert _advertised_delay(Exception('{"retryDelay": "7.5s"}')) == 7.5
     assert _advertised_delay(Exception("503 UNAVAILABLE")) is None
+
+
+def test_the_timeout_is_converted_to_milliseconds() -> None:
+    """A request with no ceiling does not fail, it hangs.
+
+    One run sat in a single call for over thirty minutes at zero CPU, its search already
+    finished, because nothing bounded the wait. The retry path already treats the resulting
+    DEADLINE_EXCEEDED as retryable -- it was simply unreachable.
+
+    The conversion is worth pinning on its own: the SDK takes milliseconds, and getting the
+    factor wrong gives either a 120-millisecond timeout that fails every call or a
+    120,000-second one that fails none.
+    """
+    from mistify.llm.gemini import http_options
+
+    assert http_options(45).timeout == 45_000
+    assert http_options(0.5).timeout == 500
+
+
+def test_the_provider_keeps_the_timeout_it_was_given() -> None:
+    """Config carries it, so a slow deployment raises the ceiling without a code change."""
+    assert GeminiProvider(model=MODEL, timeout_seconds=30).timeout_seconds == 30

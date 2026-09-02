@@ -98,6 +98,10 @@ llm:
   # request counts, so a retry storm feeds itself. One investigation is ~12 calls, which fits;
   # two back to back do not. 4s spacing keeps a run inside the window. The adapter also honours
   # the retryDelay the API returns, which is the backstop when this is set too low.
+  # Ceiling on one request. Without it the SDK waits forever -- a run was seen blocked in a
+  # single call for over half an hour with its search already done. A timeout turns that into
+  # DEADLINE_EXCEEDED, which the adapter already retries.
+  request_timeout_seconds: 120.0
   min_interval_seconds: 4.0
 
 report:

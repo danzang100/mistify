@@ -235,6 +235,11 @@ class LLMConfig(_Strict):
     #: `supports_task_budget` is live and this is what it would pass.
     task_budget_tokens: int | None = Field(default=64000, ge=20000)
 
+    #: Ceiling on a single model request. A request with no ceiling does not fail, it hangs:
+    #: one run sat in a single call for over thirty minutes with its search already finished.
+    #: Generous rather than tight, because a long investigation prompt is genuinely slow.
+    request_timeout_seconds: float = Field(default=120.0, gt=0)
+
     #: Enforced spacing between model calls, for providers with per-minute quotas. Zero
     #: leaves pacing to retry-with-backoff, which is faster when the limit is generous.
     min_interval_seconds: float = Field(default=0.0, ge=0.0)

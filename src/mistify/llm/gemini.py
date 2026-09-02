@@ -43,7 +43,7 @@ from mistify.llm.base import (
 if TYPE_CHECKING:  # pragma: no cover - the SDK is imported lazily
     from google.genai import Client
 
-__all__ = ["GeminiProvider"]
+__all__ = ["GeminiProvider", "http_options"]
 
 #: JSON Schema keywords the Gemini function-declaration parser rejects outright. Everything
 #: else in a standard schema is accepted, so this is a deny list rather than a translation.
@@ -74,6 +74,18 @@ _PUNCTUATION = re.compile(r"[^A-Z0-9]")
 #: `'retryDelay': '54s'`. Ignoring it and backing off on a guess is how a retry budget gets
 #: spent entirely inside a window that had not reset yet.
 _RETRY_DELAY = re.compile(r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s")
+
+
+def http_options(timeout_seconds: float) -> Any:
+    """Transport options for the SDK client.
+
+    Split out so the seconds-to-milliseconds conversion is testable without a credential or a
+    fake SDK: getting that factor wrong gives a 120-millisecond timeout that fails every call,
+    or a 120,000-second one that fails none.
+    """
+    from google.genai import types
+
+    return types.HttpOptions(timeout=int(timeout_seconds * 1000))
 
 
 def _advertised_delay(exc: Exception) -> float | None:
@@ -114,6 +126,7 @@ class GeminiProvider:
         client: Client | None = None,
         max_retries: int = 5,
         min_interval_seconds: float = 0.0,
+        timeout_seconds: float = 120.0,
         sleep: Any = time.sleep,
     ) -> None:
         self.name = "gemini"
@@ -125,6 +138,12 @@ class GeminiProvider:
         #: knows theirs can trade wall clock for never being throttled; the default leaves
         #: pacing to the retry path, which is faster when the limit is generous.
         self.min_interval_seconds = min_interval_seconds
+        #: Ceiling on one request. Without it the SDK waits forever: an investigation was seen
+        #: blocked in a single call for over thirty minutes at zero CPU, having already
+        #: finished its search, because nothing bounded the wait. A timeout turns that into a
+        #: DEADLINE_EXCEEDED, which `_is_retryable` already treats as worth another attempt --
+        #: the retry path existed and was simply unreachable.
+        self.timeout_seconds = timeout_seconds
         self._sleep = sleep
         self._last_call_at = 0.0
 
@@ -144,7 +163,11 @@ class GeminiProvider:
                     "No Gemini credential found. Set GEMINI_API_KEY (a .env file at the repo "
                     "root is loaded automatically)."
                 )
-            self._client = genai.Client(api_key=key)
+            # Set on the client rather than per call, so every request is bounded -- including
+            # ones added later that forget to ask for it.
+            self._client = genai.Client(
+                api_key=key, http_options=http_options(self.timeout_seconds)
+            )
         return self._client
 
     # ---------------------------------------------------------------- translation

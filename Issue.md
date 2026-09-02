@@ -20,6 +20,7 @@ or one of the design documents, the fix column says which document to amend.
 | 7. The provider seam drops thinking blocks | ~~Medium~~ | **Fixed** — it was a hard requirement, not a cost |
 | 8. The anomaly score has no duration term | Medium | 4 — worked around, not solved |
 | 9. Conversation growth is bounded but not budgeted | Medium | 4 |
+| 12. Model requests had no timeout | ~~High~~ | **Fixed** |
 | 11. The quiet-hour bar cannot tell right from wrong | High | next |
 | 10. The investigator under-cites what it reasons over | ~~Medium~~ | **Fixed** — the check moved earlier, not a better prompt |
 
@@ -344,3 +345,29 @@ about its citations. Deterministic checks on this case stay as secondary signals
 high-confidence note meant an invented incident. The framing was wrong and the data showed it
 on the first sweep. Recorded because the same mistake -- picking a proxy before seeing what the
 behaviour actually looks like -- produced two wrong conclusions in `docs/baseline.md` earlier.
+
+---
+
+## 12 — Model requests had no timeout — FIXED
+
+**Problem.** The Gemini adapter set no request timeout, so a request the server never answered
+blocked forever. Found the expensive way: an OTLP eval run sat alive for over thirty minutes
+having burned 0.016 seconds of CPU, its investigation already complete -- 17 steps, 15 tool
+calls, 2 notes, `converged` -- and no adversarial metrics recorded at all. It was blocked in a
+single call in the adversarial pass.
+
+**Why it hid.** `_is_retryable` already treats `DEADLINE_EXCEEDED` and 504 as worth another
+attempt. That path was correct and simply unreachable: without a client-side ceiling the SDK
+never produces the error the retry was waiting for. A recovery mechanism that cannot be reached
+is indistinguishable from one that does not exist, and the tests for it passed throughout.
+
+**What was not the cause.** The first hypothesis was the critique model, `gemini-3.6-flash`,
+which had been switched on two turns earlier and never exercised live. Tested directly it
+answers in 10.6 seconds. `gemini-3.5-flash` -- the judge model -- returned 504 after 30 seconds
+in the same test, so slowness is real on some models, but the hang was the missing ceiling
+rather than any particular model.
+
+**Fix.** `llm.request_timeout_seconds`, default 120, set on the client so every request is
+bounded including ones added later. The conversion to the SDK's milliseconds is its own tested
+function: the wrong factor gives a 120-millisecond timeout that fails everything or a
+120,000-second one that fails nothing, and neither is visible by reading the call site.
