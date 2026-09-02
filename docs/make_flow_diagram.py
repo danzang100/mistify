@@ -86,13 +86,14 @@ for i, (label, status) in enumerate(
 X1, WCOL = 40, 400
 y = 110
 
-stage(X1, y, WCOL, 92, "1 · Ingest", [
+stage(X1, y, WCOL, 110, "1 · Ingest", [
     "json_lines + otlp · detect floor 0.6, no overlap",
-    "elastic / loki need a live stack to fixture honestly",
-    "derive_incident_id · an incident begins here",
+    "unrecognised -> raw_lines, recorded and warned about",
+    "registered names an unknown format -> refuses",
+    "elastic / loki await a live stack · bootstrapper stub",
 ], PARTIAL, "PHASE 1/4")
-arrow(X1 + WCOL / 2, y + 92, X1 + WCOL / 2, y + 122)
-y += 122
+arrow(X1 + WCOL / 2, y + 110, X1 + WCOL / 2, y + 140)
+y += 140
 
 stage(X1, y, WCOL, 92, "2 · Redact", [
     "regex + entity hashing, before templating",
@@ -148,14 +149,15 @@ stage(X2, y2, WCOL, 92, "7 · Synthesis (disabled)", [
 arrow(X2 + WCOL / 2, y2 + 92, X2 + WCOL / 2, y2 + 122, dashed=True)
 y2 += 122
 
-stage(X2, y2, WCOL, 110, "8 · Adversarial pass", [
-    "gemini-3.6-flash critiques · loop model rebuts",
+stage(X2, y2, WCOL, 128, "8 · Adversarial pass", [
+    "gemini-3.5-flash critiques · loop model rebuts",
     "objections carry ids the rebuttal quotes back",
     "caught a fabricated citation unaided",
+    "3.6-flash timed out here; every request now bounded",
     "unexplained signal excludes chronic templates",
 ], DONE, "PHASE 3")
-arrow(X2 + WCOL / 2, y2 + 110, X2 + WCOL / 2, y2 + 140)
-y2 += 140
+arrow(X2 + WCOL / 2, y2 + 128, X2 + WCOL / 2, y2 + 158)
+y2 += 158
 
 stage(X2, y2, WCOL, 110, "9 · Report", [
     "fixed Jinja · markdown, html, pdf",
@@ -173,15 +175,15 @@ stage(X3, y3, 460, 128, "Eval harness", [
     "runs through the same entry point as the CLI",
     "scores the scratchpad, never the rendered report",
     "per-check rates · JSON output · FIXTURE_VERSION",
-    "720 tests · ruff + mypy clean · grep baseline scored",
+    "731 tests · ruff + mypy clean · report kept per run",
 ], DONE, "PHASE 5")
 y3 += 158
 
 stage(X3, y3, 460, 110, "Cases: pool-exhaustion (+otlp)", [
-    "same incident in two formats, one scorer",
+    "OTLP run scored 4/4: root cause + precursor cited",
     "grep baseline leads with the herring: agent never did",
-    "coverage nudge fixed 0/10 precursor citation",
-], PARTIAL, "MEASURED")
+    "one report kept per run, under its own incident id",
+], DONE, "4/4 OTLP")
 y3 += 140
 
 stage(X3, y3, 460, 128, "Case: quiet-hour", [
@@ -201,7 +203,7 @@ stage(X3, y3, 460, 92, "Templating eval", [
 y3 += 122
 
 stage(X3, y3, 460, 92, "Not started", [
-    "Phase 4: elastic / loki adapters, bootstrapper",
+    "Phase 4: bootstrapper · elastic / loki need Docker",
     "Phase 5: LogDx-CI end-to-end diagnosis eval",
     "Phase 6: MCP server, packaging",
 ], TODO, "PHASE 4-6")
@@ -216,7 +218,7 @@ text(X2 + WCOL + 14, 165, "scored by", size=11, fill=MUTED)
 parts.append(f'<line x1="40" y1="{H - 56}" x2="{W - 40}" y2="{H - 56}" stroke="{RULE}" stroke-width="1"/>')
 text(40, H - 32,
      "Open: Issue 8 anomaly score has no duration term · Issue 9 no token ceiling · "
-     "quiet-hour bar conflates confident-and-right with confident-and-wrong",
+     "Issue 11 quiet-hour bar conflates confident-and-right with confident-and-wrong",
      size=12, fill=MUTED)
 
 svg = (
