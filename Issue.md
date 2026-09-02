@@ -20,6 +20,7 @@ or one of the design documents, the fix column says which document to amend.
 | 7. The provider seam drops thinking blocks | ~~Medium~~ | **Fixed** — it was a hard requirement, not a cost |
 | 8. The anomaly score has no duration term | Medium | 4 — worked around, not solved |
 | 9. Conversation growth is bounded but not budgeted | Medium | 4 |
+| 11. The quiet-hour bar cannot tell right from wrong | High | next |
 | 10. The investigator under-cites what it reasons over | ~~Medium~~ | **Fixed** — the check moved earlier, not a better prompt |
 
 ---
@@ -320,3 +321,26 @@ nothing asked the model about coverage while it could still act.
 was not. The metric counted citations while the comparison being made counted prose mentions,
 which invented first a regression and then a mechanism for it. Scoring the two separately is
 now part of the repeat protocol in `docs/baseline.md`.
+
+---
+
+## 11 — The quiet-hour bar cannot tell right from wrong
+
+**Problem.** The negative control scores `invents-no-incident` as "no note recorded at high
+confidence". Measured over three runs it scored 0/3, and one of those three had written the
+correct answer: that the hour contains only routine operational warnings and no failure. The
+check fails a confident *correct* finding for exactly the same reason it fails a confident
+wrong one.
+
+**Why it matters more than a wrong number.** This is the case the whole fixture exists for, and
+it currently cannot distinguish the behaviour we want from the behaviour we are guarding
+against. A check that fails both is worse than no check, because its output looks like evidence.
+
+**Fix.** A judge question, not a threshold: *does this finding assert that something is wrong?*
+One call, one boolean, and unlike the entailment judge it is asking about the claim rather than
+about its citations. Deterministic checks on this case stay as secondary signals.
+
+**Note.** The bar was chosen deliberately over "zero notes", on my framing that a
+high-confidence note meant an invented incident. The framing was wrong and the data showed it
+on the first sweep. Recorded because the same mistake -- picking a proxy before seeing what the
+behaviour actually looks like -- produced two wrong conclusions in `docs/baseline.md` earlier.

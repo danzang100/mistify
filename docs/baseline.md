@@ -180,3 +180,36 @@ That is the first report this project has produced with no warnings.
 One run. A single positive against a baseline of ten consecutive negatives is strong evidence
 the behaviour changed, and no evidence about how often it holds. Two confirmation runs are
 owed before this number goes in the table above.
+
+## First harness sweep
+
+`mistify eval --case quiet-hour --runs 3`, loop on `gemini-3.5-flash-lite`, critique on
+`gemini-3.6-flash`, synthesis off.
+
+| | |
+|---|---|
+| citations-resolve | 3/3 |
+| invents-no-incident | **0/3** |
+| Coverage nudges fired | 0 |
+| Tokens | 35k, 62k, 87k |
+
+**The 0/3 is not the finding it looks like, and the bar is wrong.** Run 3 wrote: *"The incident
+consists entirely of routine operational warnings and background telemetry ... without any
+critical errors, fatal exceptions, or unexpected service outages."* That is the correct answer.
+It failed only because it was recorded at high confidence, and being confident that nothing is
+wrong is exactly what should happen here.
+
+Run 1 is the genuine miss: *"intermittent performance degradation ... two primary anomalous
+behaviors ... minor resource contention or degraded upstream inventory performance"* — retries
+and slow responses reframed as degradation, hedged but wrong. Run 2 sits between them.
+
+So the deterministic bar conflates two opposite outcomes. Confidence is a property of how the
+finding was stated; whether it asserts a fault is a property of what it says, and no threshold
+over the scratchpad can separate them. The check needs a judge asking one question — *does this
+finding assert that something is wrong?* — which is a different question from the entailment
+judge already behind `--judge`.
+
+Worth keeping from the sweep: the coverage nudge did not fire once, which is correct. Every
+template on a quiet file spans the whole hour, so all of them are chronic, and chronic templates
+are excluded from the unexplained-signal check. The exclusion added for the pool-exhaustion case
+turns out to be what keeps the negative control quiet as well.
