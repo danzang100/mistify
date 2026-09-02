@@ -12,6 +12,7 @@ rather than pretended to be a unit test.
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from typing import Any
 
@@ -51,10 +52,17 @@ from mistify.metrics import (
 from mistify.scratchpad.db import ScratchpadDB
 from mistify.templating.calibration import CalibrationStatus
 
+
+class ProviderMissing(RuntimeError):
+    """A report format was asked for that this installation cannot produce."""
+
+
 __all__ = [
     "TOP_TEMPLATE_LIMIT",
+    "ProviderMissing",
     "ReportData",
     "generate_report",
+    "render_pdf",
     "verify_citations",
     "write_report",
 ]
@@ -506,24 +514,85 @@ def _health_warnings(view: MetricView) -> list[str]:
     return warnings
 
 
-def generate_report(db: ScratchpadDB) -> str:
-    """Render the incident report as markdown."""
+#: The one place a format is turned into a template and a file extension. Every format renders
+#: the same `collect()` data through its own template rather than converting one output into
+#: another: markdown-to-HTML conversion would make the HTML report a translation of a document
+#: rather than a rendering of the incident, and every future divergence would be a bug in the
+#: converter instead of a choice in a template.
+_FORMATS: dict[str, tuple[str, str]] = {
+    "markdown": ("incident_report.md.jinja", ".md"),
+    "html": ("incident_report.html.jinja", ".html"),
+    # PDF is the HTML, printed. Its template is the HTML one and its extension is not.
+    "pdf": ("incident_report.html.jinja", ".pdf"),
+}
+
+_PDF_HELP = (
+    "PDF output needs the optional `pdf` extra: `uv sync --extra pdf`, or "
+    "`pip install 'mistify[pdf]'`. Every other format works without it. The HTML report "
+    "carries print styles, so a browser's print-to-PDF is a fine substitute."
+)
+
+
+def generate_report(db: ScratchpadDB, report_format: str = "markdown") -> str:
+    """Render the incident report as markdown or HTML.
+
+    `pdf` renders the HTML: the bytes are produced by `write_report`, because a PDF is not a
+    string and pretending otherwise would put an encode/decode round trip in the middle of the
+    only path that produces one.
+    """
+    if report_format not in _FORMATS:
+        raise ValueError(f"unknown report format {report_format!r}. Known: {sorted(_FORMATS)}")
+    template_name, _ = _FORMATS[report_format]
+    is_html = template_name.endswith(".html.jinja")
     env = Environment(
         loader=PackageLoader("mistify.report", "templates"),
         undefined=StrictUndefined,
         trim_blocks=True,
         lstrip_blocks=True,
         keep_trailing_newline=True,
-        autoescape=False,
+        # Escaping is on for HTML and off for markdown. Log lines are attacker-influenced text
+        # that has already been through redaction, not sanitisation: a message containing
+        # `<script>` is a perfectly ordinary log line and must render as one.
+        autoescape=is_html,
     )
-    template = env.get_template("incident_report.md.jinja")
-    return template.render(**collect(db))
+    return env.get_template(template_name).render(**collect(db))
 
 
-def write_report(db: ScratchpadDB, output_dir: str | Path, incident_id: str) -> Path:
+def render_pdf(html: str) -> bytes:
+    """The HTML report as PDF bytes.
+
+    A pure-Python engine on purpose. The better-looking alternatives need system libraries
+    (cairo, pango) that are not present on a stock Windows machine, and a report format that
+    works on the maintainer's laptop and nowhere else is not a format.
+    """
+    try:
+        from xhtml2pdf import pisa
+    except ImportError as exc:  # pragma: no cover - depends on optional extra
+        raise ProviderMissing(_PDF_HELP) from exc
+
+    buffer = io.BytesIO()
+    result = pisa.CreatePDF(html, dest=buffer, encoding="utf-8")
+    if result.err:
+        raise ProviderMissing(f"PDF rendering failed with {result.err} error(s)")
+    return buffer.getvalue()
+
+
+def write_report(
+    db: ScratchpadDB,
+    output_dir: str | Path,
+    incident_id: str,
+    report_format: str = "markdown",
+) -> Path:
     """Render and write the report, returning its path."""
+    if report_format not in _FORMATS:
+        raise ValueError(f"unknown report format {report_format!r}. Known: {sorted(_FORMATS)}")
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{incident_id}.md"
-    path.write_text(generate_report(db), encoding="utf-8")
+    path = directory / f"{incident_id}{_FORMATS[report_format][1]}"
+
+    rendered = generate_report(db, report_format)
+    if report_format == "pdf":
+        path.write_bytes(render_pdf(rendered))
+    else:
+        path.write_text(rendered, encoding="utf-8")
     return path

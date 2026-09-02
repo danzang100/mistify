@@ -130,6 +130,29 @@ Responder-facing, in order:
 Then an appendix: run signals, token usage, the investigation trail, and pipeline
 configuration. It is there so a conclusion can be checked, not because a responder needs it.
 
+### Formats
+
+`report.format` in config, or `--format` on the command, takes `markdown`, `html` or `pdf`:
+
+```bash
+uv run mistify report --incident-id demo --format html
+```
+
+Each format renders the same collected data through its own template rather than converting one
+output into another — the HTML report is a rendering of the incident, not a translation of the
+markdown one. HTML is self-contained: no CDN stylesheet, no fetched fonts, so it still looks
+right in an email attachment or on a machine with no network, and it carries print styles.
+
+PDF needs the optional extra, because the good HTML-to-PDF engines want system libraries that a
+stock Windows machine does not have:
+
+```bash
+uv sync --extra pdf
+```
+
+Without it, `--format pdf` says so and names the fix. The engine is pure Python and renders a
+subset of CSS; a browser's print-to-PDF on the HTML gives a better-looking file if you need one.
+
 ### What a run costs
 
 `docs/baseline.md` records the reference numbers for the sample incident. Compare against it

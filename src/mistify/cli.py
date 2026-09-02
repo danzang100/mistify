@@ -14,7 +14,7 @@ from mistify.agent.skeleton import run_skeleton_investigation
 from mistify.common.config import MistifyConfig, load_config
 from mistify.pipeline import UnknownFormatError, derive_incident_id, ingest
 from mistify.redaction.vault import RedactionVault
-from mistify.report.generator import write_report
+from mistify.report.generator import ProviderMissing, write_report
 from mistify.scratchpad.db import ScratchpadDB
 
 if TYPE_CHECKING:  # pragma: no cover - the agent stack is imported only when used
@@ -111,21 +111,28 @@ def investigate_command(
 
 @cli.command(name="report")
 @click.option("--incident-id", required=True)
-@click.option("--format", "report_format", default=None, help="markdown (html/pdf: Phase 6).")
+@click.option(
+    "--format",
+    "report_format",
+    default=None,
+    type=click.Choice(["markdown", "html", "pdf"]),
+    help="Output format. Defaults to report.format in config.",
+)
 @_config_option
 def report_command(incident_id: str, report_format: str | None, config_path: Path | None) -> None:
     """Render the incident report."""
     config = load_config(config_path)
     chosen = report_format or config.report.format
-    if chosen != "markdown":
-        raise click.ClickException(f"report format {chosen!r} arrives in Phase 6; use markdown.")
 
     path = config.scratchpad_path(incident_id)
     if not path.exists():
         raise click.ClickException(f"no scratchpad for incident {incident_id!r} at {path}")
 
     with ScratchpadDB(path) as db:
-        output = write_report(db, config.report.output_dir, incident_id)
+        try:
+            output = write_report(db, config.report.output_dir, incident_id, chosen)
+        except ProviderMissing as exc:
+            raise click.ClickException(str(exc)) from exc
     click.echo(f"report {output}")
 
 
@@ -225,7 +232,9 @@ def run_command(
             steps = run_skeleton_investigation(db).steps
         else:
             steps = _run_agent(db, config, adversarial=not no_adversarial).steps
-        output = write_report(db, config.report.output_dir, result.incident_id)
+        output = write_report(
+            db, config.report.output_dir, result.incident_id, config.report.format
+        )
 
     click.echo(f"investigated in {steps} steps")
     click.echo(f"report {output}")

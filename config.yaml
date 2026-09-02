@@ -88,5 +88,6 @@ llm:
   min_interval_seconds: 4.0
 
 report:
+  # markdown | html | pdf. PDF needs the optional `pdf` extra: uv sync --extra pdf
   format: markdown
   output_dir: ./reports

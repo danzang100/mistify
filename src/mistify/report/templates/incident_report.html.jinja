@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Incident report: {{ incident.incident_id }}</title>
+<style>
+  /* Colours are literal, not custom properties: the PDF engine is pure Python and does
+     not implement var(). Palette: ink #1a1d21, muted #5c6570, rule #d9dee4,
+     panel #f6f8fa, warning #fff6e5/#d98324, bad #b3261e. */
+  /* Self-contained on purpose: a report is something you email, drop in a ticket, or open on
+     a machine with no network. A stylesheet fetched from a CDN makes it look broken in
+     exactly those situations. No fonts are fetched either -- system stacks only. */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto; padding: 40px 24px; max-width: 992px; background: #ffffff;
+    color: #1a1d21; line-height: 1.55;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  h1 { font-size: 1.75rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.25rem; margin: 2.5rem 0 .75rem; padding-bottom: .3rem; border-bottom: 2px solid #d9dee4; }
+  h3 { font-size: 1rem; margin: 1.5rem 0 .5rem; color: #5c6570; text-transform: uppercase; letter-spacing: .04em; }
+  p { margin: .6rem 0; }
+  a { color: inherit; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace; font-size: .875em; }
+  .caveat { background: #f6f8fa; border-left: 3px solid #d9dee4; padding: .75rem 1rem; margin: 1rem 0; color: #5c6570; font-size: .9rem; }
+  table { border-collapse: collapse; width: 100%; margin: .75rem 0; font-size: .9rem; }
+  th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #d9dee4; vertical-align: top; }
+  th { background: #f6f8fa; font-weight: 600; white-space: nowrap; }
+  td.num, th.num { text-align: right; }
+  /* Percent, not rem: the PDF engine cannot size a column in rem and lays the table
+     out at negative width when it tries. */
+  .facts td:first-child { color: #5c6570; width: 30%; }
+  .issue { border: 1px solid #d9dee4; border-left: 4px solid #5c6570; padding: .8rem 1rem; margin: .9rem 0; }
+  .issue .claim { font-weight: 600; }
+  .issue .meta { color: #5c6570; font-size: .85rem; margin-top: .4rem; }
+  .verdict { padding: .75rem 1rem; margin: 1rem 0; border: 1px solid #d9dee4; background: #f6f8fa; }
+  .verdict.contested { background: #fff6e5; border-color: #d98324; }
+  .warnings { background: #fff6e5; border: 1px solid #d98324; padding: .5rem 1rem; }
+  .warnings li { margin: .35rem 0; }
+  .tag { display: inline-block; padding: .05rem .4rem; border-radius: 3px; background: #f6f8fa; border: 1px solid #d9dee4; font-size: .8rem; color: #5c6570; }
+  .chronic { color: #5c6570; }
+  .sev-FATAL, .sev-ERROR { color: #b3261e; font-weight: 600; }
+  .conceded { color: #b3261e; font-weight: 600; }
+  .appendix { margin-top: 3rem; border-top: 3px double #d9dee4; padding-top: 1rem; }
+  .appendix h2 { font-size: 1.05rem; }
+  .note { color: #5c6570; font-size: .875rem; }
+  footer { margin-top: 2.5rem; padding-top: .75rem; border-top: 1px solid #d9dee4; color: #5c6570; font-size: .8rem; }
+  /* Print/PDF: the appendix tables are long, so let them break, but never split a finding
+     away from the evidence under it. */
+  @page { size: A4; margin: 18mm 14mm; }
+  @media print {
+    body { max-width: none; padding: 0; }
+    .issue, .verdict, .warnings { page-break-inside: avoid; }
+    h2 { page-break-after: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Incident report: {{ incident.incident_id }}</h1>
+<div class="caveat"><strong>Produced by the <code>{{ investigator }}</code> investigator.</strong> {{ investigator_caveat }}</div>
+
+<table class="facts">
+  <tr><td>Source</td><td class="mono">{{ incident.source }}</td></tr>
+  <tr><td>Format</td><td>{{ incident.format or "unknown" }}</td></tr>
+  <tr><td>Ingested</td><td class="mono">{{ incident.created_at }}</td></tr>
+  <tr><td>Events</td><td class="num">{{ "{:,}".format(event_count) }}</td></tr>
+  <tr><td>Templates</td><td class="num">{{ template_count }}</td></tr>
+  <tr><td>Log window</td><td class="mono">{{ first_ts or "n/a" }} &rarr; {{ last_ts or "n/a" }}</td></tr>
+</table>
+
+<h2>What was found</h2>
+{% if issues %}
+<p class="note">Every issue the investigation recorded, most significant first. Order is the
+anomaly ranking of the templates each one cites &mdash; computed, not chosen by a model &mdash;
+so two runs that reason differently but reach the same templates present them in the same order.</p>
+
+{% for issue in issues %}
+<div class="issue">
+  <div class="claim">{{ issue.rank }}. {{ issue.note }}</div>
+  <div class="meta">
+    Confidence {{ issue.confidence }} &middot;
+    templates {{ issue.template_ids | join(", ") or "none cited" }} &middot;
+    recorded at step {{ issue.step }}
+    {%- if issue.chronic %} &middot; <span class="tag">background</span> every template it rests on was active across the whole log{% endif %}
+  </div>
+</div>
+{% endfor %}
+
+{% if issues | length > 1 %}
+<p class="note">More than one issue was recorded. They are not necessarily one incident &mdash;
+two unrelated failures in the same window are common, and the ranking does not decide which of
+these belong together.</p>
+{% endif %}
+
+{% if adversarial %}
+<div class="verdict{% if conceded_count %} contested{% endif %}">
+  {% if conceded_count %}
+  <strong>Contested &mdash; {{ conceded_count }} objection(s) conceded.</strong>
+  The investigation gave ground on its own reasoning. Read <em>The challenge</em> before acting on any of the above.
+  {% elif objections %}
+  <strong>Challenged and answered.</strong>
+  {{ objections | length }} objection(s) were raised and none were conceded.
+  {% else %}
+  <strong>Unchallenged.</strong> The adversarial pass raised no objection.
+  {% endif %}
+  {% if adversarial.revised_confidence %}
+  <div>Confidence after the challenge: <strong>{{ adversarial.revised_confidence }}</strong>.</div>
+  {% endif %}
+</div>
+{% elif adversarial_ran %}
+<div class="verdict"><strong>Checked, but the critique's text was not recorded</strong> &mdash;
+this incident was investigated before the challenge was kept in the scratchpad.</div>
+{% else %}
+<div class="verdict">No adversarial pass was run, so nothing has checked the above except the
+citation resolver.</div>
+{% endif %}
+{% else %}
+<p>No hypothesis was recorded. Either the investigator found no templates to rank &mdash; check
+the ingest signals in the appendix &mdash; or it stopped before concluding.</p>
+{% endif %}
+
+{% if warnings %}
+<h2>Read this first</h2>
+<ul class="warnings">
+  {% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+<h2>The incident at a glance</h2>
+<p class="note">Derived from the events themselves, not from anything a model said, so it reads
+the same way whatever route the investigation took.</p>
+
+{% if glance.first_ts %}
+<table class="facts">
+  <tr><td>Incident window</td><td class="mono">{{ glance.first_ts }} &rarr; {{ glance.last_ts }}</td></tr>
+  <tr><td>Duration</td><td>{{ "%.0f" | format(glance.duration_minutes) }} min</td></tr>
+  <tr><td>Measured across</td><td>template(s) {{ glance.window_template_ids | join(", ") }}{% if glance.window_is_from_verdict %}, cited by the leading issue{% else %}, the highest-ranked template &mdash; no issue cited one{% endif %}</td></tr>
+</table>
+<p class="note">Not the log window in the header, which is only where the file starts and stops.</p>
+
+<h3>Signal templates and when they were active</h3>
+<p class="note">A template active across the whole log was already happening before this incident
+and did not stop after it, so it is background rather than event.</p>
+<table>
+  <tr><th>Template</th><th>Max severity</th><th class="num">Events</th><th>First seen</th><th>Last seen</th><th class="num">Active for</th><th></th></tr>
+  {% for span in glance.spans %}
+  <tr{% if span.chronic %} class="chronic"{% endif %}>
+    <td class="num">{{ span.template_id }}</td>
+    <td class="sev-{{ span.max_severity }}">{{ span.max_severity }}</td>
+    <td class="num">{{ "{:,}".format(span.occurrence_count) }}</td>
+    <td class="mono">{{ span.first_seen }}</td>
+    <td class="mono">{{ span.last_seen }}</td>
+    <td class="num">{{ "%.0f" | format(span.minutes) }} min</td>
+    <td>{% if span.chronic %}chronic{% else %}within the event{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>No templates were flagged as signal, so there is no derived incident window.</p>
+{% endif %}
+
+<h3>Volume by severity</h3>
+<table>
+  <tr><th>Severity</th><th class="num">Events</th></tr>
+  {% for row in glance.severities %}
+  <tr><td class="sev-{{ row.severity }}">{{ row.severity }}</td><td class="num">{{ "{:,}".format(row.count) }}</td></tr>
+  {% endfor %}
+</table>
+
+<h3>Sources involved</h3>
+<p class="note">Ordered by events at ERROR or worse, which is the order to work through them in.</p>
+<table>
+  <tr><th>Source</th><th class="num">Events</th><th class="num">ERROR+</th><th>First ERROR+</th><th>Last ERROR+</th></tr>
+  {% for row in glance.sources %}
+  <tr>
+    <td>{{ row.source or "unknown" }}</td>
+    <td class="num">{{ "{:,}".format(row.events) }}</td>
+    <td class="num">{{ "{:,}".format(row.bad_events or 0) }}</td>
+    <td class="mono">{{ row.first_bad or "&mdash;" }}</td>
+    <td class="mono">{{ row.last_bad or "&mdash;" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Findings</h2>
+{% if notes %}
+<p class="note">Every hypothesis the investigation recorded, in the order it recorded them.
+Each cites rows that were checked to exist.</p>
+{% for note in notes %}
+<h3>Step {{ note.step }} &mdash; confidence: {{ note.confidence }}</h3>
+<p>{{ note.note }}</p>
+<ul class="note">
+  {% if note.evidence.get("template_ids") %}<li>Templates: {{ note.evidence.get("template_ids") | join(", ") }}</li>{% endif %}
+  {% if note.evidence.get("log_event_ids") %}<li>Log events: {{ note.evidence.get("log_event_ids") | join(", ") }}</li>{% endif %}
+  {% if note.evidence.get("selection") %}<li>Selection rule: {{ note.evidence.get("selection") }}</li>{% endif %}
+</ul>
+{% if note.cited_events %}
+<table>
+  <tr><th class="num">Event</th><th>Timestamp</th><th>Source</th><th>Severity</th><th>Message</th></tr>
+  {% for event in note.cited_events %}
+  <tr>
+    <td class="num">{{ event.id }}</td>
+    <td class="mono">{{ event.ts }}</td>
+    <td>{{ event.source }}</td>
+    <td class="sev-{{ event.severity }}">{{ event.severity }}</td>
+    <td>{{ event.message }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endfor %}
+{% else %}
+<p>None recorded.</p>
+{% endif %}
+
+<h2>The challenge</h2>
+{% if adversarial %}
+<p class="note">A second model was given the notes and their evidence and asked to break them,
+then the investigation was given the objections and allowed to answer.
+Outcome: <strong>{{ adversarial.outcome }}</strong>.</p>
+{% if adversarial.assessment %}
+<div class="caveat">{{ adversarial.assessment }}</div>
+{% endif %}
+
+{% if objections %}
+{% for objection in objections %}
+<div class="issue">
+  <div class="claim">{{ loop.index }}. {{ objection.claim or "(no claim quoted)" }} <span class="tag">severity {{ objection.severity }}</span></div>
+  <p>{{ objection.objection }}</p>
+  <div class="meta">
+    Cites:
+    {%- if objection.template_ids %} templates {{ objection.template_ids | join(", ") }}{% endif %}
+    {%- if objection.template_ids and objection.log_event_ids %},{% endif %}
+    {%- if objection.log_event_ids %} events {{ objection.log_event_ids | join(", ") }}{% endif %}
+    {%- if not objection.template_ids and not objection.log_event_ids %} nothing &mdash; an objection citing no rows cannot outweigh a conclusion that cites them{% endif %}
+  </div>
+  {% if objection.response is not none %}
+  <p>{% if objection.conceded %}<span class="conceded">Conceded.</span> {% else %}<strong>Answer:</strong> {% endif %}{{ objection.response }}</p>
+  {% else %}
+  <p class="note">Not answered.</p>
+  {% endif %}
+</div>
+{% endfor %}
+{% else %}
+<p>No objections were raised.</p>
+{% endif %}
+
+{% if glance.chronic_template_ids %}
+<p class="note">Template(s) {{ glance.chronic_template_ids | join(", ") }} were active across the
+whole log and are not part of this incident. Whether any finding mentions them is recorded in
+the appendix as an observation, not a warning.</p>
+{% endif %}
+
+{% if adversarial.alternative %}
+<h3>Alternative explanation offered</h3>
+<p>{{ adversarial.alternative }}</p>
+<p class="note">The rows are said to support this at least as well as the leading issue. It is
+the first thing to check if that issue does not hold up.</p>
+{% endif %}
+{% elif adversarial_ran %}
+<p>The pass ran, but this incident predates the point at which its objections were kept.</p>
+{% else %}
+<p>The adversarial pass did not run, so nothing has argued against the findings above.</p>
+{% endif %}
+
+<h2>Templates by anomaly score</h2>
+{% if shown_template_count < template_count %}
+<p class="note">Showing the {{ shown_template_count }} highest-scoring templates of
+{{ template_count }}. The rest are in the scratchpad and not in this report.</p>
+{% endif %}
+<p class="note">Scored deterministically from severity, burstiness and rarity &mdash; no model
+involvement, so a high score here is independent of whatever narrative the investigation settled
+on. The ranking is the search order.</p>
+<table>
+  <tr><th class="num">ID</th><th class="num">Anomaly</th><th>Max severity</th><th class="num">Count</th><th>First seen</th><th>Last seen</th><th>Pattern</th></tr>
+  {% for t in top_templates %}
+  <tr>
+    <td class="num">{{ t.template_id }}</td>
+    <td class="num">{{ "%.3f" | format(t.anomaly_score) }}</td>
+    <td class="sev-{{ t.max_severity }}">{{ t.max_severity }}</td>
+    <td class="num">{{ "{:,}".format(t.occurrence_count) }}</td>
+    <td class="mono">{{ t.first_seen }}</td>
+    <td class="mono">{{ t.last_seen }}</td>
+    <td class="mono">{{ t.pattern }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% if redaction_on %}
+<p class="note">Values like <code>[IPV4:a7f2]</code> are redacted placeholders. The same source
+value always produces the same placeholder within this incident, so they can be correlated
+across lines &mdash; but the hash is one-way.
+{% if vault_kept %}
+This run kept a reversible vault:
+<code>mistify reveal --incident-id {{ incident.incident_id }} --token "[IPV4:a7f2]"</code>
+resolves one back to the original.
+{% else %}
+This run kept no vault, so the originals cannot be recovered from it.
+{% endif %}
+</p>
+{% endif %}
+
+<div class="appendix">
+<h1>Appendix</h1>
+<p class="note">Everything below describes how the analysis was produced rather than what
+happened. It is here so a conclusion can be checked, not because a responder needs it to act.</p>
+
+<h2>Run signals</h2>
+<table>
+  <tr><th>Stage</th><th>Metric</th><th>Value</th></tr>
+  {% for m in health_signals %}
+  <tr><td>{{ m.stage }}</td><td class="mono">{{ m.metric }}</td><td>{{ m.value }}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Token usage</h2>
+{% if token_stages %}
+<p class="note">Cached tokens are a subset of input, not an extra column to add &mdash; the
+total is input plus output.</p>
+<table>
+  <tr><th>Stage</th><th>Model</th><th class="num">Calls</th><th class="num">Input</th><th class="num">Cached</th><th class="num">Output</th><th class="num">Total</th></tr>
+  {% for stage in token_stages %}
+  <tr>
+    <td>{{ stage.stage }}</td>
+    <td class="mono">{{ stage.model or "&mdash;" }}</td>
+    <td class="num">{{ stage.calls if stage.calls is not none else "&mdash;" }}</td>
+    <td class="num">{{ "{:,}".format(stage.input_tokens) }}</td>
+    <td class="num">{{ "{:,}".format(stage.cached_input_tokens) }} ({{ "%.0f" | format(stage.cached_share * 100) }}%)</td>
+    <td class="num">{{ "{:,}".format(stage.output_tokens) }}</td>
+    <td class="num">{{ "{:,}".format(stage.total_tokens) }}</td>
+  </tr>
+  {% endfor %}
+  <tr>
+    <th>Total</th><th></th><th></th>
+    <th class="num">{{ "{:,}".format(token_total.input_tokens) }}</th>
+    <th class="num">{{ "{:,}".format(token_total.cached_input_tokens) }}</th>
+    <th class="num">{{ "{:,}".format(token_total.output_tokens) }}</th>
+    <th class="num">{{ "{:,}".format(token_total.total_tokens) }}</th>
+  </tr>
+</table>
+<p class="note">No prices appear here. They change without notice and differ per model.</p>
+{% else %}
+<p class="note">No stage reported model usage. A stage that spent nothing is absent here rather
+than shown as zero, so that "did not report" and "reported zero" stay distinct.</p>
+{% endif %}
+
+<h2>Investigation trail</h2>
+<p class="note">Every query the investigation ran, in order. Two rows can share a step: the
+model is allowed to ask for several tools at once.</p>
+<table>
+  <tr><th class="num">Step</th><th>Query</th><th class="num">Rows</th></tr>
+  {% for q in queries %}
+  <tr><td class="num">{{ q.step }}</td><td class="mono">{{ q.sql_query }}</td><td class="num">{{ q.row_count }}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Pipeline configuration and counters</h2>
+<table>
+  <tr><th>Stage</th><th>Metric</th><th>Value</th></tr>
+  {% for m in health_detail %}
+  <tr><td>{{ m.stage }}</td><td class="mono">{{ m.metric }}</td><td>{{ m.value }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+
+<footer>Generated by mistify {{ version }}. Redaction mode: {{ incident.redaction_mode or "unknown" }}.</footer>
+
+</body>
+</html>
