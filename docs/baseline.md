@@ -159,3 +159,24 @@ while the API returned `retryDelay: '54s'` in the error body. Both fixed.
 The one note per run is the open question. The three runs before the cost work recorded two or
 three notes each; all nine since record one. That is a real difference on a small sample, and
 it is confounded — the prompt changed as well — so it is not yet a finding.
+
+## The coverage nudge
+
+Eleventh run, after `unexplained_signal_templates` moved from the adversarial pass into the
+loop:
+
+| | Before (10 runs) | `nudge1` |
+|---|---|---|
+| Cites the precursor (t7) | 0/10 | yes |
+| Notes recorded | 1 | 2 |
+| Unexplained signal templates | 1 | 0 |
+| Warnings in the report | 1 | none |
+| Steps / tool calls | 8–20 / 8–19 | 14 / 12 |
+| Loop tokens | 40k–99k | 64k |
+
+The nudge fired once and the model answered it with a second note citing templates 7 and 9.
+That is the first report this project has produced with no warnings.
+
+One run. A single positive against a baseline of ten consecutive negatives is strong evidence
+the behaviour changed, and no evidence about how often it holds. Two confirmation runs are
+owed before this number goes in the table above.

@@ -279,6 +279,11 @@ INVESTIGATE_INPUT_GROWTH = Metric(
 #: investigation is correct; zero on a long one means compaction is not running.
 INVESTIGATE_HISTORY_COMPACTIONS = Metric("investigate", "history_compactions", "int")
 
+#: Times the loop refused to accept a conclusion that left an acute signal template
+#: unaccounted for, and asked for one more turn. The check itself is model-free; this counts
+#: how often it had to fire.
+INVESTIGATE_COVERAGE_NUDGES = Metric("investigate", "coverage_nudges", "int")
+
 # ---------------------------------------------------------------- adversarial
 
 ADVERSARIAL_PROVIDER = Metric("adversarial", "provider", "str")
@@ -396,6 +401,7 @@ ALL_METRICS: tuple[Metric, ...] = (
     INVESTIGATE_INPUT_TOKENS_PER_STEP,
     INVESTIGATE_INPUT_GROWTH,
     INVESTIGATE_HISTORY_COMPACTIONS,
+    INVESTIGATE_COVERAGE_NUDGES,
     ADVERSARIAL_PROVIDER,
     ADVERSARIAL_MODEL,
     ADVERSARIAL_OBJECTIONS,

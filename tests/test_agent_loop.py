@@ -31,6 +31,7 @@ from mistify.metrics import (
     ADVERSARIAL_OUTPUT_TOKENS,
     ADVERSARIAL_REBUTTAL_MODEL,
     ADVERSARIAL_UNEXPLAINED_SIGNAL,
+    ANOMALY_SIGNAL_TEMPLATE_IDS,
     INVESTIGATE_BUDGET_LIMITED,
     INVESTIGATE_CACHED_INPUT_TOKENS,
     INVESTIGATE_CAVEAT,
@@ -84,7 +85,7 @@ def _concluding_script(db: ScratchpadDB) -> list[Turn]:
 
 def test_the_loop_investigates_and_concludes(loaded_db: ScratchpadDB) -> None:
     provider = ScriptedProvider(_concluding_script(loaded_db))
-    result = InvestigationLoop(loaded_db, provider, _toolbox(loaded_db)).run()
+    result = InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), coverage_nudges=0).run()
 
     assert result.tool_calls == 3
     assert result.budget_limited is False
@@ -96,7 +97,7 @@ def test_the_loop_investigates_and_concludes(loaded_db: ScratchpadDB) -> None:
 def test_tool_results_are_fed_back_under_the_right_id(loaded_db: ScratchpadDB) -> None:
     """A result returned under the wrong id breaks the conversation silently."""
     provider = ScriptedProvider(_concluding_script(loaded_db))
-    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db)).run()
+    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), coverage_nudges=0).run()
 
     second_call = provider.calls[1]
     results = [r for message in second_call.messages for r in message.tool_results]
@@ -114,7 +115,7 @@ def test_results_from_one_turn_go_back_in_a_single_message(loaded_db: Scratchpad
         stop_reason="tool_use",
     )
     provider = ScriptedProvider([parallel, text_turn("done")])
-    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db)).run()
+    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), coverage_nudges=0).run()
 
     final = provider.calls[-1]
     carrying = [m for m in final.messages if m.tool_results]
@@ -125,7 +126,7 @@ def test_results_from_one_turn_go_back_in_a_single_message(loaded_db: Scratchpad
 def test_the_system_prompt_never_changes_across_steps(loaded_db: ScratchpadDB) -> None:
     """The digest is the expensive stable prefix; editing it mid-run defeats caching."""
     provider = ScriptedProvider(_concluding_script(loaded_db))
-    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db)).run()
+    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), coverage_nudges=0).run()
 
     prompts = {call.system for call in provider.calls}
     assert len(prompts) == 1
@@ -140,7 +141,7 @@ def test_the_digest_leads_with_the_most_anomalous_template(loaded_db: Scratchpad
 
 def test_every_tool_call_is_logged_for_audit(loaded_db: ScratchpadDB) -> None:
     provider = ScriptedProvider(_concluding_script(loaded_db))
-    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db)).run()
+    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), coverage_nudges=0).run()
 
     logged = loaded_db.queries()
     assert len(logged) == 3
@@ -149,7 +150,7 @@ def test_every_tool_call_is_logged_for_audit(loaded_db: ScratchpadDB) -> None:
 
 def test_the_run_is_attributed_and_measured(loaded_db: ScratchpadDB) -> None:
     provider = ScriptedProvider(_concluding_script(loaded_db))
-    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db)).run()
+    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), coverage_nudges=0).run()
 
     view = MetricView(loaded_db.metrics("investigate"))
     assert view.text(INVESTIGATE_INVESTIGATOR) == INVESTIGATOR_NAME
@@ -206,11 +207,15 @@ def test_the_budget_is_only_offered_to_providers_that_support_it(
 ) -> None:
     """A provider without task budgets relies on the hard cap instead of a silent no-op."""
     without = ScriptedProvider([text_turn("done")], supports_task_budget=False)
-    InvestigationLoop(loaded_db, without, _toolbox(loaded_db), task_budget_tokens=64000).run()
+    InvestigationLoop(
+        loaded_db, without, _toolbox(loaded_db), task_budget_tokens=64000, coverage_nudges=0
+    ).run()
     assert without.calls[0].task_budget_tokens is None
 
     with_budget = ScriptedProvider([text_turn("done")], supports_task_budget=True)
-    InvestigationLoop(loaded_db, with_budget, _toolbox(loaded_db), task_budget_tokens=64000).run()
+    InvestigationLoop(
+        loaded_db, with_budget, _toolbox(loaded_db), task_budget_tokens=64000, coverage_nudges=0
+    ).run()
     assert with_budget.calls[0].task_budget_tokens == 64000
 
 
@@ -384,7 +389,7 @@ def test_running_past_the_script_is_an_error(loaded_db: ScratchpadDB) -> None:
 
     provider = ScriptedProvider([tool_call_turn("query_templates", {}, call_id="c1")])
     with pytest.raises(ProviderError):
-        InvestigationLoop(loaded_db, provider, _toolbox(loaded_db)).run()
+        InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), coverage_nudges=0).run()
 
 
 # ------------------------------------------------------- what the check costs
@@ -462,7 +467,7 @@ def test_no_rebuttal_model_is_recorded_when_it_is_the_same_model(loaded_db: Scra
 def test_the_report_says_what_the_whole_run_cost(loaded_db: ScratchpadDB) -> None:
     """The loop and the check are both on the bill, and the report has to add them up."""
     loop = ScriptedProvider(_concluding_script(loaded_db))
-    InvestigationLoop(loaded_db, loop, _toolbox(loaded_db)).run()
+    InvestigationLoop(loaded_db, loop, _toolbox(loaded_db), coverage_nudges=0).run()
     run_adversarial_check(
         loaded_db,
         _objecting_critique(Usage(input_tokens=800, output_tokens=120)),
@@ -715,7 +720,9 @@ def test_old_tool_output_is_reduced_to_its_summary_line(loaded_db: ScratchpadDB)
     what the filters were -- which is the part the model reasons about several steps later.
     """
     provider = ScriptedProvider(_slice_script(loaded_db, 5))
-    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=2).run()
+    InvestigationLoop(
+        loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=2, coverage_nudges=0
+    ).run()
 
     last_sent = provider.calls[-1].messages
     results = [r for m in last_sent for r in m.tool_results]
@@ -733,7 +740,9 @@ def test_the_recent_window_is_kept_in_full(loaded_db: ScratchpadDB) -> None:
     The model has to be able to read the rows it just asked for, or the tool call was pointless.
     """
     provider = ScriptedProvider(_slice_script(loaded_db, 5))
-    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=2).run()
+    InvestigationLoop(
+        loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=2, coverage_nudges=0
+    ).run()
 
     results = [r for m in provider.calls[-1].messages for r in m.tool_results]
     intact = [r for r in results if ELIDED not in r.content]
@@ -744,7 +753,9 @@ def test_the_recent_window_is_kept_in_full(loaded_db: ScratchpadDB) -> None:
 def test_compaction_can_be_turned_off(loaded_db: ScratchpadDB) -> None:
     """Zero keeps everything, which is what the cost curve looked like before this existed."""
     provider = ScriptedProvider(_slice_script(loaded_db, 5))
-    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=0).run()
+    InvestigationLoop(
+        loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=0, coverage_nudges=0
+    ).run()
 
     results = [r for m in provider.calls[-1].messages for r in m.tool_results]
 
@@ -758,7 +769,9 @@ def test_tool_calls_are_never_touched_by_compaction(loaded_db: ScratchpadDB) -> 
     would fail the investigation outright rather than degrade it.
     """
     provider = ScriptedProvider(_slice_script(loaded_db, 5))
-    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=1).run()
+    InvestigationLoop(
+        loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=1, coverage_nudges=0
+    ).run()
 
     calls = [c for m in provider.calls[-1].messages for c in m.tool_calls]
 
@@ -774,7 +787,9 @@ def test_the_run_reports_its_input_growth(loaded_db: ScratchpadDB) -> None:
         tool_call_turn("query_templates", {}, call_id="c2", usage=Usage(input_tokens=400)),
         text_turn("done", usage=Usage(input_tokens=900)),
     ]
-    InvestigationLoop(loaded_db, ScriptedProvider(script), _toolbox(loaded_db)).run()
+    InvestigationLoop(
+        loaded_db, ScriptedProvider(script), _toolbox(loaded_db), coverage_nudges=0
+    ).run()
 
     view = MetricView(loaded_db.metrics("investigate"))
 
@@ -788,7 +803,9 @@ def test_flat_input_is_not_reported_as_growth(loaded_db: ScratchpadDB) -> None:
         tool_call_turn("query_templates", {}, call_id="c1", usage=Usage(input_tokens=100)),
         text_turn("done", usage=Usage(input_tokens=100)),
     ]
-    InvestigationLoop(loaded_db, ScriptedProvider(script), _toolbox(loaded_db)).run()
+    InvestigationLoop(
+        loaded_db, ScriptedProvider(script), _toolbox(loaded_db), coverage_nudges=0
+    ).run()
 
     assert MetricView(loaded_db.metrics("investigate")).number(INVESTIGATE_INPUT_GROWTH) == 1.0
 
@@ -807,7 +824,9 @@ def test_small_tool_output_survives_compaction(loaded_db: ScratchpadDB) -> None:
     ]
     script.append(text_turn("done"))
     provider = ScriptedProvider(script)
-    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=1).run()
+    InvestigationLoop(
+        loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=1, coverage_nudges=0
+    ).run()
 
     results = [r for m in provider.calls[-1].messages for r in m.tool_results]
 
@@ -818,8 +837,95 @@ def test_small_tool_output_survives_compaction(loaded_db: ScratchpadDB) -> None:
 def test_large_tool_output_is_still_compacted(loaded_db: ScratchpadDB) -> None:
     """Control for the exemption above: it is a size threshold, not compaction switched off."""
     provider = ScriptedProvider(_slice_script(loaded_db, 5))
-    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=1).run()
+    InvestigationLoop(
+        loaded_db, provider, _toolbox(loaded_db), tool_result_history_steps=1, coverage_nudges=0
+    ).run()
 
     results = [r for m in provider.calls[-1].messages for r in m.tool_results]
 
     assert any(ELIDED in r.content for r in results)
+
+
+# ------------------------------------------------- refusing an incomplete conclusion
+
+
+def _signal_ids(db: ScratchpadDB) -> list[int]:
+    raw = MetricView(db.metrics("anomaly")).text(ANOMALY_SIGNAL_TEMPLATE_IDS) or ""
+    return [int(part) for part in raw.split(",") if part.strip()]
+
+
+def _note_turn(template_id: int, call_id: str) -> Turn:
+    return tool_call_turn(
+        "write_note",
+        {
+            "note": f"about template {template_id}",
+            "evidence": {"template_ids": [template_id], "log_event_ids": []},
+            "confidence": "high",
+        },
+        call_id=call_id,
+    )
+
+
+def test_a_conclusion_leaving_signal_unexplained_is_sent_back(loaded_db: ScratchpadDB) -> None:
+    """The check was model-free and already existed; it just ran after the run had ended.
+
+    Ten runs of the sample incident concluded without citing the planted precursor and the
+    adversarial pass caught it every time, too late to change anything.
+    """
+    signal = _signal_ids(loaded_db)
+    provider = ScriptedProvider(
+        [_note_turn(signal[0], "c1"), text_turn("done"), text_turn("done for real")]
+    )
+
+    result = InvestigationLoop(loaded_db, provider, _toolbox(loaded_db)).run()
+
+    assert result.coverage_nudges == 1
+    sent = provider.calls[-1].messages[-1].text
+    assert "were ranked as signal" in sent
+    assert str(signal[1]) in sent
+
+
+def test_a_conclusion_that_covers_the_signal_is_accepted(loaded_db: ScratchpadDB) -> None:
+    """Control: the nudge fires on a gap, not on every conclusion.
+
+    Without this the test above would pass on a loop that always asked for one more turn.
+    """
+    script = [
+        _note_turn(template_id, f"c{i}") for i, template_id in enumerate(_signal_ids(loaded_db))
+    ]
+    script.append(text_turn("done"))
+    provider = ScriptedProvider(script)
+
+    result = InvestigationLoop(loaded_db, provider, _toolbox(loaded_db)).run()
+
+    assert result.coverage_nudges == 0
+
+
+def test_the_nudge_fires_at_most_the_configured_number_of_times(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """A model that keeps declining must not be able to spin the loop."""
+    provider = ScriptedProvider([text_turn("done"), text_turn("still done")])
+
+    result = InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), coverage_nudges=1).run()
+
+    assert result.coverage_nudges == 1
+    assert len(provider.calls) == 2
+
+
+def test_a_chronic_template_does_not_trigger_the_nudge(loaded_db: ScratchpadDB) -> None:
+    """Same exclusion the warning uses: background is not an omission.
+
+    Otherwise every investigation would be sent back for not explaining a log's steady error
+    stream, which is the false-alarm loop this project already removed once.
+    """
+    chronic = sorted(loaded_db.chronic_template_ids() & set(_signal_ids(loaded_db)))
+    acute = [i for i in _signal_ids(loaded_db) if i not in chronic]
+    assert chronic, "the fixture is expected to contain a chronic signal template"
+
+    script = [_note_turn(template_id, f"c{i}") for i, template_id in enumerate(acute)]
+    script.append(text_turn("done"))
+
+    result = InvestigationLoop(loaded_db, ScriptedProvider(script), _toolbox(loaded_db)).run()
+
+    assert result.coverage_nudges == 0

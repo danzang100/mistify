@@ -23,13 +23,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from mistify.agent.adversarial import unexplained_signal_templates
 from mistify.agent.tools import ToolBox
 from mistify.common.models import ScratchpadNote
 from mistify.llm.base import LLMProvider, Message, ToolResult, ToolSpec, Turn, Usage
 from mistify.metrics import (
+    ANOMALY_SIGNAL_TEMPLATE_IDS,
     INVESTIGATE_BUDGET_LIMITED,
     INVESTIGATE_CACHED_INPUT_TOKENS,
     INVESTIGATE_CAVEAT,
+    INVESTIGATE_COVERAGE_NUDGES,
     INVESTIGATE_HISTORY_COMPACTIONS,
     INVESTIGATE_INPUT_GROWTH,
     INVESTIGATE_INPUT_TOKENS,
@@ -43,6 +46,7 @@ from mistify.metrics import (
     INVESTIGATE_STEPS,
     INVESTIGATE_STOP_REASON,
     INVESTIGATE_TOOL_CALLS,
+    MetricView,
 )
 from mistify.scratchpad.db import ScratchpadDB
 
@@ -148,6 +152,7 @@ class InvestigationResult:
     #: decides whether a longer incident is affordable.
     input_per_step: list[int] = field(default_factory=list)
     compactions: int = 0
+    coverage_nudges: int = 0
 
     @property
     def input_growth(self) -> float:
@@ -203,6 +208,7 @@ class InvestigationLoop:
         max_tokens: int = 8192,
         task_budget_tokens: int | None = None,
         tool_result_history_steps: int = 3,
+        coverage_nudges: int = 1,
     ) -> None:
         self.db = db
         self.provider = provider
@@ -213,6 +219,9 @@ class InvestigationLoop:
         #: How many recent steps keep their tool output in full. Older ones are reduced to the
         #: summary line the tool already writes. Zero disables compaction.
         self.tool_result_history_steps = tool_result_history_steps
+        #: How many times a conclusion may be sent back for leaving an acute signal template
+        #: unaccounted for. Zero accepts the first conclusion offered.
+        self.max_coverage_nudges = coverage_nudges
 
     def run(self, incident_context: str = "") -> InvestigationResult:
         system = build_system_prompt(self.db)
@@ -232,6 +241,8 @@ class InvestigationLoop:
             result.stop_reason = turn.stop_reason
 
             if not turn.wants_tools:
+                if self._nudge(messages, turn, result):
+                    continue
                 break
 
             messages.append(Message(role="assistant", text=turn.text, tool_calls=turn.tool_calls))
@@ -250,6 +261,51 @@ class InvestigationLoop:
         self._record(result)
         result.notes = self.db.notes()
         return result
+
+    def _signal_template_ids(self) -> list[int]:
+        """The templates the anomaly ranking flagged, as the scoring stage recorded them."""
+        raw = MetricView(self.db.metrics("anomaly")).text(ANOMALY_SIGNAL_TEMPLATE_IDS) or ""
+        return [int(part) for part in raw.split(",") if part.strip()]
+
+    def _nudge(self, messages: list[Message], turn: Turn, result: InvestigationResult) -> bool:
+        """Refuse a conclusion that leaves an acute signal template unaccounted for, once.
+
+        `unexplained_signal_templates` is model-free and already existed -- it just ran too
+        late to change anything, in the adversarial pass, after the investigation had ended.
+        Measured over ten runs of the sample incident, every one concluded without citing the
+        planted precursor and six never mentioned it at all; the check caught that every time
+        and could do nothing but report it.
+
+        Asking is deliberately weaker than requiring. "Cite it or say why it is not relevant"
+        accepts a reasoned dismissal, which is itself a finding -- no run so far has explicitly
+        dismissed the red herring, and this is the turn where that would be written down.
+
+        Bounded by `max_coverage_nudges` so a model that keeps declining cannot spin the loop.
+        """
+        if result.coverage_nudges >= self.max_coverage_nudges:
+            return False
+        unexplained, _ = unexplained_signal_templates(self.db, self._signal_template_ids())
+        if not unexplained:
+            return False
+
+        listed = ", ".join(str(i) for i in unexplained)
+        # The assistant's own turn goes back first: without it the conversation has two user
+        # messages in a row, which is not a shape any provider accepts.
+        messages.append(Message(role="assistant", text=turn.text))
+        messages.append(
+            Message(
+                role="user",
+                text=(
+                    f"Before you finish: template(s) {listed} were ranked as signal, were active "
+                    "during the incident window, and no note you have written cites them. For "
+                    "each one, either write a note citing it, or write a note saying why it is "
+                    "not relevant to this incident. A reasoned dismissal is a finding; silence "
+                    "is not."
+                ),
+            )
+        )
+        result.coverage_nudges += 1
+        return True
 
     def _compact(self, messages: list[Message]) -> int:
         """Reduce tool output older than the recent window to its summary line, in place.
@@ -365,6 +421,7 @@ class InvestigationLoop:
                 ),
                 (INVESTIGATE_INPUT_GROWTH, round(result.input_growth, 2)),
                 (INVESTIGATE_HISTORY_COMPACTIONS, result.compactions),
+                (INVESTIGATE_COVERAGE_NUDGES, result.coverage_nudges),
                 (
                     INVESTIGATE_OUTCOME,
                     "budget_limited"

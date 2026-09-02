@@ -20,7 +20,7 @@ or one of the design documents, the fix column says which document to amend.
 | 7. The provider seam drops thinking blocks | ~~Medium~~ | **Fixed** — it was a hard requirement, not a cost |
 | 8. The anomaly score has no duration term | Medium | 4 — worked around, not solved |
 | 9. Conversation growth is bounded but not budgeted | Medium | 4 |
-| 10. The investigator under-cites what it reasons over | Medium | 4 |
+| 10. The investigator under-cites what it reasons over | ~~Medium~~ | **Fixed** — the check moved earlier, not a better prompt |
 
 ---
 
@@ -296,12 +296,25 @@ supporting context cannot be followed back to rows is the exact failure the cita
 exists to prevent — the report says "preceded by slow connection acquisitions" and offers no
 way to check it.
 
-**What landed.** The loop's system prompt now asks for every template a note names to appear in
-its `template_ids`. Untested: the nine runs predate it.
+**Fixed, and not by the prompt.** Asking for it in the system prompt changed nothing: the run
+after that change cited 8 and 9 and did not mention template 7 at all. Ten runs, zero hits. The
+prompt fix also could not have worked in the six runs where the model never named the template
+— there was nothing for "cite what you name" to bite on.
 
-**What has not.** If prompting does not fix it, the mechanical option is to reject a note whose
-prose names a template id absent from its citations — the same shape as the log-event gate,
-which did work. That is string matching against prose and should be a last resort.
+What worked was moving a check that already existed. `unexplained_signal_templates` is
+model-free and ran in the adversarial pass, after the investigation had ended, where it could
+only report. It now runs in the loop: when the model stops calling tools, an acute signal
+template with no citation sends one more turn asking it to cite the template or say why it is
+not relevant. Bounded by `pipeline`-level `coverage_nudges` so a model that keeps declining
+cannot spin the loop, and chronic templates are excluded on the same grounds as issue 8.
+
+First run with it: templates 7, 8 and 9 cited across two notes, `unexplained_signal` 0, no
+warnings — against 0/10 before. One run, and one positive against a stable zero baseline is
+strong but not conclusive; the confirmation runs are still owed.
+
+**Note on the diagnosis.** "Cite what you name" was aimed at the 3-in-9 case where prose and
+citations disagreed. That was the visible symptom, not the problem. The problem was that
+nothing asked the model about coverage while it could still act.
 
 **Note on how this was found.** It was nearly missed, and then twice reported as something it
 was not. The metric counted citations while the comparison being made counted prose mentions,

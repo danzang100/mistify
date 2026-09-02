@@ -90,6 +90,7 @@ EXPECTED_METRIC_KEYS = {
     ("investigate", "input_tokens_per_step"),
     ("investigate", "input_growth_factor"),
     ("investigate", "history_compactions"),
+    ("investigate", "coverage_nudges"),
     ("adversarial", "provider"),
     ("adversarial", "model"),
     ("adversarial", "objections"),
