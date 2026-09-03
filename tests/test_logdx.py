@@ -52,6 +52,13 @@ GROUND_TRUTH = {
             "value": 'error: Module has no attribute "is_null"  [attr-defined]',
             "importance": "critical",
         },
+        # Present in the log, but only once its terminal colour codes are ignored. Ground truth
+        # is transcribed as a person reads a log; the file is written for a terminal.
+        {
+            "type": "step_name",
+            "value": "tests-build::macros compile_fail_full",
+            "importance": "critical",
+        },
         # Not log text at all: its value occurs in a thousand unrelated lines.
         {"type": "exit_code", "value": "1", "importance": "critical"},
         # Too short to identify a line, whatever its type.
@@ -80,7 +87,28 @@ def case_dir(tmp_path: Path) -> Path:
     directory.mkdir(parents=True)
     (directory / "case.json").write_text(json.dumps(CASE_JSON), encoding="utf-8")
     (directory / "ground_truth.json").write_text(json.dumps(GROUND_TRUTH), encoding="utf-8")
-    (directory / "raw.log").write_text("a log line\n", encoding="utf-8")
+    # The log has to contain its own ground truth. A fixture whose `raw.log` did not is exactly
+    # what the presence check exists for: a marker the log does not contain produces a check
+    # that can only fail, and it fails looking like a wrong answer from the investigation.
+    #
+    # The `compile_fail_full` line carries ANSI colour codes, as a real CI log writes it, so the
+    # check is exercised on the shape that broke first -- 71.9% of the lines in one real tokio
+    # log are wrapped like this.
+    esc = chr(27)
+    (directory / "raw.log").write_text(
+        "\n".join(
+            [
+                "DeprecationWarning: The 'generic' unit for NumPy timedelta is deprecated",
+                "  File pandas/tests/arrays/masked/test_indexing.py, line 43",
+                'error: Module has no attribute "is_null"  [attr-defined]',
+                f"{esc}[35;1mtests-build::macros{esc}[0m {esc}[34;1mcompile_fail_full{esc}[0m",
+                "numpy 1.2.3",
+                "===== ERRORS =====",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     return directory
 
 
@@ -218,3 +246,41 @@ def test_the_real_schema_still_parses(tmp_path: Path) -> None:
     assert loaded.root_cause
     assert loaded.markers, "no critical signal survived the marker rules"
     assert loaded.must_mention and loaded.must_not_claim
+
+
+def test_a_marker_the_log_does_not_contain_is_dropped(case_dir: Path) -> None:
+    """Ground truth that names a line the file does not have makes an unscorable check.
+
+    Measured on a real case: `396 tests run: 395 passed, 1 failed, 1 skipped` could not be
+    found in the log it annotates, and the resulting check failed looking exactly like a wrong
+    answer from the investigation. A scorecard that counts its own corpus defects against the
+    model is reporting the wrong number.
+    """
+    ground_truth = json.loads((case_dir / "ground_truth.json").read_text(encoding="utf-8"))
+    ground_truth["required_signals"].append(
+        {
+            "type": "assertion",
+            "value": "this sentence is nowhere in the log",
+            "importance": "critical",
+        }
+    )
+    (case_dir / "ground_truth.json").write_text(json.dumps(ground_truth), encoding="utf-8")
+
+    loaded = load_logdx_case(case_dir)
+
+    assert "this sentence is nowhere in the log" not in loaded.markers
+    assert any("absent from the log" in d for d in loaded.dropped_signals)
+
+
+def test_a_marker_wrapped_in_ansi_codes_is_kept(case_dir: Path) -> None:
+    """The control on the test above, and the harder half.
+
+    A CI log is written for a terminal, so ground truth transcribed as a person reads it says
+    `tests-build::macros compile_fail_full` where the file says the same thing with colour
+    codes between the words. Comparing literally drops a marker that is genuinely present --
+    which would be the same defect as keeping an absent one, in the other direction.
+    """
+    loaded = load_logdx_case(case_dir)
+
+    assert "tests-build::macros compile_fail_full" in loaded.markers
+    assert not any("compile_fail_full" in d for d in loaded.dropped_signals)

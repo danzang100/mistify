@@ -8,6 +8,7 @@ SQLite itself refuses to let write -- see `run_readonly_sql`.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
@@ -69,6 +70,15 @@ class ReadOnlyViolation(RuntimeError):
 
 def _now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+#: Terminal colour and cursor sequences. Log content as far as a file is concerned, and noise
+#: as far as anything reading it is concerned -- including a model, which pays tokens for them.
+_ANSI = re.compile("\x1b\\[[0-9;]*[A-Za-z]")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI.sub("", text)
 
 
 def _like_escape(text: str) -> str:
@@ -599,6 +609,43 @@ class ScratchpadDB:
             (f"%{_like_escape(text)}%", f"%{_like_escape(text)}%", limit),
         )
         return {int(row["template_id"]) for row in rows if row["template_id"] is not None}
+
+    def matching_events(self, text: str, limit: int = 20000) -> tuple[set[int], int]:
+        """Templates whose events carry `text`, and how many events do.
+
+        Both numbers, because they answer different questions and only one of them is about
+        how *identifying* the text is. A marker that lands in many templates may be common --
+        or it may be rare and fragmented, which is what happens on a log that barely clusters:
+        `tests/fail/macros_type_mismatch.rs` occurred in 35 of 3,154 events yet spread across
+        more than ten templates, because at 498 templates for 3,154 lines almost every distinct
+        line shape is its own cluster. Counting templates called that indistinct; counting
+        events calls it 1.1% of the file, which is what it is.
+
+        Falls back to an ANSI-insensitive scan when the direct match finds nothing. CI logs are
+        written for a terminal: 71.9% of the lines in one real GitHub Actions log carry escape
+        sequences, so `tests-build::macros compile_fail_full` is stored as
+        `\\x1b[35;1mtests-build::macros\\x1b[0m \\x1b[34;1mcompile_fail_full\\x1b[0m` and no
+        literal search can find it. The fallback is a table scan and runs only when the cheap
+        lookup has already failed.
+        """
+        pattern = f"%{_like_escape(text)}%"
+        rows = self._conn.execute(
+            "SELECT template_id FROM log_events "
+            "WHERE COALESCE(message, raw) LIKE ? ESCAPE '\\' "
+            "OR COALESCE(raw, message) LIKE ? ESCAPE '\\' LIMIT ?",
+            (pattern, pattern, limit),
+        ).fetchall()
+        if not rows:
+            rows = [
+                row
+                for row in self._conn.execute(
+                    "SELECT template_id, COALESCE(message, raw) AS text FROM log_events LIMIT ?",
+                    (limit,),
+                )
+                if text in _strip_ansi(str(row["text"] or ""))
+            ]
+        templates = {int(r["template_id"]) for r in rows if r["template_id"] is not None}
+        return templates, len(rows)
 
     def known_template_ids(self, ids: Sequence[int]) -> set[int]:
         """Which of `ids` actually exist. Used to verify citations without loading the table."""

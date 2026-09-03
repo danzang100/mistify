@@ -45,6 +45,7 @@ answer, and the same reasoning that keeps Loghub out keeps this out.
 from __future__ import annotations
 
 import json
+import re
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -169,6 +170,13 @@ class LogDxCase:
     line_count: int
 
 
+_ANSI = re.compile("\x1b\\[[0-9;]*[A-Za-z]")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI.sub("", text)
+
+
 def split_of(case_id: str) -> str:
     """Which split a case belongs to, or a `ValueError` naming the ones that exist."""
     for split, ids in LOGDX_CASES.items():
@@ -205,6 +213,24 @@ def fetch_logdx_case(case_id: str, directory: Path) -> Path:
         with urllib.request.urlopen(url, timeout=120) as response:
             path.write_bytes(response.read())
     return target
+
+
+def _present_in(log_path: Path, marker: str) -> bool:
+    """Whether the log actually contains this marker, ignoring terminal escape sequences.
+
+    Ground truth is transcribed from a log as a person reads it, and a CI log is written for a
+    terminal. In one tokio case 71.9% of the lines carry ANSI colour codes, so the ground truth
+    says `tests-build::macros compile_fail_full` where the file says
+    `\\x1b[35;1mtests-build::macros\\x1b[0m \\x1b[34;1mcompile_fail_full\\x1b[0m`. Comparing the
+    two literally finds nothing.
+
+    The stronger reason to check at all: some ground-truth values are not in the log in any
+    form. `396 tests run: 395 passed, 1 failed, 1 skipped` appears nowhere in the file it
+    annotates. A check built on a string the corpus does not contain can only ever fail, and it
+    fails looking exactly like a wrong answer from the investigation.
+    """
+    text = _strip_ansi(log_path.read_text(encoding="utf-8", errors="replace"))
+    return _strip_ansi(marker) in text
 
 
 def _markers_from(ground_truth: dict[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -244,6 +270,18 @@ def load_logdx_case(case_dir: Path) -> LogDxCase:
     ground_truth = json.loads((case_dir / "ground_truth.json").read_text(encoding="utf-8"))
 
     markers, dropped = _markers_from(ground_truth)
+
+    # A marker the log does not contain cannot be cited by anything, so a check built on it can
+    # only ever fail -- and it fails looking exactly like a wrong answer from the investigation.
+    # Dropped here, and said out loud, because a scorecard that counts unscorable rows against
+    # the model is reporting its own corpus defects as model error.
+    log_path = case_dir / "raw.log"
+    if log_path.exists():
+        present = tuple(m for m in markers if _present_in(log_path, m))
+        absent = [m for m in markers if m not in present]
+        dropped = dropped + tuple(f"absent from the log: {m[:50]}" for m in absent)
+        markers = present
+
     diagnosis = ground_truth.get("expected_diagnosis") or {}
     root_cause = (ground_truth.get("root_cause") or {}).get("summary", "")
 

@@ -37,17 +37,22 @@ class Check:
     detail: str
 
 
-#: Above this many templates, a marker is not identifying anything. A citation check on such a
-#: marker passes as soon as the investigation cites almost anything, which is a passing row on
-#: a scorecard that measured nothing. Reported as unresolvable rather than allowed to pass.
-_MAX_MARKER_TEMPLATES = 10
-
-#: And the same judgement as a share, because the count alone cannot be right for both sizes of
-#: file this scores. A CI log clusters into a thousand templates, where ten is plainly too few
-#: to identify anything; the synthetic incident clusters into nine, where ten can never be
-#: reached and the rule would never fire. A marker matching over half the templates in a file
-#: is not a marker, whichever file it is.
-_MAX_MARKER_SHARE = 0.5
+#: Above this share of a file's *events*, a marker is not identifying anything. A citation check
+#: on such a marker passes as soon as the investigation cites almost anything, which is a
+#: passing row on a scorecard that measured nothing.
+#:
+#: Measured in events rather than templates, and that correction came from a real run. The rule
+#: was "more than ten templates means indistinct", which is true of a common token and false of
+#: a rare one on a log that barely clusters. `tests/fail/macros_type_mismatch.rs` occurred in 35
+#: of 3,154 events in a tokio CI log -- 1.1%, about as identifying as a string gets -- and was
+#: rejected because those 35 events had fragmented across more than ten templates, which is what
+#: happens at 498 templates for 3,154 lines. The scorer was marking its own pipeline's
+#: clustering behaviour as a defect in the corpus.
+#:
+#: Ten percent is deliberately loose. The check exists to catch `exit_code: "1"`, which matches
+#: a large fraction of a build log, not to adjudicate borderline cases -- and a real error line
+#: repeated a few hundred times in a few thousand is still evidence.
+_MAX_MARKER_EVENT_SHARE = 0.10
 
 
 def _templates_for(db: ScratchpadDB, marker: str) -> set[int]:
@@ -75,7 +80,17 @@ def _templates_for(db: ScratchpadDB, marker: str) -> set[int]:
     if matched:
         return matched
 
-    return db.templates_matching_text(marker)
+    return _resolve(db, marker)[0]
+
+
+def _resolve(db: ScratchpadDB, marker: str) -> tuple[set[int], int]:
+    """Templates carrying `marker`, and how many events do.
+
+    The event count is what decides whether the marker identifies anything -- see
+    `_MAX_MARKER_EVENT_SHARE`. It also falls back to an ANSI-insensitive scan, because a CI log
+    is written for a terminal and its evidence is wrapped in escape sequences.
+    """
+    return db.matching_events(marker)
 
 
 def _template_for(db: ScratchpadDB, marker: str) -> int | None:
@@ -136,9 +151,22 @@ def score_run(db: ScratchpadDB, case: EvalCase) -> list[Check]:
     """Every check this case defines, against one finished investigation."""
     checks: list[Check] = []
     cited = _cited_templates(db)
+    template_rows = db.run_readonly_sql(
+        "SELECT template_id, pattern FROM templates ORDER BY template_id", max_rows=5000
+    )
 
+    event_total = max(db.event_count(), 1)
     for marker in case.must_cite:
-        matched = _templates_for(db, marker)
+        # The event count is taken for every marker, not only the ones the pattern search
+        # missed. It is what the distinctiveness guard reads, and computing it only on the
+        # fallback path meant a marker found in a *template pattern* skipped the guard
+        # entirely -- so a single letter, which matches nearly every pattern in the file,
+        # sailed through as a citation check.
+        by_pattern = {
+            int(row["template_id"]) for row in template_rows if marker in str(row["pattern"])
+        }
+        by_event, events = _resolve(db, marker)
+        matched = by_pattern or by_event
         label = marker if len(marker) <= 60 else marker[:57] + "..."
         if not matched:
             checks.append(
@@ -150,17 +178,17 @@ def score_run(db: ScratchpadDB, case: EvalCase) -> list[Check]:
                 )
             )
             continue
-        total = max(db.template_count(), 1)
-        if len(matched) > _MAX_MARKER_TEMPLATES or len(matched) > total * _MAX_MARKER_SHARE:
-            # Not a failure of the investigation, and not a pass either. A marker this common
-            # cannot distinguish a run that cited the right thing from one that cited anything.
+        if events > event_total * _MAX_MARKER_EVENT_SHARE:
+            # Not a failure of the investigation, and not a pass either. A marker occurring in
+            # this much of the file cannot distinguish a run that cited the right thing from
+            # one that cited anything at all.
             checks.append(
                 Check(
                     name=f"resolves[{label}]",
                     passed=False,
                     detail=(
-                        f"{marker!r} matches {len(matched)} of {total} templates "
-                        "and identifies nothing"
+                        f"{marker!r} occurs in {events} of {event_total} events "
+                        f"({100 * events / event_total:.0f}%) and identifies nothing"
                     ),
                 )
             )
