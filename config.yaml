@@ -86,10 +86,11 @@ redaction:
   vault: false
   vault_path: .cache/vault_{incident_id}.sqlite
   # Worker processes for redaction. 1 is serial; 0 means "use the machine's cores".
-  # Redaction is ~35% of an ingest and the only stage that parallelises cleanly: measured 1.51x
-  # end to end on a 400k-line BGL file with 8 workers, output byte-identical to serial. Left at
-  # 1 because processes are not free and a small file finishes before a pool has started --
-  # raise it for the gigabyte-scale runs it exists for. `vault: true` forces serial.
+  # Redaction is ~42% of an ingest and the only stage that parallelises cleanly: 1.55x end to
+  # end on a 400k-line BGL file with 8 workers, output byte-identical to serial. Amdahl caps
+  # the whole run near 1.7x, so 16 workers measured only 1.59x -- 8 is where it stops paying.
+  # Left at 1 because processes are not free and a small file finishes before a pool has
+  # started; raise it for the gigabyte-scale runs it exists for. `vault: true` forces serial.
   workers: 1
 
 scratchpad:

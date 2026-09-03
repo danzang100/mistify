@@ -251,10 +251,13 @@ class RedactionConfig(_Strict):
 
     #: Worker processes for redaction. 1 is serial; 0 means "use the machine's cores".
     #:
-    #: Redaction is roughly 35% of an ingest and the only stage that parallelises cleanly, so
-    #: this is the throughput knob that matters at volume: measured 5.74x on the stage with 8
-    #: workers, and byte-identical output, which it must be -- tokens are salted hashes and do
-    #: not depend on which process computed them.
+    #: Redaction is roughly 42% of an ingest and the only stage that parallelises cleanly, so
+    #: this is the throughput knob that matters at volume: 3.20x on the stage and 1.55x end to
+    #: end at 8 workers, with byte-identical output, which it must be -- tokens are salted
+    #: hashes and do not depend on which process computed them.
+    #:
+    #: Do not expect more from a bigger number. Amdahl caps the whole ingest near 1.7x while
+    #: redaction is 42% of it, and 16 workers measured 1.59x against 8 workers' 1.55x.
     #:
     #: Defaults to serial. Processes are not free (Windows spawns rather than forks, so each
     #: one re-imports the package), a small file finishes before a pool has started, and a

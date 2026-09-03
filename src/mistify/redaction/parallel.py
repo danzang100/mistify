@@ -16,18 +16,26 @@ which is why this module exists rather than a tuning patch:
   so the pre-filter is pure overhead whichever way the data falls.
 
 Processes rather than threads, because the work is CPU-bound Python and the GIL makes threads
-pointless here. Windows spawns rather than forks, so each worker re-imports and every batch is
-pickled across a boundary -- measured, that transport is comfortably paid for above a few
-thousand records per chunk:
+pointless here. Windows spawns rather than forks, so each worker re-imports, and every batch is
+pickled across a boundary in both directions. That transport is the limit on how well this
+scales, and it costs more than a first benchmark suggested:
 
-    serial (1 core)      10.93s     36,581 lines/s
-    2 workers             4.87s     82,119 lines/s   2.24x
-    4 workers             2.63s    152,275 lines/s   4.16x
-    8 workers             1.90s    210,087 lines/s   5.74x
+    workers          1      2      4      8     12     16
+    redaction     1.00x  1.32x  2.23x  3.20x  3.45x  3.87x
+    whole ingest  1.00x    --   1.40x  1.55x    --   1.59x
 
-Output was byte-identical to serial in every configuration, which it must be: tokens are
-salted hashes of the value, so they do not depend on which process computed them or on the
-order lines were seen in.
+An earlier note here reported 5.74x at eight workers. That was measured by handing the pool
+lists of *strings*; the pipeline hands it `LogRecord` objects, which are several times more
+expensive to pickle, and the honest figure is 3.20x. A benchmark that does not send what the
+caller sends is measuring its own setup.
+
+Output is byte-identical to serial in every configuration, which it must be: tokens are salted
+hashes of the value, so they do not depend on which process computed them or on the order lines
+were seen in.
+
+Chunk size was tuned and left alone: at eight workers, 10,000 records per chunk beat both
+40,000 and 100,000 (12.2s against 13.5s and 13.8s on 400,000 BGL lines). Bigger chunks buy
+fewer round trips and lose more than they save.
 
 **The vault is not supported here.** It writes each replaced value to its own SQLite file, and
 a worker cannot share that handle. Rather than teach workers to ship their mappings back --
@@ -93,9 +101,23 @@ def _redact_chunk(records: list[LogRecord]) -> tuple[list[LogRecord], dict[str, 
 def resolve_workers(configured: int) -> int:
     """How many worker processes to actually use.
 
-    `0` means "decide for me" and resolves to the machine's CPU count, capped: past about eight
-    the measured curve flattens while the number of Python interpreters, and their memory, keeps
-    growing. Anything below 2 means serial, which is a real answer rather than a degenerate one.
+    `0` means "decide for me" and resolves to the machine's CPU count, capped at eight.
+
+    The cap is worth justifying properly, because it was first written with the claim that the
+    measured curve flattened past eight and that was not true -- nothing past eight had been
+    measured at all. On sixteen logical cores the redaction stage itself keeps climbing:
+
+        workers   1      2      4      8     12     16
+        stage    1.00x  1.32x  2.23x  3.20x  3.45x  3.87x
+        ingest   1.00x    --   1.40x  1.55x    --   1.59x
+
+    What flattens is the thing that matters. Redaction is roughly 42% of an ingest, so Amdahl
+    caps the whole run at about 1.7x however fast that stage gets -- and eight workers already
+    reach 1.55x of it. Doubling to sixteen buys 2% end to end while doubling the interpreters
+    and their memory. Eight is where the curve stops paying for itself, which is a different
+    statement from the one this docstring used to make.
+
+    Anything below 2 means serial, which is a real answer rather than a degenerate one.
     """
     if configured == 0:
         return min(os.cpu_count() or 1, 8)
