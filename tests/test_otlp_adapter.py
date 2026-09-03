@@ -298,3 +298,59 @@ def test_detection_separates_otlp_from_json_lines(tmp_path: Path) -> None:
     assert json_adapter is not None and json_adapter.format_name == "json_lines"
     assert otlp_scores["json_lines"] < 0.6
     assert json_scores["otlp"] == 0.0
+
+
+# ------------------------------------------------- through the pipeline, not just detect()
+
+
+def test_an_otlp_file_ingests_as_otlp_end_to_end(tmp_path: Path) -> None:
+    """Detection working is not the same as the pipeline using it.
+
+    Every other test here calls `detect_format` directly, which defaults to considering the
+    whole registry. `ingest()` does not: it passes `config.adapters.registered`, and that list
+    defaulted to `["json_lines"]` for three phases after this adapter shipped. So an OTLP export
+    ingested with a config built in code -- which is what the test suite and the eval harness
+    both do -- matched nothing, fell through to the raw-line reader, and produced templates that
+    were slices of JSON export text. Measured on a 290 MB fixture: 1,248 templates beginning
+    `{"resourceLogs": [{"resource": ...` where the same incident parsed gives 9.
+
+    Nothing caught it because nothing ingested an OTLP file through the pipeline.
+    """
+    from mistify.common.config import MistifyConfig
+    from mistify.pipeline import ingest
+    from mistify.scratchpad.db import ScratchpadDB
+
+    config = MistifyConfig.model_validate(
+        {
+            "scratchpad": {"path": str(tmp_path / "s_{incident_id}.sqlite")},
+            "drain3": {"snapshot_path": str(tmp_path / "d_{incident_id}.json")},
+            "report": {"output_dir": str(tmp_path / "reports")},
+        }
+    )
+    source = write_incident_otlp(tmp_path / "incident.jsonl", total_lines=400)
+
+    result = ingest(source, config, incident_id="otlp-e2e")
+
+    assert result.format_name == "otlp"
+    with ScratchpadDB(result.scratchpad_path) as db:
+        patterns = [str(row["pattern"]) for row in db.top_templates(limit=20)]
+    # The message, not the envelope it travelled in.
+    assert not any("resourceLogs" in pattern for pattern in patterns)
+    assert any("Handled GET" in pattern for pattern in patterns)
+
+
+def test_a_plain_json_file_still_ingests_as_json_lines(tmp_path: Path) -> None:
+    """The control: registering every adapter must not let a specific one claim a generic file."""
+    from mistify.common.config import MistifyConfig
+    from mistify.pipeline import ingest
+
+    config = MistifyConfig.model_validate(
+        {
+            "scratchpad": {"path": str(tmp_path / "s_{incident_id}.sqlite")},
+            "drain3": {"snapshot_path": str(tmp_path / "d_{incident_id}.json")},
+            "report": {"output_dir": str(tmp_path / "reports")},
+        }
+    )
+    source = write_incident(tmp_path / "plain.jsonl", total_lines=400)
+
+    assert ingest(source, config, incident_id="json-e2e").format_name == "json_lines"

@@ -16,7 +16,16 @@ def test_defaults_load_without_a_file(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.chdir(tmp_path)
     config = load_config()
     assert config.pipeline.max_agent_tool_calls == 20
-    assert config.adapters.registered == ["json_lines"]
+    # Every implemented adapter, derived rather than listed. This asserted `["json_lines"]`
+    # for three phases after Loki and OTLP shipped, so a caller building a config in code
+    # instead of from YAML had one adapter registered and an OTLP export fell through to the
+    # raw-line reader -- parsed as slices of JSON text, with nothing reporting a problem.
+    # Comparing against the registry is what stops the list going stale a second time.
+    from mistify.adapters.registry import ADAPTERS
+
+    assert config.adapters.registered == sorted(ADAPTERS)
+    assert "otlp" in config.adapters.registered
+    assert "loki" in config.adapters.registered
 
 
 def test_repo_config_is_valid() -> None:

@@ -47,10 +47,34 @@ class PipelineConfig(_Strict):
     tool_result_history_steps: int = Field(default=3, ge=0)
 
 
+def _registered_adapters() -> list[str]:
+    """Every adapter the registry implements, in a stable order.
+
+    Imported inside the function rather than at module scope: config is imported by almost
+    everything, and pulling the adapter package in at import time to read one list is a cost
+    every caller pays whether or not they ever ingest anything.
+    """
+    from mistify.adapters.registry import ADAPTERS
+
+    return sorted(ADAPTERS)
+
+
 class AdaptersConfig(_Strict):
     auto_detect: bool = True
-    #: Phase 1 registers json_lines only. Elastic, Loki and OTLP arrive in Phase 4.
-    registered: list[str] = Field(default_factory=lambda: ["json_lines"])
+    #: Derived from the adapter registry rather than listed, so it cannot go stale.
+    #:
+    #: It said `["json_lines"]` with a comment promising Loki and OTLP "arrive in Phase 4".
+    #: They arrived and this did not move, so every caller that built a config in code rather
+    #: than from `config.yaml` -- the test suite, the eval harness, anything importing the
+    #: package -- silently had one adapter registered. An OTLP export handed to one of those
+    #: did not fail: detection found nothing, the raw-line reader took it, and the templates
+    #: came out as slices of JSON export text. Measured accidentally on a 290 MB fixture, which
+    #: produced 1,248 templates of `{"resourceLogs": [{"resource": ...` against the 9 the same
+    #: incident produces when it is actually parsed.
+    #:
+    #: `raw_lines` is in the registry and included here, which is harmless: its `detect` returns
+    #: zero always, so it is never selected by confidence -- only reached deliberately.
+    registered: list[str] = Field(default_factory=lambda: _registered_adapters())
     #: Minimum detect() confidence before an adapter is accepted; below this the
     #: unknown-format bootstrapper takes over (Phase 4).
     min_detect_confidence: float = Field(default=0.6, ge=0.0, le=1.0)
