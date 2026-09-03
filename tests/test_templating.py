@@ -90,11 +90,19 @@ def test_summaries_report_the_final_refined_pattern() -> None:
     assert "<*>" in templater.summaries()[0].pattern
 
 
-def test_parameters_are_extracted() -> None:
+def test_parameters_are_extracted_when_asked_for() -> None:
+    templater = DrainTemplater()
+    templater.process("Connection failed after 3 retries", extract_params=True)
+    result = templater.process("Connection failed after 9 retries", extract_params=True)
+    assert "9" in result.params
+
+
+def test_parameters_are_not_extracted_by_default() -> None:
+    """Re-matching the template against every line cost about 6% of an ingest, for a list
+    nothing in the pipeline ever read. The capability is kept; the hot path does not pay it."""
     templater = DrainTemplater()
     templater.process("Connection failed after 3 retries")
-    result = templater.process("Connection failed after 9 retries")
-    assert "9" in result.params
+    assert templater.process("Connection failed after 9 retries").params == []
 
 
 # --------------------------------------------------------------- persistence

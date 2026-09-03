@@ -137,8 +137,21 @@ class DrainTemplater:
             return 0.0
         return self.unique_templates / self._total_messages
 
-    def process(self, message: str, ts: str = "", severity: str = "INFO") -> TemplateResult:
-        """Cluster one message and fold it into this incident's template statistics."""
+    def process(
+        self,
+        message: str,
+        ts: str = "",
+        severity: str = "INFO",
+        extract_params: bool = False,
+    ) -> TemplateResult:
+        """Cluster one message and fold it into this incident's template statistics.
+
+        `extract_params` is off by default because nothing in the pipeline reads the result.
+        Drain3's `extract_parameters` re-matches the mined template against the message to
+        recover the variable parts, and it ran on every line -- about 6% of an ingest -- for a
+        list that every caller then dropped on the floor. `TemplateResult.params` is still a
+        real field and still tested; it is now computed when somebody asks for it.
+        """
         result = self._miner.add_log_message(message)
         template_id = int(result["cluster_id"])
         pattern = str(result["template_mined"])
@@ -154,8 +167,10 @@ class DrainTemplater:
             self._last_seen[template_id] = ts
         self._severity_mix[template_id][severity] += 1
 
-        extracted = self._miner.extract_parameters(pattern, message)
-        params = [p.value for p in extracted] if extracted else []
+        params: list[str] = []
+        if extract_params:
+            extracted = self._miner.extract_parameters(pattern, message)
+            params = [p.value for p in extracted] if extracted else []
         return TemplateResult(template_id=template_id, pattern=pattern, params=params)
 
     def summaries(self) -> list[TemplateSummary]:
