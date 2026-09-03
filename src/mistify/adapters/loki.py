@@ -52,15 +52,19 @@ change; guessing at it here would put a second format's parsing rules inside thi
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
 from mistify.adapters.base import LogAdapter
-from mistify.adapters.source import read_text
+from mistify.adapters.source import open_text, read_text
 from mistify.common.models import LogRecord, normalize_severity, parse_timestamp
 
 __all__ = ["LokiAdapter"]
+
+#: How many non-blank lines are examined to decide the file's layout. Enough to survive a
+#: truncated opening line without reading any meaningful part of a large export.
+_LAYOUT_SAMPLE_LINES = 5
 
 #: Labels that name the emitting service, most specific first. `service_name` is what the OTLP
 #: semantic conventions become after Loki replaces the dots; the rest are what Promtail, Alloy
@@ -178,23 +182,56 @@ class LokiAdapter(LogAdapter):
     def parse(self, source: str | Path) -> Iterator[LogRecord]:
         """Stream records out of whichever layout the file turns out to be.
 
-        A query response is one JSON value and cannot be streamed without a streaming parser;
-        `logcli` JSONL is line-delimited and can. Which one this is has to be decided before
-        reading, so the first non-blank line decides: a `{` that opens a document with no
-        second top-level object after it is a response, anything else is line-delimited.
+        A `query_range` response is one JSON value and stays resident, because there is no way
+        to parse one JSON value incrementally without a streaming parser. `logcli --output=jsonl`
+        is line-delimited and does not have to be.
+
+        The layout is decided from the first few lines rather than from the whole file, which is
+        what makes the second half of that true. The check used to be `"\\n{" not in text`, so
+        even the streamable layout was read whole first -- the same defect the OTLP adapter had,
+        where peak memory measured exactly 3.00x the file size.
         """
         path = Path(source)
-        text = read_text(path)
-        stripped = text.lstrip()
-
-        if stripped.startswith("{") and "\n{" not in text:
-            yield from self._parse_document(text)
-            return
-        if stripped.startswith("["):
-            yield from self._parse_document(text)
+        if self._is_single_document(path):
+            yield from self._parse_document(read_text(path))
             return
 
-        for lineno, line in enumerate(text.splitlines(), start=1):
+        with open_text(path) as handle:
+            yield from self._parse_lines(handle)
+
+    def _is_single_document(self, path: Path) -> bool:
+        """Whether this file is one JSON value spanning many lines, read from its head alone.
+
+        A positive test: the file is line-delimited when one of its first few lines parses on
+        its own into something this adapter recognises -- a payload carrying streams, or a
+        `logcli` line. Looking past a corrupt opening line matters for the same reason it does
+        in OTLP: a truncated first record should cost one counted parse error, not the file.
+        """
+        checked = 0
+        with open_text(path) as handle:
+            for line in handle:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if checked == 0 and stripped.startswith("["):
+                    # A JSON array. Only `_parse_document` unwraps a list.
+                    return True
+                try:
+                    payload = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    payload = None
+                if isinstance(payload, dict) and (
+                    _streams(payload) is not None
+                    or (isinstance(payload.get("labels"), dict) and "line" in payload)
+                ):
+                    return False
+                checked += 1
+                if checked >= _LAYOUT_SAMPLE_LINES:
+                    break
+        return True
+
+    def _parse_lines(self, handle: Iterable[str]) -> Iterator[LogRecord]:
+        for lineno, line in enumerate(handle, start=1):
             if not line.strip():
                 continue
             self.stats.lines_read += 1

@@ -438,3 +438,70 @@ def test_live_round_trip(tmp_path: Path) -> None:
     # which is the whole claim this adapter makes about where severity lives.
     assert {r.severity for r in records} == {"ERROR", "INFO"}
     assert any("connection pool exhausted" in r.message for r in records)
+
+
+# ------------------------------------------------------------- streaming logcli output
+
+
+def test_logcli_jsonl_never_reads_the_whole_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The line-delimited layout must not be held in memory.
+
+    Asserted by making `read_text` fail rather than by watching a memory number: a threshold
+    would be flaky and would not say what regressed. The layout check used to be
+    `"\n{" not in text`, so even this layout was read whole first.
+    """
+
+    def _refuse(_path: Path) -> str:
+        raise AssertionError("the line-delimited path must not read the whole file")
+
+    monkeypatch.setattr("mistify.adapters.loki.read_text", _refuse)
+
+    path = tmp_path / "loki.jsonl"
+    path.write_text("\n".join(_jsonl_line() for _ in range(3)) + "\n", encoding="utf-8")
+    adapter = LokiAdapter()
+    records = list(adapter.parse(path))
+
+    assert len(records) == 3
+    assert adapter.stats.parse_errors == 0
+
+
+def test_a_query_response_still_reads_the_whole_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control. One JSON value cannot be parsed incrementally without a streaming parser,
+    so this layout stays resident by nature -- and without asserting that, the test above would
+    pass just as well if `parse` had stopped reading files at all."""
+    from mistify.adapters import loki as loki_module
+
+    seen: list[Path] = []
+    original = loki_module.read_text
+
+    def _record_call(path: Path) -> str:
+        seen.append(path)
+        return original(path)
+
+    monkeypatch.setattr("mistify.adapters.loki.read_text", _record_call)
+
+    path = tmp_path / "loki.json"
+    path.write_text(json.dumps(_response([REAL_STREAM]), indent=2), encoding="utf-8")
+    records = list(LokiAdapter().parse(path))
+
+    assert len(records) == 1
+    assert seen == [path]
+
+
+def test_a_corrupt_first_line_does_not_force_the_document_path(tmp_path: Path) -> None:
+    """A truncated first record should cost one counted parse error, not the whole file."""
+    path = tmp_path / "loki.jsonl"
+    path.write_text(
+        '{"labels": {"service_na\n' + _jsonl_line() + "\n" + _jsonl_line() + "\n",
+        encoding="utf-8",
+    )
+
+    adapter = LokiAdapter()
+    records = list(adapter.parse(path))
+
+    assert len(records) == 2
+    assert adapter.stats.parse_errors == 1
