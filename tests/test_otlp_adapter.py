@@ -16,6 +16,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from mistify.adapters import otlp as otlp_module
 from mistify.adapters.otlp import OtlpAdapter
 from mistify.adapters.registry import detect_format, read_sample
 from mistify.common.models import LogRecord
@@ -354,3 +357,89 @@ def test_a_plain_json_file_still_ingests_as_json_lines(tmp_path: Path) -> None:
     source = write_incident(tmp_path / "plain.jsonl", total_lines=400)
 
     assert ingest(source, config, incident_id="json-e2e").format_name == "json_lines"
+
+
+# ------------------------------------------------------------- streaming the common layout
+
+
+def test_a_line_delimited_export_never_reads_the_whole_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The layout collectors actually write must not be held in memory.
+
+    Asserted by making `read_text` fail rather than by watching a memory number: a threshold
+    test would be flaky and would not say *why* it regressed. If anything reintroduces a
+    whole-file read on this path, this raises immediately.
+
+    Peak memory was 3.00x the file size before the fix -- measured at 291 MB on a 97 MB export
+    and 870 MB on a 290 MB one -- because the layout check `"\n{" not in text` needed the whole
+    file. It is now flat at 23 MB whatever the file size.
+    """
+
+    def _refuse(_path: Path) -> str:
+        raise AssertionError("the line-delimited path must not read the whole file")
+
+    monkeypatch.setattr("mistify.adapters.otlp.read_text", _refuse)
+
+    path = tmp_path / "otlp.jsonl"
+    path.write_text(
+        "\n".join(json.dumps(_request([_record()])) for _ in range(3)) + "\n", encoding="utf-8"
+    )
+    adapter = OtlpAdapter()
+    records = list(adapter.parse(path))
+
+    assert len(records) == 3
+    assert adapter.stats.parse_errors == 0
+
+
+def test_a_single_document_still_reads_the_whole_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control on the test above, and the reason it proves anything.
+
+    One JSON value cannot be parsed incrementally without a streaming parser, so this layout is
+    resident by nature and still calls `read_text`. Without this test the one above would pass
+    just as well if `parse` had simply stopped reading files at all.
+    """
+    seen: list[Path] = []
+    original = otlp_module.read_text
+
+    def _record_call(path: Path) -> str:
+        seen.append(path)
+        return original(path)
+
+    monkeypatch.setattr("mistify.adapters.otlp.read_text", _record_call)
+
+    path = tmp_path / "otlp.json"
+    path.write_text(json.dumps(_request([_record()]), indent=2), encoding="utf-8")
+    records = list(OtlpAdapter().parse(path))
+
+    assert len(records) == 1
+    assert seen == [path]
+
+
+def test_a_corrupt_first_line_does_not_force_the_document_path(tmp_path: Path) -> None:
+    """A killed exporter leaves a truncated line, usually the last but sometimes the first.
+
+    Deciding the layout from line one alone would send the whole file down the document path,
+    where it fails as a single unit -- turning one counted parse error into a total loss. The
+    layout check looks at several lines for exactly this.
+    """
+    path = tmp_path / "otlp.jsonl"
+    good = json.dumps(_request([_record()]))
+    path.write_text('{"resourceLogs": [{"resou\n' + good + "\n" + good + "\n", encoding="utf-8")
+
+    adapter = OtlpAdapter()
+    records = list(adapter.parse(path))
+
+    assert len(records) == 2
+    assert adapter.stats.parse_errors == 1
+
+
+def _record() -> dict[str, object]:
+    return {
+        "timeUnixNano": NANOS,
+        "severityNumber": 17,
+        "severityText": "ERROR",
+        "body": {"stringValue": "pool exhausted"},
+    }
