@@ -158,3 +158,53 @@ def test_snapshot_decodes_to_valid_json(tmp_path: Path) -> None:
     templater.process("Connection refused")
     templater.snapshot()
     assert isinstance(json.loads(read_snapshot(path)), dict)
+
+
+# --------------------------------------------------- a snapshot that will not load
+
+
+def test_a_corrupt_snapshot_costs_a_reclustering_not_the_run(tmp_path: Path) -> None:
+    """A killed process leaves a truncated snapshot, and every later run of that incident id
+    died on `Error -5 while decompressing data` -- an eval case that had worked an hour before,
+    failing for a reason that had nothing to do with its log.
+
+    The inferred-schema cache already treats an unreadable entry as a cache miss. So does this.
+    """
+    snapshot = tmp_path / "drain3.json"
+    snapshot.write_bytes(b"eJwrSS0u0S8pSk0tLlHIzC1ILUpNTgUAVs0Hxg==TRUNCATED")
+
+    templater = DrainTemplater(snapshot_path=snapshot)
+
+    assert templater.snapshot_discarded is not None
+    assert "Error" in templater.snapshot_discarded or "error" in templater.snapshot_discarded
+    # And it still works: the run continues on a fresh tree.
+    templater.process("Connection failed after 3 retries")
+    assert templater.unique_templates == 1
+
+
+def test_a_good_snapshot_is_still_restored(tmp_path: Path) -> None:
+    """The control. Tolerating a corrupt snapshot must not mean ignoring a valid one --
+    reuse is the whole reason the file exists."""
+    snapshot = tmp_path / "drain3.json"
+    first = DrainTemplater(snapshot_path=snapshot)
+    first.process("Connection failed after 3 retries")
+    first.snapshot()
+
+    second = DrainTemplater(snapshot_path=snapshot)
+
+    assert second.snapshot_discarded is None
+    assert snapshot.exists()
+
+
+def test_a_snapshot_is_written_atomically(tmp_path: Path) -> None:
+    """Drain3 writes straight over the target, so an interrupted write truncates it. Writing
+    to a sibling and renaming means a reader sees the old file or the new one, never half."""
+    snapshot = tmp_path / "drain3.json"
+    templater = DrainTemplater(snapshot_path=snapshot)
+    templater.process("Connection failed after 3 retries")
+    templater.snapshot()
+
+    assert snapshot.exists()
+    # The temporary file is renamed, not left behind.
+    assert not (tmp_path / "drain3.json.tmp").exists()
+    assert list(tmp_path.glob("*.tmp")) == []

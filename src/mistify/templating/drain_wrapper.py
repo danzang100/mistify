@@ -46,6 +46,28 @@ def read_snapshot(path: str | Path) -> str:
         return payload.decode("utf-8", errors="replace")
 
 
+class _AtomicFilePersistence(FilePersistence):  # type: ignore[misc]
+    """A snapshot writer that cannot leave a half-written file behind.
+
+    Drain3's `FilePersistence` writes straight over the target. Interrupt the process during
+    that write -- Ctrl-C, a killed background job, a machine going to sleep -- and what is left
+    on disk is a truncated zlib stream that no later run can read. That happened here: a killed
+    eval left `drain3_eval-logdx-jest-nextjs-001-master.json` half-written, and the next run of
+    that case died with `Error -5 while decompressing data`.
+
+    Writing to a sibling file and renaming makes the swap atomic on both POSIX and Windows, so
+    a reader sees either the previous snapshot or the new one and never a partial one. The
+    tolerant load in `DrainTemplater` stays as the backstop for snapshots corrupted some other
+    way -- a full disk, a bad sector, an older version of this code.
+    """
+
+    def save_state(self, state: bytes) -> None:
+        target = Path(self.file_path)
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_bytes(state)
+        tmp.replace(target)
+
+
 class DrainTemplater:
     """Wraps Drain3 with per-incident statistics and snapshot persistence."""
 
@@ -68,9 +90,25 @@ class DrainTemplater:
         persistence = None
         if snapshot_path is not None:
             snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-            persistence = FilePersistence(str(snapshot_path))
+            persistence = _AtomicFilePersistence(str(snapshot_path))
 
-        self._miner = TemplateMiner(persistence_handler=persistence, config=config)
+        #: Set when an existing snapshot could not be read and was discarded.
+        self.snapshot_discarded: str | None = None
+        try:
+            self._miner = TemplateMiner(persistence_handler=persistence, config=config)
+        except Exception as exc:
+            # A snapshot that will not load costs a re-clustering, never the run. The same
+            # rule `load_schemas` already applies to the inferred-schema cache: a corrupt
+            # entry in a cache is a cache miss, not a failure.
+            #
+            # This is not hypothetical. A killed process left a truncated snapshot behind, and
+            # every later run of that incident id died on `Error -5 while decompressing data:
+            # incomplete or truncated stream` -- an eval case that had run fine an hour
+            # earlier, failing for a reason that had nothing to do with its log.
+            self.snapshot_discarded = f"{type(exc).__name__}: {exc}"
+            if snapshot_path is not None:
+                snapshot_path.unlink(missing_ok=True)
+            self._miner = TemplateMiner(persistence_handler=None, config=config)
 
         # Constructed *with* the handler so a existing snapshot is still restored, then
         # detached so it is not written on every cluster. Drain3 saves whenever a message
