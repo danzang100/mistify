@@ -277,6 +277,21 @@ class RedactionConfig(_Strict):
 class ScratchpadConfig(_Strict):
     path: str = ".cache/incident_{incident_id}.sqlite"
 
+    #: Whether the source line is kept verbatim beside the parsed message.
+    #:
+    #: On by default, because `raw` is the audit trail: it is what a reader greps to check a
+    #: claim against the file the claim came from. Turning it off is a deliberate trade of that
+    #: for disk, and at volume it is the largest single saving available -- measured on 588,046
+    #: JSON Lines events, `raw` is 217 of 545 bytes per event, 39.7% of the scratchpad, and it
+    #: holds the same content as `message`, `fields_json`, `ts`, `source` and `severity`
+    #: together (156 bytes) in a different shape.
+    #:
+    #: What is lost is exactness, not evidence. With this off, readers get the parsed message
+    #: where they would have got the original line -- the same text for an unstructured log,
+    #: and the message without its JSON envelope for a structured one. What no longer exists is
+    #: the ability to show the byte-exact line as the file wrote it.
+    store_raw: bool = True
+
 
 class LLMConfig(_Strict):
     """Which model runs what, and through which provider.

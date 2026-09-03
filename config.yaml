@@ -94,6 +94,15 @@ redaction:
 
 scratchpad:
   path: .cache/incident_{incident_id}.sqlite
+  # Whether the source line is kept verbatim beside the parsed message. On by default: `raw`
+  # is the audit trail, what a reader greps to check a claim against the file it came from.
+  #
+  # Off is the largest single storage saving available, and only on structured formats --
+  # measured 40.9% on JSON Lines (542 -> 320 bytes/event) and 0.0% on raw syslog, where the
+  # two columns were already deduplicated against each other. No information is lost: the
+  # timestamp, source, severity, message and remaining fields all keep their own columns.
+  # What goes is the exact serialisation -- key order, spacing, the JSON envelope itself.
+  store_raw: true
 
 llm:
   # Gemini by default: a free AI Studio key is real API access, and the loop is ~15 calls

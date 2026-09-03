@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -420,3 +421,78 @@ def test_thresholds_come_from_config(noisy: ScratchpadDB) -> None:
     from mistify.common.config import MistifyConfig
 
     assert noisy.noise_template_ids(MistifyConfig().anomaly.noise_thresholds()) == {1}
+
+
+# ------------------------------------------- keeping, or not keeping, the verbatim line
+
+
+def _event(raw: str, message: str) -> LogRecord:
+    return LogRecord(
+        ts=datetime(2026, 8, 30, 14, 0, tzinfo=UTC),
+        source="svc",
+        severity="ERROR",
+        raw=raw,
+        message=message,
+        fields={"region": "ap-south-1"},
+        format="json_lines",
+    )
+
+
+RAW_LINE = '{"timestamp": "2026-08-30T14:00:00Z", "level": "ERROR", "message": "pool exhausted"}'
+
+
+def test_the_verbatim_line_is_kept_by_default(tmp_path: Path) -> None:
+    with ScratchpadDB(tmp_path / "on.sqlite") as db:
+        db.create_incident("i", source="x")
+        db.bulk_insert_events([(_event(RAW_LINE, "pool exhausted"), 1)])
+        row = db.get_slice(max_lines=1)[0]
+
+    assert row["raw"] == RAW_LINE
+    assert row["message"] == "pool exhausted"
+
+
+def test_dropping_the_verbatim_line_still_leaves_a_reader_text(tmp_path: Path) -> None:
+    """`raw` is 217 of 545 bytes per event on a JSON Lines scratchpad -- 40% of the file, and
+    the same content as the parsed columns in a different shape. With it off a reader gets the
+    message where they would have got the envelope, rather than getting nothing."""
+    with ScratchpadDB(tmp_path / "off.sqlite", store_raw=False) as db:
+        db.create_incident("i", source="x")
+        db.bulk_insert_events([(_event(RAW_LINE, "pool exhausted"), 1)])
+        row = db.get_slice(max_lines=1)[0]
+        stored = db.run_readonly_sql("SELECT raw, message FROM log_events")[0]
+
+    assert stored["raw"] is None, "the verbatim line should not be on disk"
+    assert stored["message"] == "pool exhausted"
+    # But no reader sees a NULL: both columns coalesce onto whichever one was kept.
+    assert row["raw"] == "pool exhausted"
+    assert row["message"] == "pool exhausted"
+
+
+def test_an_unstructured_log_is_unaffected(tmp_path: Path) -> None:
+    """The control, and the reason this setting is narrower than it sounds.
+
+    When the message *is* the raw line the two columns were already deduplicated against each
+    other, so turning `store_raw` off only changes which of them holds the text. Measured on
+    400,000 BGL lines: 126.8 MB either way, a 0.0% saving, against 40.9% on JSON Lines.
+    """
+    line = "Dec 10 07:51:15 LabSZ sshd[24324]: Failed password"
+    sizes = {}
+    for store_raw in (True, False):
+        path = tmp_path / f"{store_raw}.sqlite"
+        with ScratchpadDB(path, store_raw=store_raw) as db:
+            db.create_incident("i", source="x")
+            db.bulk_insert_events([(_event(line, line), 1)] * 50)
+            assert db.get_slice(max_lines=1)[0]["raw"] == line
+        sizes[store_raw] = path.stat().st_size
+
+    assert sizes[True] == sizes[False]
+
+
+def test_marker_lookup_still_resolves_without_the_verbatim_line(tmp_path: Path) -> None:
+    """The eval scorer resolves an expectation to a template by searching this text. It
+    searched `raw` and `message` separately; with one of them NULL it has to coalesce or the
+    scorer silently stops finding anything."""
+    with ScratchpadDB(tmp_path / "off.sqlite", store_raw=False) as db:
+        db.create_incident("i", source="x")
+        db.bulk_insert_events([(_event(RAW_LINE, "pool exhausted"), 7)])
+        assert db.templates_matching_text("pool exhausted") == {7}

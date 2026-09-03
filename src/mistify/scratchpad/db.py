@@ -84,7 +84,11 @@ def _like_escape(text: str) -> str:
 class ScratchpadDB:
     """Working memory for one incident."""
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, store_raw: bool = True):
+        #: Whether the verbatim source line is kept beside the parsed message. Off trades the
+        #: audit trail for roughly 40% of the file -- see `ScratchpadConfig.store_raw`. Held
+        #: here rather than passed per call so no write path can disagree with another.
+        self.store_raw = store_raw
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.path)
@@ -184,14 +188,19 @@ class ScratchpadDB:
                 record.source,
                 record.severity,
                 template_id,
-                record.raw,
-                # NULL when the message *is* the raw line, and read back with COALESCE. On an
-                # unstructured log the two are the same string, so storing both wrote every
-                # line to disk twice: measured on Loghub-2.0 BGL, `raw` and `message` came to
-                # 139.3 MB each out of a 455 MB scratchpad -- 61% of the file, half of it a
-                # verbatim copy of the other half. Structured formats still store both,
-                # because there the message is genuinely a smaller extract of the raw line.
-                None if record.message == record.raw else record.message,
+                # The two text columns are deduplicated against each other in whichever
+                # direction is available, and read back with COALESCE either way, so a reader
+                # always gets text and never has to know which one was kept.
+                #
+                # With `store_raw` on, `message` is dropped when it *is* the raw line: on an
+                # unstructured log the two are the same string, and storing both wrote every
+                # line to disk twice -- measured on Loghub-2.0 BGL, 139.3 MB each out of a
+                # 455 MB scratchpad, half of it a verbatim copy of the other half.
+                #
+                # With it off, `raw` goes instead and `message` is always written. It has to
+                # be: dropping both would leave a row carrying no text at all.
+                record.raw if self.store_raw else None,
+                record.message if (not self.store_raw or record.message != record.raw) else None,
                 json.dumps(record.fields, default=str),
                 _trace_id(record.fields),
             )
@@ -585,7 +594,8 @@ class ScratchpadDB:
         """
         rows = self._conn.execute(
             "SELECT DISTINCT template_id FROM log_events "
-            "WHERE message LIKE ? ESCAPE '\\' OR raw LIKE ? ESCAPE '\\' LIMIT ?",
+            "WHERE COALESCE(message, raw) LIKE ? ESCAPE '\\' "
+            "OR COALESCE(raw, message) LIKE ? ESCAPE '\\' LIMIT ?",
             (f"%{_like_escape(text)}%", f"%{_like_escape(text)}%", limit),
         )
         return {int(row["template_id"]) for row in rows if row["template_id"] is not None}
@@ -686,10 +696,11 @@ class ScratchpadDB:
             start_ts, end_ts, source, severity, template_id, noise, trace_id
         )
         rows = self._conn.execute(
-            "SELECT id, ts, source, severity, template_id, trace_id, raw,"
-            # NULL means "same as raw" -- see the note in `bulk_insert_events`. Every
-            # reader gets the message it expects and none of them needs to know.
-            " COALESCE(message, raw) AS message"
+            "SELECT id, ts, source, severity, template_id, trace_id,"
+            # NULL on either column means "the other one holds it" -- see the note in
+            # `bulk_insert_events`. Every reader gets text and none needs to know which
+            # column it landed in, or whether this run kept the verbatim line at all.
+            " COALESCE(raw, message) AS raw, COALESCE(message, raw) AS message"
             f" FROM log_events{where} ORDER BY ts, id LIMIT ?",
             [*params, max_lines],
         )
@@ -760,10 +771,11 @@ class ScratchpadDB:
             return []
         placeholders = ", ".join("?" for _ in ids)
         rows = self._conn.execute(
-            "SELECT id, ts, source, severity, template_id, trace_id, raw,"
-            # NULL means "same as raw" -- see the note in `bulk_insert_events`. Every
-            # reader gets the message it expects and none of them needs to know.
-            " COALESCE(message, raw) AS message"
+            "SELECT id, ts, source, severity, template_id, trace_id,"
+            # NULL on either column means "the other one holds it" -- see the note in
+            # `bulk_insert_events`. Every reader gets text and none needs to know which
+            # column it landed in, or whether this run kept the verbatim line at all.
+            " COALESCE(raw, message) AS raw, COALESCE(message, raw) AS message"
             f" FROM log_events WHERE id IN ({placeholders}) ORDER BY ts, id",
             list(ids),
         )
