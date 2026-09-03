@@ -107,26 +107,28 @@ def bootstrap_format(
     holdout = usable[sample_size:] or sample
     reused = holdout is sample
 
-    # 1. A schema already worked out for this shape. Free, and the reason inference is
-    #    affordable: the second file from a source costs nothing.
-    for name, schema in (known or {}).items():
-        rate = match_rate(schema, sample)
-        if rate >= min_match_rate:
-            return BootstrapResult(
-                schema, f"known:{name}", rate, f"reused {name}, matching {rate:.0%} of the sample"
-            )
+    # 1. Schemas already worked out for this shape. Free -- no model call -- and the reason
+    #    inference is affordable across files at all.
+    known_result = _best_known(known or {}, holdout, min_match_rate)
 
-    # 2. Structural inference. No model call, and most formats stop here.
+    # 2. Structural inference. Also free, which is why it runs even when a cached schema
+    #    already clears the gate. The cache exists to avoid the *model* call, not to avoid
+    #    looking at the lines, and skipping this whenever anything fit was how an OpenSSH
+    #    schema came to read an application log: it carries no severity, it matched every line
+    #    at 100% because the word `ERROR` simply landed inside `message`, and it was reused in
+    #    preference to inferring the schema that would have pulled the severity out.
     structural = infer_structurally(sample)
     if structural is not None:
-        result = _validate(structural, holdout, min_match_rate, "structural")
-        if result.succeeded:
-            return result if not reused else _note_reuse(result)
-        first_failure = result
+        structural_result = _validate(structural, holdout, min_match_rate, "structural")
     else:
-        first_failure = BootstrapResult(
+        structural_result = BootstrapResult(
             None, "structural", 0.0, "no timestamp shape found in the sample"
         )
+
+    best = _better(known_result, structural_result)
+    if best is not None:
+        return best if not reused else _note_reuse(best)
+    first_failure = structural_result
 
     # 3. The model, only now, and only if one was supplied.
     if provider is not None:
@@ -170,6 +172,54 @@ def bootstrap_format(
                 )
 
     return first_failure
+
+
+def _rank(result: BootstrapResult) -> tuple[int, float]:
+    """How good a passing result is, most important term first.
+
+    Both terms are read only from results that have *already cleared the gate*, so this is not
+    deciding whether a file can be parsed -- it is deciding between schemas that can all parse
+    it. Fields explained comes first and the rate second, because the rate cannot separate them:
+    a schema that does not claim a severity still matches a line carrying `ERROR` at 100%, and
+    the difference is that the word ends up in the message, where it silently becomes part of
+    every template and the line's level falls back to the default.
+    """
+    assert result.schema is not None
+    return (result.schema.extracted_fields, result.match_rate)
+
+
+def _better(*results: BootstrapResult | None) -> BootstrapResult | None:
+    """The best of some results, or None when none of them succeeded."""
+    passing = [r for r in results if r is not None and r.succeeded]
+    return max(passing, key=_rank) if passing else None
+
+
+def _best_known(
+    known: dict[str, FieldSchema], holdout: list[str], floor: float
+) -> BootstrapResult | None:
+    """The best cached schema that clears the gate on this file, or None.
+
+    Scored on the same held-out lines as structural inference, so the two are comparable. They
+    used to be measured on different sets -- known schemas against the sample, structural
+    against the holdout -- which made the rates two different numbers wearing one name.
+
+    Ranked rather than first-past-the-post. `load_schemas` returns them in filename order, so
+    taking the first one over the floor picked by alphabet: whichever of two schemas for the
+    same format happened to sort earlier decided how every later file was read.
+    """
+    passing = []
+    for name, schema in known.items():
+        rate = match_rate(schema, holdout)
+        if rate >= floor:
+            passing.append(
+                BootstrapResult(
+                    schema,
+                    f"known:{name}",
+                    rate,
+                    f"reused {name}, matching {rate:.0%} of held-out lines",
+                )
+            )
+    return max(passing, key=_rank) if passing else None
 
 
 def _note_reuse(result: BootstrapResult) -> BootstrapResult:

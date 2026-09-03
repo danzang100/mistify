@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from mistify.adapters.base import LogAdapter
+from mistify.adapters.source import open_text
 from mistify.common.models import LogRecord, normalize_severity, parse_timestamp
 
 __all__ = ["JsonLinesAdapter"]
@@ -28,6 +29,10 @@ def _first(payload: dict[str, Any], keys: tuple[str, ...]) -> tuple[str | None, 
 
 class JsonLinesAdapter(LogAdapter):
     format_name = "json_lines"
+    #: Generic. Line-delimited JSON is a container, not a format: OTLP exports, Loki query
+    #: results and half the application logs in existence are all carried in it, and this
+    #: adapter reads the ones that are nothing more than that.
+    specificity = 1
 
     def detect(self, sample_lines: list[str]) -> float:
         """Fraction of non-blank sample lines that are JSON objects carrying a timestamp.
@@ -61,7 +66,7 @@ class JsonLinesAdapter(LogAdapter):
 
     def parse(self, source: str | Path) -> Iterator[LogRecord]:
         path = Path(source)
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
+        with open_text(path) as handle:
             for lineno, line in enumerate(handle, start=1):
                 raw = line.rstrip("\n")
                 if not raw.strip():

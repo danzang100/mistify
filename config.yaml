@@ -10,9 +10,10 @@ pipeline:
 
 adapters:
   auto_detect: true
-  # Elastic and Loki still outstanding -- their export shapes need a live stack to fixture
-  # honestly, and hand-authored ones get the quirks wrong that the adapters exist to absorb.
-  registered: [json_lines, otlp]
+  # Elastic still outstanding -- its export shape needs a live stack to fixture honestly, and
+  # a hand-authored one gets the quirks wrong that the adapter exists to absorb. Loki's
+  # fixtures come from `tests/fixtures/capture_loki.py` against a real collector.
+  registered: [json_lines, loki, otlp]
   min_detect_confidence: 0.6
   # raw_lines | error. When nothing matches, read the file line by line and say so in the
   # report, rather than refusing it. An investigation that cannot start is not safer than one
@@ -35,6 +36,13 @@ drain3:
   sim_th: 0.4                  # used directly when calibrate is false
   depth: 4
   max_clusters: 10000            # generous: eviction fragments template statistics
+  # The ceiling used instead when calibration reports the file does not compress at all.
+  # Drain3's per-line cost grows with the clusters it holds, and on a log where almost every
+  # line is unique it holds one per line. Measured on a real CI log: 2.15x the throughput for
+  # 0.17% more template fragmentation, because the templater keeps its own registry and
+  # eviction loses no template from the report. Never applied to a file that did compress --
+  # the run records which ceiling it used under templating.max_clusters.
+  uncompressible_max_clusters: 2000
   persistence: file
   snapshot_path: .cache/drain3_{incident_id}.json
   # Try each candidate against a sample and keep the one whose compression ratio lands in
@@ -77,6 +85,12 @@ redaction:
   # because the investigator's read-only SQL channel can read any table it is pointed at.
   vault: false
   vault_path: .cache/vault_{incident_id}.sqlite
+  # Worker processes for redaction. 1 is serial; 0 means "use the machine's cores".
+  # Redaction is ~35% of an ingest and the only stage that parallelises cleanly: measured 1.51x
+  # end to end on a 400k-line BGL file with 8 workers, output byte-identical to serial. Left at
+  # 1 because processes are not free and a small file finishes before a pool has started --
+  # raise it for the gigabyte-scale runs it exists for. `vault: true` forces serial.
+  workers: 1
 
 scratchpad:
   path: .cache/incident_{incident_id}.sqlite

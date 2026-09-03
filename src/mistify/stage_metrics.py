@@ -50,6 +50,7 @@ from mistify.metrics import (
     TEMPLATING_DEPTH,
     TEMPLATING_EVICTED,
     TEMPLATING_LARGEST_SHARE,
+    TEMPLATING_MAX_CLUSTERS,
     TEMPLATING_OVER_MERGED,
     TEMPLATING_OVER_MERGED_IDS,
     TEMPLATING_REDUCTION_FACTOR,
@@ -97,9 +98,15 @@ def ingest_metrics(
     happen to be fallbacks.
     """
     stats = adapter.stats
+    # A wrapper's `format_name` is a summary of its members and is not a key in `scores`, so
+    # looking it up returned 0.0 for a directory in which JSON Lines had matched at 1.0 --
+    # a confidently-recognised source reported as recognised by nothing.
+    confidence = scores.get(adapter.format_name)
+    if confidence is None:
+        confidence = max(scores.values(), default=0.0)
     entries: Entries = [
         (INGEST_FORMAT, adapter.format_name),
-        (INGEST_DETECT_CONFIDENCE, round(scores.get(adapter.format_name, 0.0), 3)),
+        (INGEST_DETECT_CONFIDENCE, round(confidence, 3)),
         (INGEST_LINES_READ, stats.lines_read),
         (INGEST_EVENTS_LOADED, events_loaded),
         (INGEST_PARSE_ERRORS, stats.parse_errors),
@@ -107,7 +114,13 @@ def ingest_metrics(
         (INGEST_UNPARSEABLE_TIMESTAMP, stats.unparseable_timestamp),
     ]
     if fallback_reason is not None:
-        entries.append((INGEST_FALLBACK, adapter.format_name))
+        # The *reader* that degraded, not the adapter's display name. `INGEST_FALLBACK` fires
+        # the report's strongest warning by exact match on `raw_lines`, and a directory reports
+        # a composite name -- so a source read half in raw lines matched nothing and warned
+        # about nothing, while printing a 1970-to-now log window as fact.
+        components = adapter.component_formats
+        degraded = "raw_lines" if "raw_lines" in components else adapter.format_name
+        entries.append((INGEST_FALLBACK, degraded))
         entries.append((INGEST_FALLBACK_REASON, fallback_reason))
     return entries
 
@@ -146,6 +159,7 @@ def templating_metrics(
     coverage: float,
     calibration: CalibrationResult | None,
     over_merged: list[OverMergedTemplate],
+    max_clusters: int | None = None,
 ) -> Entries:
     """Coverage first, because it is the invariant rather than a statistic.
 
@@ -163,6 +177,13 @@ def templating_metrics(
         (TEMPLATING_COMPRESSION_RATIO, round(templater.compression_ratio, 5)),
         (TEMPLATING_SIM_TH, sim_th),
         (TEMPLATING_DEPTH, config.drain3.depth),
+        # What was used, not what was configured: the pipeline lowers it on a file
+        # that would not compress, and a silent ceiling is the thing this vocabulary
+        # exists to prevent.
+        (
+            TEMPLATING_MAX_CLUSTERS,
+            config.drain3.max_clusters if max_clusters is None else max_clusters,
+        ),
     ]
     if calibration is not None:
         entries.append((TEMPLATING_CALIBRATION_STATUS, calibration.status))

@@ -23,6 +23,7 @@ from mistify.metrics import (
     TEMPLATING_CALIBRATION_CANDIDATES,
     TEMPLATING_CALIBRATION_REASON,
     TEMPLATING_CALIBRATION_STATUS,
+    TEMPLATING_MAX_CLUSTERS,
     TEMPLATING_OVER_MERGED,
     TEMPLATING_SIM_TH,
     MetricView,
@@ -214,3 +215,74 @@ def test_signal_set_leads_with_the_top_ranked_template(loaded_db: ScratchpadDB) 
 def test_noise_suppression_count_is_recorded(loaded_db: ScratchpadDB) -> None:
     view = MetricView(loaded_db.metrics("anomaly"))
     assert view.number(ANOMALY_SUPPRESSED_NOISE) is not None
+
+
+# ------------------------------------- the cluster ceiling a run lowers for itself
+
+
+def _uncompressible(count: int = 3000) -> list[str]:
+    """Lines that share no structure, so clustering cannot do anything with them.
+
+    Varying the *token count and the words*, not the numbers. A first attempt varied only the
+    numbers -- `job-1 finished stage 1 ...` -- and Drain3 masked them straight back into a
+    single template, so the file compressed perfectly and the test asserted nothing. Drain3
+    buckets by token count first and prefix tokens second, so both have to move.
+    """
+    return [" ".join(f"tok{i}x{j}" for j in range((i % 23) + 3)) for i in range(count)]
+
+
+def _compressible(count: int = 3000) -> list[str]:
+    """One shape repeated, which is what a log that clusters well looks like."""
+    return [
+        f"2026-08-30T14:00:00Z INFO worker handled request {i} in {i % 40}ms" for i in range(count)
+    ]
+
+
+def test_a_file_that_will_not_compress_gets_a_lower_cluster_ceiling(
+    tmp_path: Path, make_config: Callable[..., MistifyConfig]
+) -> None:
+    """Drain3's per-line cost grows with the clusters it holds, and on a file where almost
+    every line is unique it holds one per line. Measured on a real CI log, capping was 2.15x
+    the throughput for 0.17% more template fragmentation -- the templater keeps its own
+    registry, so eviction loses no template from the output.
+    """
+    from mistify.metrics import MetricView
+    from mistify.scratchpad.db import ScratchpadDB
+
+    config = make_config(drain3={"uncompressible_max_clusters": 200})
+    source = tmp_path / "noisy.log"
+    source.write_text("\n".join(_uncompressible()), encoding="utf-8")
+
+    result = ingest(source, config, incident_id="uncompressible")
+
+    assert result.calibration_status == "under_clustered"
+    with ScratchpadDB(result.scratchpad_path) as db:
+        assert MetricView(db.metrics()).number(TEMPLATING_MAX_CLUSTERS) == 200
+    # Capping evicts from Drain3's live tree; it does not lose templates from the report.
+    assert result.template_coverage == 1.0
+
+
+def test_a_file_that_compresses_keeps_the_configured_ceiling(
+    tmp_path: Path, make_config: Callable[..., MistifyConfig]
+) -> None:
+    """The control, and the whole reason this is conditional rather than a lower default.
+
+    "Many templates because the log is genuinely diverse" and "many templates because
+    clustering failed" look identical in a count. Capping the first would fragment a file that
+    was clustering perfectly well, so the trigger is the compression ratio, not the count.
+    """
+    from mistify.metrics import MetricView
+    from mistify.scratchpad.db import ScratchpadDB
+
+    config = make_config(drain3={"uncompressible_max_clusters": 200})
+    source = tmp_path / "tidy.log"
+    source.write_text("\n".join(_compressible()), encoding="utf-8")
+
+    result = ingest(source, config, incident_id="compressible")
+
+    assert result.calibration_status != "under_clustered"
+    with ScratchpadDB(result.scratchpad_path) as db:
+        assert (
+            MetricView(db.metrics()).number(TEMPLATING_MAX_CLUSTERS) == config.drain3.max_clusters
+        )
+    assert result.evicted_templates == 0

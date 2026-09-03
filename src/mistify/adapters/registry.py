@@ -6,8 +6,10 @@ from pathlib import Path
 
 from mistify.adapters.base import LogAdapter
 from mistify.adapters.json_lines import JsonLinesAdapter
+from mistify.adapters.loki import LokiAdapter
 from mistify.adapters.otlp import OtlpAdapter
 from mistify.adapters.raw_lines import RawLinesAdapter
+from mistify.adapters.source import open_text
 
 __all__ = [
     "ADAPTERS",
@@ -23,12 +25,14 @@ class UnknownAdapterError(ValueError):
     """`adapters.registered` names a format nothing implements."""
 
 
-#: Elastic and Loki are still outstanding: their export shapes are conventions rather than a
-#: specification, and the build plan is explicit that hand-authored fixtures for them get the
-#: nesting and label conventions subtly wrong, which is the whole reason those adapters exist.
-#: OTLP is a specification, so it can be written correctly without a running stack.
+#: Elastic is still outstanding: its export shape is a convention rather than a specification,
+#: and the build plan is explicit that a hand-authored fixture for it gets the `_source` nesting
+#: subtly wrong, which is the whole reason the adapter exists. It needs its own stack, which
+#: `grafana/otel-lgtm` is not. OTLP is a specification and could be written without one; Loki
+#: was written against captures taken from a real collector and a real Loki, per testing §6.
 ADAPTERS: dict[str, type[LogAdapter]] = {
     JsonLinesAdapter.format_name: JsonLinesAdapter,
+    LokiAdapter.format_name: LokiAdapter,
     OtlpAdapter.format_name: OtlpAdapter,
     # Never wins detection -- it scores zero always -- but must be constructible by name so
     # the pipeline can reach for it deliberately, and so `registered` can accept it.
@@ -37,9 +41,13 @@ ADAPTERS: dict[str, type[LogAdapter]] = {
 
 
 def read_sample(source: str | Path, sample_size: int = 100) -> list[str]:
-    """Read the first `sample_size` non-blank lines of a source."""
+    """Read the first `sample_size` non-blank lines of a source.
+
+    Through `open_text`, so detection sees a compressed file's *contents* rather than its
+    compressed bytes -- and so a binary file is refused here, before any adapter has scored it.
+    """
     lines: list[str] = []
-    with Path(source).open("r", encoding="utf-8", errors="replace") as handle:
+    with open_text(Path(source)) as handle:
         for line in handle:
             if line.strip():
                 lines.append(line.rstrip("\n"))
@@ -66,6 +74,18 @@ def detect_format(
     Returns `(adapter, scores)`. A `None` adapter means no registered format was confident
     enough; from Phase 4 that hands off to the unknown-format bootstrapper rather than
     failing ingestion.
+
+    Selection is by specificity tier first and confidence second, not by confidence alone.
+    Every adapter that clears the floor has made a claim, but the claims are not comparable:
+    `json_lines` returning 1.0 on a Loki export says "these are JSON objects with timestamps",
+    which is true and useless, while a Loki adapter returning 0.7 says "this is a Loki query
+    response". Ranking those by number picks the first, and the resulting parse reads `labels`
+    and `line` as opaque fields -- no error, no warning, every record subtly wrong.
+
+    So a specific adapter that clears the floor beats a generic one that clears it by more.
+    Within a tier the number decides, which is what keeps two specific adapters honest against
+    each other. The full score dict is returned unchanged either way: the losing scores are
+    what make a near-miss visible, and `detection_matrix` exists to show the whole grid.
     """
     if registered is None:
         names = list(ADAPTERS)
@@ -83,11 +103,10 @@ def detect_format(
             )
         names = list(registered)
     scores = {name: ADAPTERS[name]().detect(sample_lines) for name in names}
-    if not scores:
+    eligible = [name for name in names if scores[name] >= min_confidence]
+    if not eligible:
         return None, scores
-    best = max(scores, key=lambda name: scores[name])
-    if scores[best] < min_confidence:
-        return None, scores
+    best = max(eligible, key=lambda name: (ADAPTERS[name].specificity, scores[name]))
     return ADAPTERS[best](), scores
 
 

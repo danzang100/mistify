@@ -71,6 +71,24 @@ class DrainTemplater:
             persistence = FilePersistence(str(snapshot_path))
 
         self._miner = TemplateMiner(persistence_handler=persistence, config=config)
+
+        # Constructed *with* the handler so a existing snapshot is still restored, then
+        # detached so it is not written on every cluster. Drain3 saves whenever a message
+        # changes the tree -- `get_snapshot_reason` returns a reason for any `change_type`
+        # other than "none" -- and each save jsonpickles the entire cluster tree. That is
+        # O(clusters) work per new cluster, so O(n^2) in distinct templates.
+        #
+        # It is not a theoretical cost. Profiling a 4,000-line CI log, which clusters into
+        # 3,053 templates because almost every line is unique, spent **97.5% of a 489-second
+        # ingest inside `save_state`**: 3,222 calls, 4.7 million jsonpickle encodes. The
+        # clustering itself was a rounding error. Throughput fell from 281 lines/s at 500
+        # lines to 31 lines/s at 4,000, which puts a gigabyte-scale log out of reach for a
+        # reason that has nothing to do with log analysis.
+        #
+        # The pipeline already calls `snapshot()` once when ingest finishes, so every
+        # intermediate write was discarded by the next one. The handler is reattached there.
+        self._persistence = persistence
+        self._miner.persistence_handler = None
         self._total_messages = 0
         # Our own registry of every template ever seen, independent of Drain3's tree.
         #
@@ -187,7 +205,19 @@ class DrainTemplater:
         }
 
     def snapshot(self) -> None:
-        """Persist the tree so re-running the pipeline yields stable template ids."""
-        if self.snapshot_path is None:
+        """Persist the tree so re-running the pipeline yields stable template ids.
+
+        The one write. The handler is reattached here rather than left on the miner, because
+        leaving it on means Drain3 writes the whole tree again on every cluster it creates --
+        see the note in `__init__`. The artifact on disk is identical either way; only the
+        number of times it was written on the way there changes.
+        """
+        if self.snapshot_path is None or self._persistence is None:
             return
-        self._miner.save_state("mistify snapshot")
+        self._miner.persistence_handler = self._persistence
+        try:
+            self._miner.save_state("mistify snapshot")
+        finally:
+            # Detached again so a caller that keeps templating after a snapshot -- nothing
+            # does today -- does not silently reacquire the quadratic behaviour.
+            self._miner.persistence_handler = None

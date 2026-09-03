@@ -37,21 +37,54 @@ class Check:
     detail: str
 
 
-def _template_for(db: ScratchpadDB, marker: str) -> int | None:
-    """The template whose pattern carries `marker`, or None when clustering lost it.
+#: Above this many templates, a marker is not identifying anything. A citation check on such a
+#: marker passes as soon as the investigation cites almost anything, which is a passing row on
+#: a scorecard that measured nothing. Reported as unresolvable rather than allowed to pass.
+_MAX_MARKER_TEMPLATES = 10
 
-    None is a real answer, not an error. A marker that resolves to nothing means templating
-    merged or dropped the planted lines, which is a finding about the pipeline rather than
-    about the investigation -- so the scorer reports it as its own failed check instead of
-    quietly failing the citation checks that depend on it.
+#: And the same judgement as a share, because the count alone cannot be right for both sizes of
+#: file this scores. A CI log clusters into a thousand templates, where ten is plainly too few
+#: to identify anything; the synthetic incident clusters into nine, where ten can never be
+#: reached and the rule would never fire. A marker matching over half the templates in a file
+#: is not a marker, whichever file it is.
+_MAX_MARKER_SHARE = 0.5
+
+
+def _templates_for(db: ScratchpadDB, marker: str) -> set[int]:
+    """Every template whose pattern or whose events carry `marker`.
+
+    Two lookups, because a marker can be either half of a line. The pattern search finds the
+    *constant* part of a line, which is what the planted fixture markers are. External corpora
+    are different: LogDx-CI's critical signals are frequently the failing test's path or the
+    stack location, which is precisely the part that varies between lines and which Drain3
+    therefore replaces with a wildcard. Measured on the first case tried, two of six critical
+    signals were invisible to a pattern search and sitting in plain text in the events.
+
+    So the events are searched too, and their template ids returned. Searching only events
+    would work for both but reads the whole table for every marker, and the pattern hit is both
+    cheaper and more precise when it exists.
+
+    An empty set is a real answer rather than an error: it means templating merged or dropped
+    the lines the marker names, which is a finding about the pipeline and not about the
+    investigation, and the caller reports it as its own failed check.
     """
     rows = db.run_readonly_sql(
-        "SELECT template_id, pattern FROM templates ORDER BY template_id", max_rows=500
+        "SELECT template_id, pattern FROM templates ORDER BY template_id", max_rows=5000
     )
-    for row in rows:
-        if marker in str(row["pattern"]):
-            return int(row["template_id"])
-    return None
+    matched = {int(row["template_id"]) for row in rows if marker in str(row["pattern"])}
+    if matched:
+        return matched
+
+    return db.templates_matching_text(marker)
+
+
+def _template_for(db: ScratchpadDB, marker: str) -> int | None:
+    """The single template carrying `marker`, lowest id, or None when nothing does.
+
+    Kept for the checks that report one id. `_templates_for` is the real resolver.
+    """
+    matched = _templates_for(db, marker)
+    return min(matched) if matched else None
 
 
 def _cited_templates(db: ScratchpadDB) -> set[int]:
@@ -89,27 +122,54 @@ def _leading_templates(db: ScratchpadDB) -> set[int]:
     return {int(i) for i in leading["evidence"].get("template_ids", [])}
 
 
+def _conclusion_text(db: ScratchpadDB) -> str:
+    """Everything the investigation concluded, lowercased, as one string.
+
+    Every note rather than only the leading one. A diagnosis spread over three notes is still
+    the diagnosis, and reading only the top one would fail a run for how it organised its
+    findings rather than for what it concluded.
+    """
+    return " ".join(str(note.note) for note in db.notes()).lower()
+
+
 def score_run(db: ScratchpadDB, case: EvalCase) -> list[Check]:
     """Every check this case defines, against one finished investigation."""
     checks: list[Check] = []
     cited = _cited_templates(db)
 
     for marker in case.must_cite:
-        template_id = _template_for(db, marker)
-        if template_id is None:
+        matched = _templates_for(db, marker)
+        label = marker if len(marker) <= 60 else marker[:57] + "..."
+        if not matched:
             checks.append(
                 Check(
-                    name=f"resolves[{marker}]",
+                    name=f"resolves[{label}]",
                     passed=False,
-                    detail=f"no template carries {marker!r} -- templating lost the planted lines",
+                    detail=f"no template or event carries {marker!r} -- the line was lost "
+                    "before the investigation could cite it",
+                )
+            )
+            continue
+        total = max(db.template_count(), 1)
+        if len(matched) > _MAX_MARKER_TEMPLATES or len(matched) > total * _MAX_MARKER_SHARE:
+            # Not a failure of the investigation, and not a pass either. A marker this common
+            # cannot distinguish a run that cited the right thing from one that cited anything.
+            checks.append(
+                Check(
+                    name=f"resolves[{label}]",
+                    passed=False,
+                    detail=(
+                        f"{marker!r} matches {len(matched)} of {total} templates "
+                        "and identifies nothing"
+                    ),
                 )
             )
             continue
         checks.append(
             Check(
-                name=f"cites[{marker}]",
-                passed=template_id in cited,
-                detail=f"template {template_id}; cited templates {sorted(cited) or 'none'}",
+                name=f"cites[{label}]",
+                passed=bool(matched & cited),
+                detail=f"templates {sorted(matched)}; cited {sorted(cited) or 'none'}",
             )
         )
 
@@ -144,6 +204,31 @@ def score_run(db: ScratchpadDB, case: EvalCase) -> list[Check]:
                 ),
             )
         )
+
+    if case.must_mention or case.must_not_claim:
+        conclusion = _conclusion_text(db)
+        for term in case.must_mention:
+            checks.append(
+                Check(
+                    name=f"mentions[{term}]",
+                    passed=term.lower() in conclusion,
+                    detail="named in the conclusion" if term.lower() in conclusion else "absent",
+                )
+            )
+        for term in case.must_not_claim:
+            claimed = term.lower() in conclusion
+            checks.append(
+                Check(
+                    name=f"avoids[{term}]",
+                    passed=not claimed,
+                    detail=(
+                        f"conclusion contains {term!r} -- note that negation is not detected, "
+                        "so a run that explicitly ruled this out also fails here"
+                        if claimed
+                        else "not claimed"
+                    ),
+                )
+            )
 
     _, citation_warnings = verify_citations(db)
     checks.append(

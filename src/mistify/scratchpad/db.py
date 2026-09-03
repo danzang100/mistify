@@ -32,6 +32,7 @@ MIGRATIONS: tuple[str, ...] = (
     "0002_adversarial",
     "0003_objection_ids",
     "0004_trace_id",
+    "0005_event_indexes",
 )
 
 #: A template active for at least this share of the log's own span is chronic rather than part
@@ -68,6 +69,16 @@ class ReadOnlyViolation(RuntimeError):
 
 def _now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _like_escape(text: str) -> str:
+    """Escape the wildcards SQLite's LIKE treats as syntax.
+
+    A marker is arbitrary log text and routinely contains `_`, which LIKE reads as "any single
+    character". Left unescaped, `test_indexing.py` would also match `testXindexing.py` -- a
+    quiet widening of every text lookup rather than an error.
+    """
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class ScratchpadDB:
@@ -168,7 +179,13 @@ class ScratchpadDB:
                 record.severity,
                 template_id,
                 record.raw,
-                record.message,
+                # NULL when the message *is* the raw line, and read back with COALESCE. On an
+                # unstructured log the two are the same string, so storing both wrote every
+                # line to disk twice: measured on Loghub-2.0 BGL, `raw` and `message` came to
+                # 139.3 MB each out of a 455 MB scratchpad -- 61% of the file, half of it a
+                # verbatim copy of the other half. Structured formats still store both,
+                # because there the message is genuinely a smaller extract of the raw line.
+                None if record.message == record.raw else record.message,
                 json.dumps(record.fields, default=str),
                 _trace_id(record.fields),
             )
@@ -547,6 +564,26 @@ class ScratchpadDB:
         ).fetchone()
         return row["first_ts"], row["last_ts"]
 
+    def templates_matching_text(self, text: str, limit: int = 5000) -> set[int]:
+        """Templates having at least one event whose message or raw line contains `text`.
+
+        For resolving an expectation expressed as a line of log text to the templates a
+        citation could name it through. A pattern search finds only the *constant* part of a
+        line, and an external corpus's evidence is frequently the varying part -- a failing
+        test's path, a stack location -- which clustering has already replaced with a wildcard.
+
+        Parameterised and on the internal connection, deliberately not through
+        `run_readonly_sql`: that is the model-facing channel (decision G4) and widening its
+        signature to take parameters for the benefit of trusted internal callers would loosen
+        a security boundary for a convenience that belongs on this side of it.
+        """
+        rows = self._conn.execute(
+            "SELECT DISTINCT template_id FROM log_events "
+            "WHERE message LIKE ? ESCAPE '\\' OR raw LIKE ? ESCAPE '\\' LIMIT ?",
+            (f"%{_like_escape(text)}%", f"%{_like_escape(text)}%", limit),
+        )
+        return {int(row["template_id"]) for row in rows if row["template_id"] is not None}
+
     def known_template_ids(self, ids: Sequence[int]) -> set[int]:
         """Which of `ids` actually exist. Used to verify citations without loading the table."""
         if not ids:
@@ -643,7 +680,10 @@ class ScratchpadDB:
             start_ts, end_ts, source, severity, template_id, noise, trace_id
         )
         rows = self._conn.execute(
-            "SELECT id, ts, source, severity, template_id, trace_id, raw, message"
+            "SELECT id, ts, source, severity, template_id, trace_id, raw,"
+            # NULL means "same as raw" -- see the note in `bulk_insert_events`. Every
+            # reader gets the message it expects and none of them needs to know.
+            " COALESCE(message, raw) AS message"
             f" FROM log_events{where} ORDER BY ts, id LIMIT ?",
             [*params, max_lines],
         )
@@ -714,7 +754,10 @@ class ScratchpadDB:
             return []
         placeholders = ", ".join("?" for _ in ids)
         rows = self._conn.execute(
-            "SELECT id, ts, source, severity, template_id, trace_id, raw, message"
+            "SELECT id, ts, source, severity, template_id, trace_id, raw,"
+            # NULL means "same as raw" -- see the note in `bulk_insert_events`. Every
+            # reader gets the message it expects and none of them needs to know.
+            " COALESCE(message, raw) AS message"
             f" FROM log_events WHERE id IN ({placeholders}) ORDER BY ts, id",
             list(ids),
         )

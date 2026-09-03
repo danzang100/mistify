@@ -13,6 +13,7 @@ has happened at all, and including the Drain3 snapshot, which is a durable on-di
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from mistify.adapters.registry import detect_format, get_adapter, read_sample
 from mistify.common.config import MistifyConfig
 from mistify.common.models import LogRecord
 from mistify.metrics import SCRATCHPAD_ORPHAN_EVENTS
+from mistify.redaction.parallel import RedactionPool
 from mistify.redaction.redactor import Redactor
 from mistify.redaction.vault import RedactionVault
 from mistify.scratchpad.anomaly import score_templates, select_signal_templates
@@ -31,13 +33,22 @@ from mistify.stage_metrics import (
     redaction_metrics,
     templating_metrics,
 )
-from mistify.templating.calibration import calibrate_sim_th, find_over_merged
+from mistify.templating.calibration import (
+    CalibrationStatus,
+    calibrate_sim_th,
+    find_over_merged,
+)
 from mistify.templating.drain_wrapper import DrainTemplater
 
 __all__ = ["EVENT_BATCH_SIZE", "IngestResult", "derive_incident_id", "ingest"]
 
 #: Records held in memory between INSERTs. Bounds peak memory independently of file size.
 EVENT_BATCH_SIZE = 5000
+
+#: Records redacted per call. Sized so a parallel run has something worth sending to a worker
+#: -- below a couple of thousand the pipe costs more than the regex -- while keeping the same
+#: bounded-memory property as the insert batch.
+REDACT_CHUNK_SIZE = 10_000
 
 
 class UnknownFormatError(RuntimeError):
@@ -84,6 +95,24 @@ def derive_incident_id(source: str | Path) -> str:
     return f"{datetime.now(UTC):%Y-%m-%d}-{slug}"
 
 
+def _chunked(records: Iterator[LogRecord], size: int) -> Iterator[list[LogRecord]]:
+    """Group a record stream into fixed-size lists, still lazily.
+
+    `itertools.batched` would do this in 3.12, but it yields tuples and the redaction pool
+    wants a list it can slice per worker. The generator matters more than the shape: the whole
+    point of the ingest loop is that the file is never resident, and a chunker that materialised
+    the stream would undo that in one line.
+    """
+    chunk: list[LogRecord] = []
+    for record in records:
+        chunk.append(record)
+        if len(chunk) >= size:
+            yield chunk
+            chunk = []
+    if chunk:
+        yield chunk
+
+
 def _bootstrap(
     source_path: Path, config: MistifyConfig, reason: str
 ) -> tuple[LogAdapter, str] | None:
@@ -100,7 +129,7 @@ def _bootstrap(
     from mistify.bootstrap import bootstrap_format, load_schemas, save_schema
     from mistify.bootstrap.adapter import InferredAdapter
 
-    schema_dir = Path(".cache") / "inferred"
+    schema_dir = config.schema_dir()
     lines = read_sample(source_path, max(config.bootstrap.sample_size * 10, 1000))
 
     provider = None
@@ -124,12 +153,134 @@ def _bootstrap(
     if result.schema is None:
         return None
 
-    name = f"inferred_{result.schema.timestamp}"
-    if not result.route.startswith("known:"):
+    # Named from every field that changes how the schema parses, not from the timestamp shape
+    # alone. `inferred_syslog` was one cache entry shared by every syslog-shaped format there
+    # is, so the first file ingested decided how all the others were read.
+    name = f"inferred_{result.schema.slug()}"
+    if config.bootstrap.persist_schemas and not result.route.startswith("known:"):
         # Persisted only once it has passed the gate, so the next file from this source skips
         # inference entirely -- and so a schema nobody validated never reaches the cache.
         save_schema(result.schema, schema_dir, name)
     return InferredAdapter(result.schema, name=name), f"{reason}; {result.reason}"
+
+
+def _select_adapter(
+    source_path: Path, config: MistifyConfig, format_name: str | None
+) -> tuple[LogAdapter, dict[str, float], str | None]:
+    """Pick the adapter for one file: explicit name, detection, bootstrap, or raw lines.
+
+    Lifted out of `ingest` unchanged so a directory can run it per file. A directory holding
+    JSON from one service and syslog from another has to be read as both, and the only way to
+    guarantee each file gets the treatment it would get alone is for it to be the same code
+    path -- a second, simpler selection rule for directories would drift from this one.
+    """
+    fallback_reason: str | None = None
+    adapter: LogAdapter | None
+
+    if format_name and format_name != "auto":
+        try:
+            adapter = get_adapter(format_name)
+        except ValueError as exc:
+            # The registry signals an unregistered name with ValueError, but the CLI only
+            # catches UnknownFormatError, so a typo in --format surfaced as a traceback.
+            raise UnknownFormatError(str(exc)) from exc
+        return adapter, {format_name: 1.0}, None
+
+    sample = read_sample(source_path, config.bootstrap.sample_size)
+    adapter, scores = detect_format(
+        sample,
+        registered=config.adapters.registered,
+        min_confidence=config.adapters.min_detect_confidence,
+    )
+    if adapter is None:
+        best = max(scores.values(), default=0.0)
+        reason = (
+            f"no registered adapter matched (best confidence {best:.2f}, threshold "
+            f"{config.adapters.min_detect_confidence:.2f})"
+        )
+        if config.bootstrap.enabled:
+            bootstrapped = _bootstrap(source_path, config, reason)
+            if bootstrapped is not None:
+                adapter, fallback_reason = bootstrapped
+
+        if adapter is None and config.adapters.on_unknown_format == "error":
+            raise UnknownFormatError(f"{reason} for {source_path}")
+        if adapter is None:
+            # Degrade rather than refuse, and record that it happened. The metric is
+            # load-bearing: a raw-line read has no real timestamps, so the incident window
+            # and the burstiness term describe line order, and the report has to say so.
+            adapter = get_adapter("raw_lines")
+            fallback_reason = reason
+
+    return adapter, scores, fallback_reason
+
+
+def _select_for_directory(
+    source_path: Path, config: MistifyConfig, format_name: str | None
+) -> tuple[LogAdapter, dict[str, float], str | None]:
+    """Build one adapter over every readable log file in a directory.
+
+    An incident is usually a directory -- one log per service or per pod -- and pointing the
+    pipeline at one used to fail with a bare `PermissionError` out of `open()`.
+
+    Unreadable files are dropped here rather than inside the adapter, because selection has to
+    open them anyway to detect a format: a PNG in a log directory raises on the detection read,
+    and there is nothing to select for it. The count travels into the adapter so that the drop
+    is reported rather than silent.
+
+    Confidence scores are merged by taking each format's best across the files. There is one
+    number for this in `run_metadata` and there are many files, so any merge loses something;
+    the best is the one that answers "was anything confidently recognised", which is the
+    question a reader of that metric is asking.
+    """
+    from mistify.adapters.multi_file import MultiFileAdapter, log_files
+    from mistify.adapters.source import BinarySourceError
+
+    candidates = log_files(source_path)
+    if not candidates:
+        raise UnknownFormatError(f"no files to read under {source_path}")
+
+    members: list[tuple[Path, LogAdapter]] = []
+    merged: dict[str, float] = {}
+    reasons: list[str] = []
+    skipped: list[str] = []
+
+    for path in candidates:
+        relative = path.relative_to(source_path).as_posix()
+        try:
+            adapter, scores, reason = _select_adapter(path, config, format_name)
+        except (BinarySourceError, OSError) as exc:
+            skipped.append(f"{relative}: {exc}")
+            continue
+        members.append((path, adapter))
+        for name, score in scores.items():
+            merged[name] = max(merged.get(name, 0.0), score)
+        if reason is not None:
+            reasons.append(f"{relative}: {reason}")
+
+    if not members:
+        raise UnknownFormatError(
+            f"nothing under {source_path} could be read as a log file ({len(skipped)} skipped)"
+        )
+
+    multi = MultiFileAdapter(members, source_path)
+    multi.files_skipped = len(skipped)
+    for sample in skipped[:5]:
+        multi.stats.record_error(sample)
+
+    # One reason for the whole directory, naming how many files degraded rather than
+    # concatenating forty explanations. The per-file detail is in the error samples.
+    fallback_reason = None
+    if reasons:
+        fallback_reason = (
+            f"{len(reasons)} of {len(members)} files did not match a registered adapter; "
+            f"first: {reasons[0]}"
+        )
+    if skipped:
+        note = f"{len(skipped)} file(s) skipped as unreadable"
+        fallback_reason = f"{fallback_reason}; {note}" if fallback_reason else note
+
+    return multi, merged, fallback_reason
 
 
 def ingest(
@@ -146,42 +297,10 @@ def ingest(
     incident_id = incident_id or derive_incident_id(source_path)
 
     # --- format selection -------------------------------------------------
-    adapter: LogAdapter | None
-    fallback_reason: str | None = None
-    if format_name and format_name != "auto":
-        try:
-            adapter = get_adapter(format_name)
-        except ValueError as exc:
-            # The registry signals an unregistered name with ValueError, but the CLI only
-            # catches UnknownFormatError, so a typo in --format surfaced as a traceback.
-            raise UnknownFormatError(str(exc)) from exc
-        scores = {format_name: 1.0}
+    if source_path.is_dir():
+        adapter, scores, fallback_reason = _select_for_directory(source_path, config, format_name)
     else:
-        sample = read_sample(source_path, config.bootstrap.sample_size)
-        adapter, scores = detect_format(
-            sample,
-            registered=config.adapters.registered,
-            min_confidence=config.adapters.min_detect_confidence,
-        )
-        if adapter is None:
-            best = max(scores.values(), default=0.0)
-            reason = (
-                f"no registered adapter matched (best confidence {best:.2f}, threshold "
-                f"{config.adapters.min_detect_confidence:.2f})"
-            )
-            if config.bootstrap.enabled:
-                bootstrapped = _bootstrap(source_path, config, reason)
-                if bootstrapped is not None:
-                    adapter, fallback_reason = bootstrapped
-
-            if adapter is None and config.adapters.on_unknown_format == "error":
-                raise UnknownFormatError(f"{reason} for {source_path}")
-            if adapter is None:
-                # Degrade rather than refuse, and record that it happened. The metric is
-                # load-bearing: a raw-line read has no real timestamps, so the incident window
-                # and the burstiness term describe line order, and the report has to say so.
-                adapter = get_adapter("raw_lines")
-                fallback_reason = reason
+        adapter, scores, fallback_reason = _select_adapter(source_path, config, format_name)
 
     # Opt-in reversible redaction. The vault is its own file, never a table in the
     # scratchpad: the investigator's read-only SQL channel can read any table in the database
@@ -226,10 +345,25 @@ def ingest(
         # real load and would double-count in the health metrics.
         redactor.reset_counts()
 
+    # A file that calibration could not compress is one where Drain3 will hold a cluster for
+    # almost every line, and its per-line cost grows with how many it holds. Capping there
+    # bought 5.6x throughput on a real CI log for 0.2% more template fragmentation, because
+    # `DrainTemplater` keeps its own registry and eviction loses no template from the output.
+    # Never applied to a file that *did* compress: there the cap would never bind anyway, and
+    # on a genuinely diverse log that clusters well it would fragment for nothing.
+    max_clusters = config.drain3.max_clusters
+    uncompressible = (
+        calibration is not None
+        and calibration.status == CalibrationStatus.UNDER_CLUSTERED
+        and config.drain3.uncompressible_max_clusters < max_clusters
+    )
+    if uncompressible:
+        max_clusters = config.drain3.uncompressible_max_clusters
+
     templater = DrainTemplater(
         sim_th=sim_th,
         depth=config.drain3.depth,
-        max_clusters=config.drain3.max_clusters,
+        max_clusters=max_clusters,
         snapshot_path=config.snapshot_path(incident_id),
     )
 
@@ -252,17 +386,27 @@ def ingest(
         # plus the template registry, both bounded.
         events_loaded = 0
         batch: list[tuple[LogRecord, int]] = []
-        for record in adapter.parse(source_path):
-            # Redaction first. Nothing downstream -- templater, snapshot, database, or any
-            # model call -- ever sees an unredacted record.
-            record = redactor.redact_record(record)
-            result = templater.process(
-                record.message, ts=record.isoformat(), severity=record.severity
-            )
-            batch.append((record, result.template_id))
-            if len(batch) >= EVENT_BATCH_SIZE:
-                events_loaded += db.bulk_insert_events(batch)
-                batch.clear()
+        # Redaction is taken a chunk at a time rather than a record at a time, because it is
+        # the one stage that parallelises and a process pool needs something to hand a worker.
+        # The chunk is the same order of magnitude as the insert batch, so peak memory is
+        # unchanged in kind: a bounded number of records, never the file.
+        #
+        # Templating stays strictly sequential and in this process. Drain3 builds its tree
+        # incrementally, so the template a line gets depends on every line before it -- running
+        # it in parallel would not be a speed-up of the same computation, it would be a
+        # different clustering.
+        with RedactionPool(redactor, config.redaction.workers) as pool:
+            for chunk in _chunked(adapter.parse(source_path), REDACT_CHUNK_SIZE):
+                # Redaction first. Nothing downstream -- templater, snapshot, database, or any
+                # model call -- ever sees an unredacted record.
+                for record in pool.redact(chunk):
+                    result = templater.process(
+                        record.message, ts=record.isoformat(), severity=record.severity
+                    )
+                    batch.append((record, result.template_id))
+                    if len(batch) >= EVENT_BATCH_SIZE:
+                        events_loaded += db.bulk_insert_events(batch)
+                        batch.clear()
         if batch:
             events_loaded += db.bulk_insert_events(batch)
             batch.clear()
@@ -304,7 +448,9 @@ def ingest(
             [
                 *ingest_metrics(adapter, scores, events_loaded, fallback_reason),
                 *redaction_metrics(config, redactor, vault, vault_path),
-                *templating_metrics(config, templater, sim_th, coverage, calibration, over_merged),
+                *templating_metrics(
+                    config, templater, sim_th, coverage, calibration, over_merged, max_clusters
+                ),
                 *anomaly_metrics(
                     config,
                     scored,

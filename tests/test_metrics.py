@@ -58,6 +58,7 @@ EXPECTED_METRIC_KEYS = {
     ("templating", "compression_ratio"),
     ("templating", "sim_th"),
     ("templating", "depth"),
+    ("templating", "max_clusters"),
     ("templating", "calibration_status"),
     ("templating", "calibration_candidates"),
     ("templating", "calibration_reason"),

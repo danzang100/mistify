@@ -10,6 +10,7 @@ import click
 from dotenv import load_dotenv
 
 from mistify import __version__
+from mistify.adapters.source import BinarySourceError
 from mistify.agent.skeleton import run_skeleton_investigation
 from mistify.common.config import MistifyConfig, load_config
 from mistify.pipeline import UnknownFormatError, derive_incident_id, ingest
@@ -53,7 +54,7 @@ def ingest_command(
     config = load_config(config_path)
     try:
         result = ingest(source, config, incident_id=incident_id, format_name=format_name)
-    except UnknownFormatError as exc:
+    except (UnknownFormatError, BinarySourceError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     click.echo(f"incident      {result.incident_id}")
@@ -220,7 +221,7 @@ def run_command(
     incident_id = incident_id or derive_incident_id(source)
     try:
         result = ingest(source, config, incident_id=incident_id, format_name=format_name)
-    except UnknownFormatError as exc:
+    except (UnknownFormatError, BinarySourceError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     click.echo(
@@ -260,6 +261,16 @@ def run_command(
     default=None,
     help="Score a grep baseline instead of the agent. No model is called.",
 )
+@click.option(
+    "--logdx",
+    "logdx_split",
+    default=None,
+    help=(
+        "Add LogDx-CI cases from a split (dev, holdout, stress, v2/dev, v2/holdout, "
+        "v2/stress). Real GitHub Actions failures with author-verified diagnoses, downloaded "
+        "on demand into .cache and never committed."
+    ),
+)
 @click.option("--list", "list_only", is_flag=True, help="List the cases and exit.")
 @click.option("--no-adversarial", is_flag=True, help="Skip the critique, to halve the cost.")
 @click.option(
@@ -273,6 +284,7 @@ def eval_command(
     case_names: tuple[str, ...],
     runs: int,
     baseline: str | None,
+    logdx_split: str | None,
     list_only: bool,
     no_adversarial: bool,
     judge: bool,
@@ -287,23 +299,46 @@ def eval_command(
     """
     import tempfile
 
-    from mistify.eval.cases import CASES, get_case
-    from mistify.eval.cases import case_names as known_cases
+    from mistify.eval.cases import CASES
     from mistify.eval.harness import run_case, write_results
 
+    # LogDx-CI cases are opt-in because building them downloads a corpus. `mistify eval` with
+    # no flags has always worked offline and should keep working offline; a suite that reaches
+    # for the network by default fails for reasons that have nothing to do with the pipeline.
+    pool = list(CASES)
+    if logdx_split is not None:
+        from mistify.eval.logdx import LOGDX_SPLITS, logdx_eval_cases
+
+        if logdx_split not in LOGDX_SPLITS:
+            raise click.ClickException(
+                f"unknown LogDx-CI split {logdx_split!r}. Known: {', '.join(LOGDX_SPLITS)}"
+            )
+        click.echo(f"fetching LogDx-CI split {logdx_split} into .cache/logdx ...", err=True)
+        try:
+            pool.extend(logdx_eval_cases(logdx_split))
+        except OSError as exc:
+            raise click.ClickException(f"could not fetch LogDx-CI: {exc}") from exc
+
     if list_only:
-        for case in CASES:
+        for case in pool:
             click.echo(f"{case.name}\n  {case.summary}")
             for note in case.notes:
                 click.echo(f"  - {note}")
+        if logdx_split is None:
+            click.echo("\nAlso available: --logdx dev (35 real CI failures; see --help).")
         return
 
+    known = {case.name: case for case in pool}
     try:
-        cases = [get_case(name) for name in case_names] if case_names else list(CASES)
+        cases = [known[name] for name in case_names] if case_names else list(pool)
     except KeyError as exc:
-        raise click.ClickException(str(exc).strip("\"'")) from exc
+        name = str(exc).strip("\"'")
+        hint = "" if logdx_split else " (LogDx-CI cases need --logdx SPLIT)"
+        raise click.ClickException(
+            f"unknown eval case {name}.{hint} Known: {', '.join(sorted(known))}"
+        ) from exc
     if not cases:  # pragma: no cover - CASES is never empty
-        raise click.ClickException(f"no cases to run. Known: {', '.join(known_cases())}")
+        raise click.ClickException(f"no cases to run. Known: {', '.join(sorted(known))}")
 
     config = load_config(config_path)
     # One directory per sweep, so a result and the reports behind it stay together and an old
@@ -337,6 +372,11 @@ def eval_command(
 
     destination = write_results(reports, results_dir)
     click.echo(f"\nresults {destination}")
+    if any(case.external for case in cases):
+        # Attribution, as CC-BY-4.0 requires, and the same courtesy the Loghub eval extends.
+        from mistify.eval.logdx import LOGDX_CITATION
+
+        click.echo(LOGDX_CITATION, err=True)
 
     if any(not run.passed for report in reports for run in report.runs):
         # A failing eval exits non-zero so it can gate anything, but the report is printed

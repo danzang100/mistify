@@ -42,6 +42,28 @@ class LogAdapter(ABC):
 
     format_name: str = "base"
 
+    #: How much this adapter's `detect()` claim is worth relative to another's, independent of
+    #: the number it returns. Confidence alone cannot decide routing, because the scores of two
+    #: adapters are not measuring the same thing.
+    #:
+    #: A Loki `logcli --output=jsonl` export scores a perfect 1.0 on `json_lines` -- correctly,
+    #: because every line *is* a JSON object carrying a timestamp. Nothing the Loki adapter can
+    #: return beats that, so under a plain `max()` the specific adapter can never win, and the
+    #: file routes to the reader that sees `{labels, line, timestamp}` as three opaque fields
+    #: instead of the one that knows `line` holds the message and `labels` holds the service.
+    #: The parse succeeds, the pipeline runs, and every record is wrong in the same quiet way.
+    #:
+    #: So a generic reader's high score means "this file is JSON", and a specific reader's means
+    #: "this file is *this format*" -- the second is the stronger statement even when its number
+    #: is lower, and the tier is what says so. The cost is that a specific adapter's `detect()`
+    #: must key on a structural marker unique to its format, never on plausibility, or it
+    #: hijacks every file that clears the floor.
+    #:
+    #: 2 -- a named format with a specification or an export shape (otlp, loki)
+    #: 1 -- a generic container that many formats are carried in (json_lines)
+    #: 0 -- last resort, selected deliberately by the pipeline and never by detection (raw_lines)
+    specificity: int = 1
+
     def __init__(self) -> None:
         self.stats = AdapterStats()
 
@@ -52,6 +74,22 @@ class LogAdapter(ABC):
     @abstractmethod
     def parse(self, source: str | Path) -> Iterator[LogRecord]:
         """Stream-parse the source into normalized records."""
+
+    @property
+    def component_formats(self) -> frozenset[str]:
+        """Every format actually used to read the source.
+
+        One name, for every adapter that parses something itself. The exception is a wrapper
+        over other adapters, where `format_name` is a summary -- `multi:json_lines+raw_lines`
+        -- and a reader asking "was any of this read by the degraded reader?" cannot answer it
+        by string equality against that summary.
+
+        That question is load-bearing. `INGEST_FALLBACK` fires the report's strongest warning
+        on the exact value `raw_lines`, so a directory that read half its files line by line
+        matched nothing, fired no warning, and printed a log window running from 1970 to the
+        present as though it were a fact.
+        """
+        return frozenset({self.format_name})
 
     def fresh(self) -> LogAdapter:
         """A new adapter of the same kind, with its counters reset.

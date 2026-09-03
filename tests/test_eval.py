@@ -12,6 +12,8 @@ acted on twice before anyone read them closely.
 
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -556,3 +558,211 @@ def test_a_sweep_keeps_the_report_behind_every_score(tmp_path: Path, config: obj
     body = Path(report.runs[0].report_path or "").read_text(encoding="utf-8")
     assert "## What was found" in body
     assert "grep baseline" in body
+
+
+#: Evidence is mandatory and schema-enforced, so a note about its *text* still needs some.
+EVIDENCE = {"template_ids": [1]}
+
+
+# ------------------------------------------- resolving an expectation to a template
+
+
+def test_a_marker_in_the_varying_half_of_a_line_still_resolves(db: ScratchpadDB) -> None:
+    """External corpora name evidence that clustering has already turned into a wildcard.
+
+    A planted fixture marker is the *constant* part of its line, so a pattern search finds it.
+    LogDx-CI's critical signals are frequently the failing test's path or the stack location --
+    the part that varies between lines, and therefore the part Drain3 replaces with `<*>`.
+    Measured on the first real case tried: two of six critical signals were invisible to a
+    pattern search and sitting in plain text in the events.
+
+    Built here rather than hunted for in a fixture. This test first looked for a wildcarded
+    token in the synthetic incident and skipped when it found none -- which it did, so the
+    test ran nowhere and asserted nothing.
+    """
+    from mistify.common.models import LogRecord, TemplateSummary
+    from mistify.eval.scoring import _templates_for
+
+    ts = datetime(2026, 8, 30, 14, 0, tzinfo=UTC)
+    db.create_incident("varying", source="x", format_name="raw_lines", redaction_mode="strict")
+    db.bulk_insert_events(
+        [
+            (
+                LogRecord(
+                    ts=ts,
+                    source="ci",
+                    severity="ERROR",
+                    raw="FAILED tests/arrays/test_indexing.py::test_take",
+                    message="FAILED tests/arrays/test_indexing.py::test_take",
+                    fields={},
+                    format="raw_lines",
+                ),
+                7,
+            )
+        ]
+    )
+    db.upsert_templates(
+        [
+            TemplateSummary(
+                template_id=7,
+                # The path is the varying half, so clustering replaced it. Searching patterns
+                # for it finds nothing at all.
+                pattern="FAILED <*>",
+                occurrence_count=1,
+                first_seen=ts.isoformat(),
+                last_seen=ts.isoformat(),
+            )
+        ]
+    )
+
+    marker = "tests/arrays/test_indexing.py::test_take"
+    assert marker not in "FAILED <*>"
+    assert _templates_for(db, marker) == {7}
+
+
+def test_underscores_in_a_marker_are_not_sql_wildcards(db: ScratchpadDB) -> None:
+    """`_` means "any character" to LIKE, and log text is full of underscores.
+
+    Left unescaped, `test_take` also matches `testXtake` -- every text lookup silently wider
+    than it claims, which is the kind of thing that makes a scorecard generous by accident.
+    """
+    from mistify.common.models import LogRecord, TemplateSummary
+
+    ts = datetime(2026, 8, 30, 14, 0, tzinfo=UTC)
+    db.create_incident("escape", source="x", format_name="raw_lines", redaction_mode="strict")
+    db.bulk_insert_events(
+        [
+            (
+                LogRecord(
+                    ts=ts,
+                    source="ci",
+                    severity="ERROR",
+                    raw="FAILED testXtake",
+                    message="FAILED testXtake",
+                    fields={},
+                    format="raw_lines",
+                ),
+                7,
+            )
+        ]
+    )
+    db.upsert_templates(
+        [
+            TemplateSummary(
+                template_id=7,
+                pattern="FAILED <*>",
+                occurrence_count=1,
+                first_seen=ts.isoformat(),
+                last_seen=ts.isoformat(),
+            )
+        ]
+    )
+
+    assert db.templates_matching_text("test_take") == set()
+    assert db.templates_matching_text("testXtake") == {7}
+
+
+def test_a_marker_in_the_constant_half_still_resolves_by_pattern(loaded_db: ScratchpadDB) -> None:
+    """The control: the cheaper, more precise lookup is still the one that answers first."""
+    from mistify.eval.cases import ROOT_CAUSE_MARKER
+    from mistify.eval.scoring import _templates_for
+
+    assert _templates_for(loaded_db, ROOT_CAUSE_MARKER) == {
+        _template_id(loaded_db, ROOT_CAUSE_MARKER)
+    }
+
+
+def test_a_marker_matching_nothing_is_reported_rather_than_failed_silently(
+    loaded_db: ScratchpadDB,
+) -> None:
+    case = replace(INCIDENT_CASE, must_cite=("no line in this file says this",), must_not_lead=())
+    checks = {c.name: c for c in score_run(loaded_db, case)}
+
+    name = next(n for n in checks if n.startswith("resolves["))
+    assert checks[name].passed is False
+    assert "lost" in checks[name].detail
+
+
+def test_a_marker_matching_everything_is_refused_as_a_check(loaded_db: ScratchpadDB) -> None:
+    """A marker that resolves to half the file cannot discriminate.
+
+    `exit_code: "1"` is the real example -- a citation check built on it passes as soon as the
+    investigation cites anything at all, putting a passing row on the scorecard while measuring
+    nothing. Reported as unresolvable, which is what it is.
+    """
+    case = replace(INCIDENT_CASE, must_cite=("e",), must_not_lead=())
+    checks = {c.name: c for c in score_run(loaded_db, case)}
+
+    name = next(n for n in checks if n.startswith("resolves["))
+    assert checks[name].passed is False
+    assert "identifies nothing" in checks[name].detail
+
+
+# ------------------------------------------------- what the conclusion says, and does not
+
+
+def test_a_conclusion_naming_the_required_terms_passes(loaded_db: ScratchpadDB) -> None:
+    loaded_db.write_note(1, "The DeprecationWarning from pytest broke it", EVIDENCE, "high")
+    case = replace(
+        INCIDENT_CASE,
+        must_cite=(),
+        must_not_lead=(),
+        must_mention=("pytest", "DeprecationWarning"),
+    )
+
+    checks = _checks(loaded_db, case)
+
+    assert checks["mentions[pytest]"]
+    assert checks["mentions[DeprecationWarning]"]
+
+
+def test_a_conclusion_missing_a_required_term_fails(loaded_db: ScratchpadDB) -> None:
+    loaded_db.write_note(1, "something went wrong somewhere", EVIDENCE, "high")
+    case = replace(INCIDENT_CASE, must_cite=(), must_not_lead=(), must_mention=("pytest",))
+
+    assert not _checks(loaded_db, case)["mentions[pytest]"]
+
+
+def test_a_forbidden_diagnosis_is_caught(loaded_db: ScratchpadDB) -> None:
+    """The plausible-but-wrong check.
+
+    The testing strategy records that no public dataset scores whether a verification pass
+    catches a plausible-but-wrong conclusion. LogDx-CI's `must_not_claim` is the closest thing
+    to one, and this is the check that reads it.
+    """
+    loaded_db.write_note(1, "The build failed because of a network failure", EVIDENCE, "high")
+    case = replace(
+        INCIDENT_CASE, must_cite=(), must_not_lead=(), must_not_claim=("network failure",)
+    )
+
+    assert not _checks(loaded_db, case)["avoids[network failure]"]
+
+
+def test_a_conclusion_avoiding_the_wrong_diagnosis_passes(loaded_db: ScratchpadDB) -> None:
+    """The control. A check that fired on every conclusion would measure verbosity."""
+    loaded_db.write_note(1, "The connection pool was exhausted", EVIDENCE, "high")
+    case = replace(
+        INCIDENT_CASE, must_cite=(), must_not_lead=(), must_not_claim=("network failure",)
+    )
+
+    assert _checks(loaded_db, case)["avoids[network failure]"]
+
+
+def test_negation_is_not_detected_and_the_detail_says_so(loaded_db: ScratchpadDB) -> None:
+    """A known blind spot, pinned so that changing it has to be deliberate.
+
+    Substring matching cannot tell "it was a network failure" from "this was not a network
+    failure", and the second fails. Recorded here rather than papered over with a cleverer
+    matcher, because a matcher that is right most of the time fails silently instead of
+    visibly -- and the failing check's detail says which case it might be.
+    """
+    loaded_db.write_note(
+        1, "This was not a network failure; the pool was exhausted", EVIDENCE, "high"
+    )
+    case = replace(
+        INCIDENT_CASE, must_cite=(), must_not_lead=(), must_not_claim=("network failure",)
+    )
+
+    check = next(c for c in score_run(loaded_db, case) if c.name == "avoids[network failure]")
+    assert not check.passed
+    assert "negation is not detected" in check.detail

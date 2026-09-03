@@ -33,10 +33,12 @@ from mistify.metrics import (
     ALL_METRICS,
     ANOMALY_NEEDLE_POSITION,
     ANOMALY_SIGNAL_TEMPLATE_IDS,
+    INGEST_EVENTS_LOADED,
     INGEST_FALLBACK,
     INGEST_FALLBACK_REASON,
     INGEST_PARSE_ERRORS,
     INGEST_UNMAPPED_SEVERITY,
+    INGEST_UNPARSEABLE_TIMESTAMP,
     INVESTIGATE_BUDGET_LIMITED,
     INVESTIGATE_CAVEAT,
     INVESTIGATE_INVESTIGATOR,
@@ -332,11 +334,26 @@ def _health_warnings(view: MetricView) -> list[str]:
     # First, because it changes how every later number in the report should be read.
     if view.triggers(INGEST_FALLBACK):
         detail = view.text(INGEST_FALLBACK_REASON) or "no reason recorded"
+        # How much of the source this actually applies to. A single unrecognised file is all of
+        # it; a directory can be partly recognised, and saying "there are no parsed timestamps"
+        # there would be false in the other direction -- overstating the damage is its own way
+        # of making the warning ignorable.
+        ordinal = view.number(INGEST_UNPARSEABLE_TIMESTAMP)
+        loaded = view.number(INGEST_EVENTS_LOADED)
+        if ordinal is not None and loaded is not None and 0 < ordinal < loaded:
+            scope = (
+                f"{int(ordinal)} of {int(loaded)} events were read this way and have no parsed "
+                "timestamp. The incident window spans those events and the properly timestamped "
+                "ones together, so it is not a duration"
+            )
+        else:
+            scope = (
+                "There are no parsed timestamps: the incident window and the burstiness term "
+                "describe the order lines appear in the file, not when anything happened"
+            )
         warnings.append(
-            "No adapter recognised this file, so it was read one line at a time "
-            f"({detail}). There are no parsed timestamps: the incident window and the "
-            "burstiness term describe the order lines appear in the file, not when anything "
-            "happened, and severity was guessed from the text of each line."
+            f"Part of this source was read one line at a time ({detail}). {scope}, "
+            "and severity was guessed from the text of each line."
         )
 
     if view.triggers(INGEST_PARSE_ERRORS):

@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from mistify.adapters.base import LogAdapter
+from mistify.adapters.source import open_text
 from mistify.common.models import LogRecord, normalize_severity
 
 __all__ = ["RawLinesAdapter"]
@@ -45,6 +46,10 @@ class RawLinesAdapter(LogAdapter):
     """Reads any text file as one record per line, inventing nothing."""
 
     format_name = "raw_lines"
+    #: Last resort. Belt and braces alongside the always-zero `detect()`: this adapter must
+    #: never be reachable by detection, and the tier says so even if a future change to the
+    #: confidence floor would otherwise let a zero through.
+    specificity = 0
 
     def detect(self, sample_lines: list[str]) -> float:
         """Always zero.
@@ -69,7 +74,7 @@ class RawLinesAdapter(LogAdapter):
         # scratchpad, or nothing downstream is reproducible.
         base = datetime(1970, 1, 1, tzinfo=UTC)
 
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
+        with open_text(path) as handle:
             for lineno, line in enumerate(handle, start=1):
                 raw = line.rstrip("\n")
                 if not raw.strip():

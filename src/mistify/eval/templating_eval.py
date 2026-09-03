@@ -38,6 +38,7 @@ __all__ = [
     "LOGHUB_SYSTEMS",
     "TemplatingScore",
     "fetch_loghub",
+    "fetch_loghub_raw",
     "grouping_accuracy",
     "score_dataset",
 ]
@@ -66,6 +67,12 @@ LOGHUB_SYSTEMS: tuple[str, ...] = (
 _RAW = (
     "https://raw.githubusercontent.com/logpai/loghub/master/{system}/{system}_2k.log_structured.csv"
 )
+
+#: The unstructured original the CSV was annotated from. Same 2,000 lines, before anyone split
+#: them into columns -- which is the only form the ingest path can read, and the point of
+#: having it: the CSV measures clustering against an answer key, and the `.log` measures
+#: whether the adapters and the bootstrapper can get to the lines at all.
+_RAW_LOG = "https://raw.githubusercontent.com/logpai/loghub/master/{system}/{system}_2k.log"
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +107,28 @@ def fetch_loghub(system: str, directory: Path) -> Path:
         return path
     url = _RAW.format(system=system)
     with urllib.request.urlopen(url, timeout=60) as response:
+        path.write_bytes(response.read())
+    return path
+
+
+def fetch_loghub_raw(system: str, directory: Path) -> Path:
+    """Download one Loghub-2k unstructured `.log`, or return the copy already on disk.
+
+    The sibling of `fetch_loghub`, and deliberately a separate function rather than a flag: the
+    two files answer different questions and are consumed by different code. `score_dataset`
+    wants the annotated CSV and never the raw log; ingestion, adapter fixtures and the
+    bootstrapper want the raw log and cannot use the CSV at all, because the CSV has already
+    done the parsing that is the thing under test.
+
+    Same cache directory and same terms as the CSV: downloaded on demand, never committed.
+    """
+    if system not in LOGHUB_SYSTEMS:
+        raise ValueError(f"unknown Loghub system {system!r}. Known: {', '.join(LOGHUB_SYSTEMS)}")
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{system}_2k.log"
+    if path.exists():
+        return path
+    with urllib.request.urlopen(_RAW_LOG.format(system=system), timeout=60) as response:
         path.write_bytes(response.read())
     return path
 

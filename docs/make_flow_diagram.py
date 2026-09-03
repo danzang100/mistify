@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-W, H = 1500, 860
+W, H = 1500, 1150
 
 INK = "#1a1d21"
 MUTED = "#5c6570"
@@ -86,22 +86,25 @@ for i, (label, status) in enumerate(
 X1, WCOL = 40, 400
 y = 110
 
-stage(X1, y, WCOL, 110, "1 · Ingest", [
-    "json_lines + otlp · detect floor 0.6, no overlap",
-    "unrecognised -> raw_lines, recorded and warned about",
-    "registered names an unknown format -> refuses",
-    "elastic / loki await a live stack · bootstrapper stub",
+stage(X1, y, WCOL, 145, "1 · Ingest", [
+    "a file or a directory · gz/bz2/xz · binary refused",
+    "json_lines · otlp · loki · floor 0.6, specificity tier",
+    "loki written against captures from a running stack",
+    "unknown -> bootstrap: structural, then model, gate 0.85",
+    "then raw_lines: read anyway, recorded and warned about",
+    "elastic outstanding — needs a stack otel-lgtm is not",
 ], PARTIAL, "PHASE 1/4")
-arrow(X1 + WCOL / 2, y + 110, X1 + WCOL / 2, y + 140)
-y += 140
+arrow(X1 + WCOL / 2, y + 145, X1 + WCOL / 2, y + 175)
+y += 175
 
-stage(X1, y, WCOL, 92, "2 · Redact", [
+stage(X1, y, WCOL, 110, "2 · Redact", [
     "regex + entity hashing, before templating",
     "api_key, email, ipv4, ipv6, ssn · 7,282 on fixture",
-    "opt-in reversible vault · mistify reveal",
+    "runs on every path: gzip, directory and inferred alike",
+    "ipv4 in a reverse-DNS host now caught — found on real logs",
 ], DONE, "PHASE 1")
-arrow(X1 + WCOL / 2, y + 92, X1 + WCOL / 2, y + 122)
-y += 122
+arrow(X1 + WCOL / 2, y + 110, X1 + WCOL / 2, y + 140)
+y += 140
 
 stage(X1, y, WCOL, 110, "3 · Template", [
     "Drain3, sim_th calibrated per file",
@@ -175,7 +178,7 @@ stage(X3, y3, 460, 128, "Eval harness", [
     "runs through the same entry point as the CLI",
     "scores the scratchpad, never the rendered report",
     "per-check rates · JSON output · FIXTURE_VERSION",
-    "731 tests · ruff + mypy clean · report kept per run",
+    "854 tests · ruff + mypy clean · report kept per run",
 ], DONE, "PHASE 5")
 y3 += 158
 
@@ -198,13 +201,24 @@ y3 += 158
 stage(X3, y3, 460, 92, "Templating eval", [
     "Loghub-2k · annotated ground truth · no model",
     "4 systems x 3 thresholds · mean GA 0.907",
-    "first measurement on foreign logs",
+    "raw .log ingests too: OpenSSH 131 -> 23 templates",
 ], DONE, "PHASE 5")
 y3 += 122
 
+y3 += 122
+
+stage(X3, y3, 460, 128, "LogDx-CI · foreign incidents", [
+    "35 real GitHub Actions failures, author-verified",
+    "mistify eval --logdx dev · fetched to .cache, CC-BY-4.0",
+    "required_signals -> cites[] · must_not_claim -> avoids[]",
+    "the plausible-but-wrong check no public set had",
+    "wired and loading; the agent is not scored on it yet",
+], PARTIAL, "IN PROGRESS")
+y3 += 158
+
 stage(X3, y3, 460, 92, "Not started", [
-    "Phase 4: bootstrapper · elastic / loki need Docker",
-    "Phase 5: LogDx-CI end-to-end diagnosis eval",
+    "Phase 4: elastic — the one format still unread",
+    "Phase 5: LogDx-CI sweep with a model behind it",
     "Phase 6: MCP server, packaging",
 ], TODO, "PHASE 4-6")
 

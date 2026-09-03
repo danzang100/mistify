@@ -55,10 +55,18 @@ PATTERNS: dict[str, re.Pattern[str]] = {
     ),
     # Bounded by non-digit/non-dot so version strings like 1.2.3.4-rc and longer dotted
     # sequences are not mistaken for addresses.
+    # The trailing guard is two lookaheads rather than one character class, and the difference
+    # is a real address that used to survive strict mode. `(?![\d.])` was meant to stop a match
+    # inside a longer dotted run such as `1.2.3.4.5` -- but it also refuses an address followed
+    # by a *letter* label, which is exactly a reverse-DNS hostname:
+    # `rhost=5.36.59.76.dynamic.cablesurf.de` passed through untouched. That shape is ordinary
+    # in SSH, web and mail logs, so it was not an edge case but a category of line, and it was
+    # invisible until the pipeline was run over somebody else's logs.
+    # Rejecting only a *continuing numeric run* keeps the original guard and drops the leak.
     "ipv4": re.compile(
         r"(?<![\d.])"
         r"(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
-        r"(?![\d.])"
+        r"(?!\d)(?!\.\d)"
     ),
     # Dashes are required. A bare nine-digit run is the credit-card mistake again.
     "ssn": re.compile(r"(?<![\d-])\d{3}-\d{2}-\d{4}(?![\d-])"),

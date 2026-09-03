@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import pytest
 
@@ -426,3 +427,112 @@ def test_unknown_entity_is_rejected() -> None:
 def test_unknown_mode_is_rejected() -> None:
     with pytest.raises(ValueError, match="unknown redaction mode"):
         Redactor(mode="occasionally")
+
+
+# ------------------------------------------------- an address hiding inside a hostname
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "rhost=5.36.59.76.dynamic.cablesurf.de",
+        "reverse mapping checking getaddrinfo for 173.234.31.186.static.example.net failed",
+        "connect from 10.0.0.4.in-addr.arpa",
+    ],
+)
+def test_an_address_inside_a_reverse_dns_hostname_is_redacted(text: str) -> None:
+    r"""The pattern's trailing guard used to refuse these, and they are ordinary log lines.
+
+    `(?![\d.])` was there to stop a match inside a longer dotted run such as `1.2.3.4.5`. It
+    also refused an address followed by a *letter* label -- which is exactly what a reverse-DNS
+    hostname is -- so a real public address passed through strict mode untouched. Found in
+    Loghub's OpenSSH corpus, not in anything this project generated: the synthetic fixtures
+    write addresses that stand alone, so nothing here could have caught it.
+    """
+    redactor = Redactor(entities=["ipv4"])
+    redacted = redactor.redact(text)
+    assert "[IPV4:" in redacted
+    assert "5.36.59.76" not in redacted
+    assert "173.234.31.186" not in redacted
+    assert "10.0.0.4" not in redacted
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ver 1.2.3.4.5 build 9",
+        "code 1.2.3.456 returned",
+        "offsets 10.0.0.4.7 unread",
+    ],
+)
+def test_a_longer_dotted_run_is_still_not_an_address(text: str) -> None:
+    """The control, and the reason the guard was there in the first place.
+
+    Loosening the lookahead far enough to catch a hostname must not loosen it far enough to
+    claim the leading four groups of a five-group version string. Without this test the fix
+    above passes just as well with the guard deleted entirely.
+    """
+    assert "[IPV4:" not in Redactor(entities=["ipv4"]).redact(text)
+
+
+def test_a_plain_address_is_unaffected_by_the_narrower_guard() -> None:
+    """Nothing that worked before stopped working."""
+    redacted = Redactor(entities=["ipv4"]).redact("from 10.0.0.4 port 22")
+    assert "10.0.0.4" not in redacted
+    assert "[IPV4:" in redacted
+
+
+# ------------------------------------------- the same string, redacted once
+
+
+def test_an_identical_raw_and_message_are_counted_once() -> None:
+    """On an unstructured log `message` *is* `raw`, and both used to be redacted separately.
+
+    That doubled the most expensive stage in the pipeline -- 38% of a 400,000-line ingest --
+    and, worse, doubled the counts: `redacted_ipv4` reported twice the number of addresses the
+    file contained. Measured on Loghub's OpenSSH set, 3,464 against a true 1,734. A health
+    metric that overstates by 2x is worse than one that is slow to compute.
+    """
+    line = "sshd: Failed password for root from 10.0.0.4 port 22"
+    redactor = Redactor(entities=["ipv4"])
+    record = LogRecord(
+        ts=datetime(2026, 8, 30, 14, 0, tzinfo=UTC),
+        source="sshd",
+        severity="ERROR",
+        raw=line,
+        message=line,
+        fields={},
+        format="raw_lines",
+    )
+
+    redacted = redactor.redact_record(record)
+
+    assert redactor.counts["ipv4"] == 1
+    # Still redacted in both places, and to the same token.
+    assert "10.0.0.4" not in redacted.raw
+    assert redacted.message == redacted.raw
+
+
+def test_a_message_that_differs_from_raw_is_still_redacted() -> None:
+    """The control, and the direction this could have broken.
+
+    Structured formats extract a smaller message out of the raw line, so the two differ and
+    both genuinely need redacting. Skipping the second pass unconditionally would have leaked
+    every address that appears in the message but not verbatim in `raw`.
+    """
+    redactor = Redactor(entities=["ipv4"])
+    record = LogRecord(
+        ts=datetime(2026, 8, 30, 14, 0, tzinfo=UTC),
+        source="api",
+        severity="ERROR",
+        raw='{"msg": "denied", "peer": "10.0.0.4"}',
+        message="denied for peer 192.168.1.9",
+        fields={},
+        format="json_lines",
+    )
+
+    redacted = redactor.redact_record(record)
+
+    assert "10.0.0.4" not in redacted.raw
+    assert "192.168.1.9" not in redacted.message
+    assert redactor.counts["ipv4"] == 2

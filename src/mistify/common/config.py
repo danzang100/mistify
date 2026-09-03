@@ -80,6 +80,20 @@ class BootstrapConfig(_Strict):
     llm_fallback_sample_size: int = Field(default=40, ge=1)
     min_match_rate: float = Field(default=0.85, ge=0.0, le=1.0)
 
+    #: Where schemas that pass the gate are persisted, so the next file from a source skips
+    #: inference. Configurable like every other output path, and for the same reason: it was
+    #: hardcoded to `.cache/inferred` relative to the working directory, which meant the test
+    #: suite read and wrote the repository's own cache. One real bootstrapper run then changed
+    #: what the tests saw, and a test asserting a severity was recovered began failing against
+    #: a schema written by a different file entirely.
+    schema_dir: str = ".cache/inferred"
+
+    #: Whether a schema that passes the gate is written to `schema_dir` at all. Reuse is what
+    #: makes inference affordable across files, and a run that should leave no trace -- a test,
+    #: a one-off over somebody else's log -- needs to be able to decline it without also
+    #: declining the cache it reads.
+    persist_schemas: bool = True
+
 
 class Drain3Config(_Strict):
     sim_th: float = Field(default=0.4, ge=0.0, le=1.0)
@@ -90,6 +104,27 @@ class Drain3Config(_Strict):
     max_clusters: int = Field(default=10000, ge=1)
     persistence: Literal["file", "none"] = "file"
     snapshot_path: str = ".cache/drain3_{incident_id}.json"
+
+    #: `max_clusters` to use when calibration reports the file does not compress at all.
+    #:
+    #: Drain3 compares each line against the clusters in its leaf, so its cost grows with how
+    #: many it is holding. On a log that clusters normally this never matters -- Loghub-2.0 BGL
+    #: settles at 77 templates and evicts nothing whatever the cap is. On a log that does not
+    #: cluster it is the whole cost: a CI log where 85% of lines are unique ran at 512 lines/s
+    #: at 10,000 and 2,882 lines/s at 500.
+    #:
+    #: Capping is close to free because `DrainTemplater` keeps its own registry of every
+    #: template it has seen, independent of Drain3's LRU. Evicting a cluster does not lose the
+    #: template; it only stops that cluster absorbing later lines, so a few of them start new
+    #: templates instead. Measured on the same file: 9,291 templates uncapped against 9,310 at
+    #: a cap of 500 -- 0.2% more fragmentation for 5.6x the throughput, with template coverage
+    #: 1.0 either way.
+    #:
+    #: Applied only when calibration says `under_clustered`, never on a file that compresses.
+    #: That distinction is the point: "many templates because the log is genuinely diverse" and
+    #: "many templates because clustering failed" look identical in a count and completely
+    #: different in a compression ratio, and only the second one should be capped.
+    uncompressible_max_clusters: int = Field(default=2000, ge=1)
 
     #: Try several thresholds against a sample and keep the one whose compression ratio
     #: lands in the target band, instead of trusting one hardcoded guess (architecture
@@ -189,6 +224,19 @@ class RedactionConfig(_Strict):
     #: table living there would be readable by the model.
     vault: bool = False
     vault_path: str = ".cache/vault_{incident_id}.sqlite"
+
+    #: Worker processes for redaction. 1 is serial; 0 means "use the machine's cores".
+    #:
+    #: Redaction is roughly 35% of an ingest and the only stage that parallelises cleanly, so
+    #: this is the throughput knob that matters at volume: measured 5.74x on the stage with 8
+    #: workers, and byte-identical output, which it must be -- tokens are salted hashes and do
+    #: not depend on which process computed them.
+    #:
+    #: Defaults to serial. Processes are not free (Windows spawns rather than forks, so each
+    #: one re-imports the package), a small file finishes before a pool has started, and a
+    #: default that silently occupies every core is a poor neighbour on a laptop. Raise it for
+    #: the gigabyte-scale runs it exists for. `redaction.vault` forces serial regardless.
+    workers: int = Field(default=1, ge=0)
 
     @field_validator("entities")
     @classmethod
@@ -334,6 +382,15 @@ class MistifyConfig(_Strict):
         if self.drain3.persistence == "none":
             return None
         return Path(self.drain3.snapshot_path.format(incident_id=incident_id))
+
+    def schema_dir(self) -> Path:
+        """Where inferred schemas are cached.
+
+        Not templated on `incident_id`, unlike the scratchpad and the Drain3 snapshot: a schema
+        describes a *format*, and the whole value of persisting one is that the next incident
+        from the same source reuses it. Per-incident would be a cache that never hits.
+        """
+        return Path(self.bootstrap.schema_dir)
 
 
 def load_config(path: str | Path | None = None) -> MistifyConfig:

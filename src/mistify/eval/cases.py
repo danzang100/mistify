@@ -57,6 +57,26 @@ class EvalCase:
     #: it as background; leading with it is the failure a red herring is planted to provoke.
     must_not_lead: tuple[str, ...] = ()
 
+    #: Terms a correct conclusion names. A keyword test, not an entailment test -- and it is
+    #: the corpus's own metric rather than an approximation invented here, which is the only
+    #: reason it earns a place next to the citation checks. `--judge` is where entailment lives.
+    must_mention: tuple[str, ...] = ()
+
+    #: Diagnoses that are wrong for this log and plausible enough to be reached anyway. The
+    #: check the testing strategy says no public dataset provides, and the reason LogDx-CI is
+    #: worth more here than a larger pile of logs would be.
+    #:
+    #: Deterministic substring matching does not detect negation: a conclusion that says "this
+    #: is not a network failure" contains the forbidden phrase and fails. Recorded as a known
+    #: blind spot rather than papered over, because the alternative -- a cleverer matcher that
+    #: is right most of the time -- fails silently instead of visibly.
+    must_not_claim: tuple[str, ...] = ()
+
+    #: True when the log came from somewhere else. Scores on external cases are the only ones
+    #: that are evidence about the pipeline rather than about its own fixtures, and a reader of
+    #: a scorecard needs to be able to tell the two apart at a glance.
+    external: bool = False
+
     #: Bumped with the fixture generators. Recorded on every result, because a score compared
     #: against a differently generated file is not a comparison.
     fixture_version: int = FIXTURE_VERSION

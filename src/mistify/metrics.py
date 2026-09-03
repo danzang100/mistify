@@ -188,6 +188,12 @@ TEMPLATING_EVICTED = Metric(
 TEMPLATING_COMPRESSION_RATIO = Metric("templating", "compression_ratio", "float")
 TEMPLATING_SIM_TH = Metric("templating", "sim_th", "float")
 TEMPLATING_DEPTH = Metric("templating", "depth", "int")
+
+#: The cluster ceiling the run actually used. Load-bearing because the pipeline lowers it by
+#: itself on a file calibration could not compress -- a 5.6x throughput trade that costs a
+#: little template fragmentation -- and a limit the run chose is not a limit the config states.
+#: A reader comparing two runs of the same file needs to see which one was capped.
+TEMPLATING_MAX_CLUSTERS = Metric("templating", "max_clusters", "int", load_bearing=True)
 TEMPLATING_CALIBRATION_STATUS = Metric(
     "templating",
     "calibration_status",
@@ -404,6 +410,7 @@ ALL_METRICS: tuple[Metric, ...] = (
     TEMPLATING_EVICTED,
     TEMPLATING_COMPRESSION_RATIO,
     TEMPLATING_SIM_TH,
+    TEMPLATING_MAX_CLUSTERS,
     TEMPLATING_DEPTH,
     TEMPLATING_CALIBRATION_STATUS,
     TEMPLATING_CALIBRATION_CANDIDATES,

@@ -70,6 +70,15 @@ class Redactor:
         """Redactions performed per entity, for the run's health metrics."""
         return dict(self._counts)
 
+    def merge_counts(self, counts: dict[str, int]) -> None:
+        """Fold another redactor's tally into this one.
+
+        For the worker processes in `redaction.parallel`. Each keeps its own counts and exits;
+        without this the health metrics would report whatever the parent happened to redact
+        itself, which on a parallel run is nothing at all.
+        """
+        self._counts.update(counts)
+
     def reset_counts(self) -> None:
         """Clear the tally.
 
@@ -151,9 +160,21 @@ class Redactor:
         """
         if not self.enabled:
             return record
+        raw = self.redact(record.raw)
+        # On an unstructured log `message` *is* `raw`, and redacting it a second time was
+        # doing the most expensive work in the pipeline twice for nothing. Profiling a
+        # 400,000-line BGL ingest, redaction was 38% of the run -- 4.4 million regex
+        # substitutions, eleven per line -- and half of those passes were over a string that
+        # had just been redacted.
+        #
+        # The counters matter as much as the time. `redact` tallies per-entity hits, so a
+        # second pass over the same text counted every value twice and `redacted_ipv4` on an
+        # unstructured file was double what the file contained. A health metric that reports
+        # twice the truth is worse than one that is merely slow to compute.
+        message = raw if record.message == record.raw else self.redact(record.message)
         return replace(
             record,
-            raw=self.redact(record.raw),
-            message=self.redact(record.message),
+            raw=raw,
+            message=message,
             fields=self.redact_value(record.fields),
         )

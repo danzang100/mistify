@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from mistify.adapters.base import LogAdapter
+from mistify.adapters.source import read_text
 from mistify.common.models import LogRecord, normalize_severity, parse_timestamp
 
 __all__ = ["OtlpAdapter"]
@@ -152,6 +153,11 @@ def _severity_from_number(number: Any) -> str | None:
 
 class OtlpAdapter(LogAdapter):
     format_name = "otlp"
+    #: A named format with a normative wire mapping. It has always outranked `json_lines` on an
+    #: OTLP file, but only by luck: an export request has no top-level timestamp key, so the
+    #: generic reader scores 0.4 there and loses on the number. That is not a property of the
+    #: format, it is a property of where OTLP happens to put its timestamps.
+    specificity = 2
 
     def detect(self, sample_lines: list[str]) -> float:
         """Confidence that this is an OTLP logs export.
@@ -186,7 +192,7 @@ class OtlpAdapter(LogAdapter):
 
     def parse(self, source: str | Path) -> Iterator[LogRecord]:
         path = Path(source)
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = read_text(path)
         stripped = text.lstrip()
 
         # A single document has to be held in memory; there is no way to stream one JSON value

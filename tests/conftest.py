@@ -57,6 +57,12 @@ def _scratch_config(directory: Path, **sections: dict[str, Any]) -> MistifyConfi
         "scratchpad": {"path": str(directory / "incident_{incident_id}.sqlite")},
         "drain3": {"snapshot_path": str(directory / "drain3_{incident_id}.json")},
         "report": {"output_dir": str(directory / "reports")},
+        # The inferred-schema cache too. It was hardcoded to `.cache/inferred` relative to the
+        # working directory, so the suite read and wrote the repository's own cache: one real
+        # bootstrapper run over an OpenSSH log left a schema behind, and a test asserting that
+        # a severity survived ingestion then failed against a schema written by a file it had
+        # never heard of. A test must not be able to see another run's state.
+        "bootstrap": {"schema_dir": str(directory / "inferred")},
     }
     for name, values in sections.items():
         raw.setdefault(name, {}).update(values)

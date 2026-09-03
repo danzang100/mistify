@@ -22,6 +22,7 @@ from mistify.bootstrap.adapter import InferredAdapter, load_schemas, save_schema
 from mistify.bootstrap.inference import diverse_sample, infer_with_model
 from mistify.bootstrap.schema import FieldSchema, match_rate
 from mistify.bootstrap.shapes import cluster_shapes, infer_structurally
+from mistify.common.config import MistifyConfig
 from mistify.llm.base import Turn
 
 SYSLOG = [f"Aug 30 14:22:{i % 60:02d} host sshd[{i}]: Accepted password" for i in range(200)]
@@ -281,6 +282,26 @@ def test_structural_inference_of_nothing_is_none() -> None:
 # ------------------------------------- the gate must test what the adapter does
 
 
+def _bootstrap_config(directory: Path) -> MistifyConfig:
+    """A config with the bootstrapper on, no model, and every path inside `directory`.
+
+    The schema cache included -- these tests are about what the cache does across two ingests,
+    so they need one that is theirs and empty.
+    """
+    return MistifyConfig.model_validate(
+        {
+            "scratchpad": {"path": str(directory / "incident_{incident_id}.sqlite")},
+            "drain3": {"snapshot_path": str(directory / "drain3_{incident_id}.json")},
+            "report": {"output_dir": str(directory / "reports")},
+            "bootstrap": {
+                "enabled": True,
+                "use_model": False,
+                "schema_dir": str(directory / "inferred"),
+            },
+        }
+    )
+
+
 SYSLOG_SEV = [f"Aug 30 14:{i % 60:02d}:00 host app[{i}]: ERROR pool exhausted" for i in range(400)]
 APP_LOGGER = [
     f"2026-08-30T14:{i % 60:02d}:00Z ERROR checkout.pool: exhausted after {i}" for i in range(400)
@@ -402,3 +423,114 @@ def test_an_adapter_can_make_a_fresh_copy_of_itself() -> None:
     assert inferred.fresh().schema == schema
     assert inferred.fresh().stats.lines_read == 0
     assert JsonLinesAdapter().fresh().format_name == "json_lines"
+
+
+# ---------------------------------------------------------------- the schema cache
+
+
+#: Two syslog formats that share a timestamp shape and nothing else. The first carries no
+#: severity word at all -- an OpenSSH log looks like this -- and the second does. They are the
+#: pair that broke: `inferred_syslog` named them both, so whichever was ingested first decided
+#: how the other was read.
+SYSLOG_NO_SEV = [
+    f"Aug 30 14:{i % 60:02d}:00 host sshd[{i}]: Connection closed by 10.0.0.4 [preauth]"
+    for i in range(400)
+]
+
+
+def test_two_syslog_formats_do_not_share_a_cache_entry(tmp_path: Path) -> None:
+    """A schema name has to distinguish schemas that parse differently.
+
+    Keyed on the timestamp shape alone, both of these persisted as `inferred_syslog` and the
+    second overwrote the first. There was room in the cache for one syslog format in the world.
+    """
+    from mistify.bootstrap import bootstrap_format
+
+    without = bootstrap_format(SYSLOG_NO_SEV).schema
+    with_severity = bootstrap_format(SYSLOG_SEV).schema
+    assert without is not None and with_severity is not None
+
+    assert without.timestamp == with_severity.timestamp == "syslog"
+    assert without.slug() != with_severity.slug()
+
+
+def test_a_cached_schema_does_not_swallow_another_files_severity(tmp_path: Path) -> None:
+    """The bug, end to end: ingest a severity-less syslog, then a syslog with severities.
+
+    The first file's schema matches the second at 100% -- the word `ERROR` simply lands inside
+    `message` -- so it cleared the gate and was reused, and every line of the second file came
+    out at the default level with nothing reporting a problem. The rate cannot see this; only
+    the field count can.
+    """
+    from mistify.pipeline import ingest
+    from mistify.scratchpad.db import ScratchpadDB
+
+    config = _bootstrap_config(tmp_path)
+
+    first = tmp_path / "sshd.log"
+    first.write_text(chr(10).join(SYSLOG_NO_SEV), encoding="utf-8")
+    ingest(first, config, incident_id="no-sev")
+
+    second = tmp_path / "app.log"
+    second.write_text(chr(10).join(SYSLOG_SEV), encoding="utf-8")
+    result = ingest(second, config, incident_id="with-sev")
+
+    with ScratchpadDB(result.scratchpad_path) as db:
+        rows = db.get_slice(max_lines=5)
+        assert [row["severity"] for row in rows] == ["ERROR"] * len(rows)
+        assert all("ERROR" not in row["message"] for row in rows)
+
+
+def test_the_severity_less_file_is_still_read_correctly_afterwards(tmp_path: Path) -> None:
+    """The control, and the direction the fix could have broken.
+
+    Preferring the schema that explains more fields must not mean forcing a severity onto a
+    file that has none: the severity group is a literal alternation, so a schema claiming one
+    cannot match a line without one, and this asserts the ranking never gets the chance to try.
+    """
+    from mistify.pipeline import ingest
+    from mistify.scratchpad.db import ScratchpadDB
+
+    config = _bootstrap_config(tmp_path)
+
+    with_severity = tmp_path / "app.log"
+    with_severity.write_text(chr(10).join(SYSLOG_SEV), encoding="utf-8")
+    ingest(with_severity, config, incident_id="with-sev")
+
+    without = tmp_path / "sshd.log"
+    without.write_text(chr(10).join(SYSLOG_NO_SEV), encoding="utf-8")
+    result = ingest(without, config, incident_id="no-sev")
+
+    assert result.events_loaded == len(SYSLOG_NO_SEV)
+    with ScratchpadDB(result.scratchpad_path) as db:
+        row = db.get_slice(max_lines=1)[0]
+        assert row["message"].startswith("Connection closed")
+
+
+def test_the_schema_cache_honours_its_configured_directory(tmp_path: Path) -> None:
+    """It was hardcoded to `.cache/inferred`, so every run shared one cache with the tests."""
+    from mistify.pipeline import ingest
+
+    config = _bootstrap_config(tmp_path)
+    source = tmp_path / "app.log"
+    source.write_text(chr(10).join(SYSLOG_SEV), encoding="utf-8")
+    ingest(source, config, incident_id="boot")
+
+    written = sorted(p.name for p in (tmp_path / "inferred").glob("*.json"))
+    assert written == ["inferred_syslog_src_sev.json"]
+    assert not (Path(".cache") / "inferred" / "inferred_syslog_src_sev.json").exists()
+
+
+def test_persist_schemas_off_leaves_no_trace(tmp_path: Path) -> None:
+    """A run over somebody else's log should be able to decline writing to the cache."""
+    from mistify.pipeline import ingest
+
+    config = _bootstrap_config(tmp_path)
+    config.bootstrap.persist_schemas = False
+    source = tmp_path / "app.log"
+    source.write_text(chr(10).join(SYSLOG_SEV), encoding="utf-8")
+
+    result = ingest(source, config, incident_id="boot")
+
+    assert result.format_name.startswith("inferred_")
+    assert list((tmp_path / "inferred").glob("*.json")) == []

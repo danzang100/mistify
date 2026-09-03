@@ -10,9 +10,10 @@ are in [`docs/log-agent-v1-build-plan.html`](docs/log-agent-v1-build-plan.html) 
 
 ## Status
 
-**Phase 3 of 6 complete.** A model now drives the investigation through the scratchpad tools,
-behind a provider seam, with an adversarial pass that objects to the conclusion rather than
-rewriting it.
+**Phase 3 of 6 complete, Phase 4 all but Elastic.** A model drives the investigation through
+the scratchpad tools, behind a provider seam, with an adversarial pass that objects to the
+conclusion rather than rewriting it. Four formats are read — JSON Lines, OTLP, Loki, and
+anything else via the bootstrapper or the raw-line fallback.
 
 **Running the model-driven path needs a credential** (see Investigate below). Everything else —
 ingest, templating, scoring, reporting, and the deterministic `--investigator skeleton` — runs
@@ -24,7 +25,7 @@ with no account anywhere, and so does the entire test suite.
 | 1 | Walking skeleton: JSONL → redact → Drain3 → SQLite → report | done |
 | 2 | `anomaly_score`, Drain3 threshold calibration, over-merge detection, full redaction set | done |
 | 3 | Provider seam, agent loop, adversarial pass with rebuttal | done |
-| 4 | Elastic / Loki / OTLP adapters, unknown-format bootstrapper | not started |
+| 4 | Elastic / Loki / OTLP adapters, unknown-format bootstrapper | Elastic outstanding |
 | 5 | Evaluation harness (Loghub, LogDx-CI, baselines) | not started |
 | 6 | MCP server, HTML/PDF reports, packaging | not started |
 
@@ -194,6 +195,81 @@ the part that stays true.
 Reports are written to `report.output_dir` in `config.yaml`, which defaults to `./reports`,
 one file per incident id.
 
+### What you can point it at
+
+`--source` takes a file or a directory.
+
+```bash
+uv run mistify run --source ./incident-logs/ --investigator skeleton
+```
+
+A directory is read recursively, one adapter chosen **per file**, so a folder holding JSON from
+one service and syslog from another is read as both rather than forced through one reader. Every
+record carries the file it came from in `source_file`, and a file whose adapter could not name a
+source is named after the file — in a per-service layout that *is* the service. A source the
+data named is never overwritten by a filename.
+
+Compressed sources are read directly: gzip, bzip2 and xz, detected by magic number rather than
+by extension, because a rotated `.log` is routinely gzip and a `.gz` is occasionally not.
+
+Anything that is neither text nor a compression we can undo is **refused**, by name:
+
+```
+Error: screenshot.png is a PNG image, not a log file. Extract or convert it first:
+reading it as text produces records that look real and are not.
+```
+
+That refusal is the important one. Every adapter used to open files with `errors="replace"`,
+which never raises — a gzipped 400-line log ingested as 48 "events" of replacement characters,
+reported `parse_errors: 0`, and produced a report. In a directory, one unreadable file is
+skipped and counted rather than failing the ingest; a directory with nothing readable in it is
+refused outright.
+
+### Formats
+
+| Format | Recognised from | Written against |
+|---|---|---|
+| `json_lines` | JSON objects carrying a timestamp | application logs |
+| `otlp` | `resourceLogs` | the protobuf-JSON mapping, which is normative |
+| `loki` | `resultType: streams`, `{labels, line}`, or `{"streams": [...]}` | captures from a running Loki |
+| `raw_lines` | nothing — never wins detection | the last resort, selected deliberately |
+
+Elastic is the one still outstanding. Its export shape is a convention rather than a
+specification, and a hand-authored fixture gets the `_source` nesting subtly wrong in exactly
+the ways the adapter would exist to absorb — so it needs its own stack, which `otel-lgtm` is
+not.
+
+Loki was the first adapter that could not be written from a document. What lands in a label set
+is decided by the collector, the distributor and Loki's own enrichment, so it was written
+against captures taken from a real one:
+
+```bash
+docker run -d --name otel-lgtm -p 3000:3000 -p 4317:4317 -p 4318:4318 -p 3100:3100     grafana/otel-lgtm:latest
+
+uv run python tests/fixtures/capture_loki.py --source synthetic
+uv run python tests/fixtures/capture_loki.py --source loghub --system OpenSSH
+```
+
+That was worth doing. Loki flattens everything the producer sent — severity, trace ids,
+application fields — onto the *stream*, not the entry, so severity is a property of the label
+set; `service.name` arrives as `service_name`; every value is a string; and because labels
+define stream identity, sending `observedTimeUnixNano` turned a 500-record push into 500
+streams of one entry where omitting it gave 2 streams of 250. Both are ordinary deployments.
+A fixture written by hand would have had one stream, many entries, and severity on the line.
+
+Captures land in `.cache/` and are not committed, for the same reason nothing else generated
+here is. `tests/test_loki_adapter.py` transcribes the shapes they showed, and its
+`test_live_round_trip` re-reads a real stack when one is running — the control on a
+transcription, which cannot notice when the thing it was copied from changes.
+
+Detection picks the highest-scoring adapter of the *most specific* tier that clears
+`adapters.min_detect_confidence`, not the highest score outright. The two are not the same
+claim: on `logcli --output=jsonl` output `json_lines` scores a perfect 1.0, correctly, because
+those lines are JSON objects with timestamps — and no confidence the Loki adapter returns could
+beat it. Ranked by number alone a Loki export routes to the generic reader, `labels` and `line`
+become two opaque fields, and every record is quietly wrong. `registry.detection_matrix()`
+prints the whole grid, which is how a near-miss becomes visible before it becomes a bad parse.
+
 ### Unknown formats
 
 A file no adapter recognises is read anyway. With `bootstrap.enabled`, the pipeline tries to
@@ -280,6 +356,20 @@ OpenSSH is the standing weak spot and does not move with `sim_th` at all, which 
 something structural rather than a threshold to tune. Data downloads on demand into `.cache/`
 and is never committed: Loghub is free for research use with citation terms, and a vendored
 corpus is a licence question nobody wants later. Cite the LogPub paper if you publish these.
+
+`fetch_loghub` pulls the annotated CSV that this table scores against; `fetch_loghub_raw` pulls
+the unstructured `.log` the CSV was annotated *from*, which is the only form the ingest path can
+read. The two answer different questions — one measures clustering against an answer key, the
+other measures whether the adapters and the bootstrapper can reach the lines at all:
+
+```bash
+uv run mistify run --source .cache/loghub/OpenSSH_2k.log --investigator skeleton
+```
+
+That needs no credential and no adapter: nothing recognises the file, so it falls through to
+the bootstrapper or the raw-line reader and says which in `run_metadata`. On OpenSSH the
+structural pass — no model — infers a syslog schema, recovers every timestamp the raw-line
+fallback would have lost, and cuts 131 templates to 23.
 
 The remaining external work is LogDx-CI for end-to-end diagnosis quality. `EvalCase.source` is
 a callable returning a path, so it arrives as a case rather than as a second kind of thing. The

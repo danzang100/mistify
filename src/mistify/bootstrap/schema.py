@@ -119,6 +119,42 @@ class FieldSchema:
     def compiled(self) -> re.Pattern[str]:
         return re.compile(self.pattern(), re.IGNORECASE)
 
+    @property
+    def extracted_fields(self) -> int:
+        """How many named fields this schema pulls out of the line, beyond the timestamp.
+
+        A measure of how much of the line the schema *explains*. Two schemas can both parse a
+        file at 100% while disagreeing about this: one that does not claim a severity still
+        matches a line carrying `ERROR`, because the word simply lands inside `message`. The
+        rate cannot tell them apart and this can.
+        """
+        return int(self.has_severity) + int(self.has_source)
+
+    def slug(self) -> str:
+        """A name that distinguishes schemas which parse differently.
+
+        The cache key, and it has to be injective over exactly the fields `pattern()` reads:
+        `timestamp`, `has_severity`, `has_source` and `source_first`. It was `timestamp` alone,
+        so every syslog format in the world shared one cache entry -- an OpenSSH log (no
+        severity word in the line) and an application log (`host app[1]: ERROR ...`) both
+        persisted as `inferred_syslog`, and whichever was ingested first silently decided how
+        the other was read. The second file's severities went into its messages, every line
+        became the default level, and nothing anywhere reported a problem.
+
+        Readable rather than hashed, because a persisted schema is meant to be inspectable by
+        a person deciding whether to trust it -- `inferred_syslog_src_sev` says what it is.
+
+        A field added to `pattern()` must be added here too, or the collision comes back.
+        """
+        parts = [self.timestamp]
+        if self.has_severity and self.has_source:
+            parts.append("src_sev" if self.source_first else "sev_src")
+        elif self.has_severity:
+            parts.append("sev")
+        elif self.has_source:
+            parts.append("src")
+        return "_".join(parts)
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "timestamp": self.timestamp,

@@ -19,6 +19,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from mistify.adapters.base import LogAdapter
+from mistify.adapters.source import open_text
 from mistify.bootstrap.schema import FieldSchema
 from mistify.common.models import LogRecord, normalize_severity, parse_timestamp
 
@@ -52,7 +53,7 @@ class InferredAdapter(LogAdapter):
 
     def parse(self, source: str | Path) -> Iterator[LogRecord]:
         path = Path(source)
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
+        with open_text(path) as handle:
             for lineno, line in enumerate(handle, start=1):
                 raw = line.rstrip("\n")
                 if not raw.strip():
