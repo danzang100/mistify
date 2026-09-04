@@ -332,3 +332,26 @@ def test_a_first_investigation_needs_no_flag(
 
     assert result.exit_code == 0, result.output
     assert "already holds" not in result.output
+
+
+def test_restart_clears_a_run_that_wrote_no_notes(
+    runner: CliRunner, incident_file: Path, config_file: Path, tmp_path: Path
+) -> None:
+    """An attempt that concluded nothing still left its query log behind.
+
+    Found in use: a run that hit its tool-call cap without writing a note left twenty rows in
+    `query_log`, and the next run's audit trail carried queries it never made. `--restart`
+    guarded on notes existing, and notes were exactly what that run had none of.
+    """
+    common = ["--incident-id", "noNotes", "--config", str(config_file)]
+    runner.invoke(cli, ["ingest", "--source", str(incident_file), *common])
+    scratchpad = tmp_path / "incident_noNotes.sqlite"
+    with ScratchpadDB(scratchpad) as db:
+        db.log_query(1, "SELECT * FROM log_events", 5)
+        assert db.queries() and not db.notes()
+
+    result = runner.invoke(cli, ["investigate", "--investigator", "skeleton", "--restart", *common])
+
+    assert result.exit_code == 0, result.output
+    with ScratchpadDB(scratchpad) as db:
+        assert [q["sql_query"] for q in db.queries()] != ["SELECT * FROM log_events"]

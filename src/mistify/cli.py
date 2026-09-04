@@ -127,7 +127,10 @@ def investigate_command(
                 "earlier investigation. Pass --resume to continue from them, or --restart to "
                 "delete them and investigate again."
             )
-        if restart and existing:
+        # Not `if existing`: a previous attempt that wrote no notes still left its query log,
+        # and the next run's audit trail then carries queries it never made. Found in use --
+        # a run that died without concluding left twenty rows behind for the run after it.
+        if restart:
             cleared = db.clear_investigation()
             click.echo(
                 "restarted: cleared "

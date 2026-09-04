@@ -97,6 +97,7 @@ EXPECTED_METRIC_KEYS = {
     ("investigate", "coverage_nudges"),
     ("investigate", "digest_chars"),
     ("investigate", "digest_nudges"),
+    ("investigate", "silent_nudges"),
     ("synthesis", "provider"),
     ("synthesis", "model"),
     ("synthesis", "outcome"),

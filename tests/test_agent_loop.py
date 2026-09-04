@@ -1108,3 +1108,57 @@ def test_the_prompt_size_is_recorded(loaded_db: ScratchpadDB) -> None:
 
     view = MetricView(loaded_db.metrics("investigate"))
     assert view.number(INVESTIGATE_DIGEST_CHARS) == len(build_system_prompt(loaded_db))
+
+
+# --------------------------------------------- a run that writes nothing at all
+
+
+def _searching_script(steps: int) -> list[Turn]:
+    """A model that keeps querying and never records anything."""
+    return [tool_call_turn("query_templates", {"limit": 5}, call_id=f"q{i}") for i in range(steps)]
+
+
+def test_a_run_that_records_nothing_is_asked_to_write(loaded_db: ScratchpadDB) -> None:
+    """Both other nudges answer a conclusion; this one answers the absence of one.
+
+    Measured on a 2.19M-event application log: two runs spent all twenty calls searching and
+    wrote not one note between them, and neither nudge ever fired, because neither run ever
+    offered a conclusion to be sent back.
+    """
+    provider = ScriptedProvider(_searching_script(12))
+
+    result = InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), max_tool_calls=10).run()
+
+    assert result.silent_nudges == 1
+    asked = [
+        m.text
+        for call in provider.calls
+        for m in call.messages
+        if m.text and "recorded no findings" in m.text
+    ]
+    assert asked, "the run should have been asked to write something down"
+
+
+def test_a_run_that_writes_early_is_never_asked(loaded_db: ScratchpadDB) -> None:
+    """The control: the ask is for silence, not for every long run.
+
+    Without it this passes on a loop that interrupts every investigation two thirds of the
+    way through whatever it is doing.
+    """
+    template_id = _signal_ids(loaded_db)[0]
+    script = [_note_turn(template_id, "first")]
+    script.extend(_searching_script(11))
+    provider = ScriptedProvider(script)
+
+    result = InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), max_tool_calls=10).run()
+
+    assert result.silent_nudges == 0
+
+
+def test_the_ask_happens_once(loaded_db: ScratchpadDB) -> None:
+    """A model that declines must not be asked on every remaining step."""
+    provider = ScriptedProvider(_searching_script(20))
+
+    result = InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), max_tool_calls=16).run()
+
+    assert result.silent_nudges == 1

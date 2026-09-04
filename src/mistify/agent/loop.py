@@ -45,6 +45,7 @@ from mistify.metrics import (
     INVESTIGATE_OUTCOME,
     INVESTIGATE_OUTPUT_TOKENS,
     INVESTIGATE_PROVIDER,
+    INVESTIGATE_SILENT_NUDGES,
     INVESTIGATE_STEPS,
     INVESTIGATE_STOP_REASON,
     INVESTIGATE_TOOL_CALLS,
@@ -85,6 +86,16 @@ DIGEST_CHAR_BUDGET = 24_000
 #: would make the digest useless rather than merely abbreviated.
 MIN_PATTERN_CHARS = 160
 
+#: How far into its tool-call budget an investigation may get with nothing written down.
+#: Past this, having recorded no note at all, it is asked to write what it has -- once.
+#:
+#: Measured on a 2.19M-event application log: three runs of the same incident, and the two
+#: that spent every call surveying wrote nothing and produced no diagnosis. The existing
+#: nudges cannot help there, because both fire when a conclusion is *offered* and neither run
+#: ever offered one. A run that never tries to conclude gets no pressure at all -- it just
+#: reaches the wall. The one run that did produce the right answer had written its note at
+#: two thirds of the way through its budget.
+SILENT_NUDGE_AFTER = 0.6
 #: How many unopened templates a single nudge may name. The digest holds forty and a nudge
 #: listing thirty of them is a shopping list, not a question -- and the prompt tells the model
 #: not to pad the investigation, which a long list invites it to do.
@@ -186,6 +197,10 @@ class InvestigationResult:
     #: unexplained signal template. Two different failures wearing one counter would make the
     #: next sweep unreadable.
     digest_nudges: int = 0
+    #: Whether the run was asked to write something down before its budget ran out. A
+    #: different failure from concluding badly, and it needs its own count for the same
+    #: reason `digest_nudges` does.
+    silent_nudges: int = 0
 
     @property
     def input_growth(self) -> float:
@@ -342,6 +357,7 @@ class InvestigationLoop:
             # them trains the model out of asking for tools in parallel.
             messages.append(Message(role="user", tool_results=tuple(results)))
             result.compactions += self._compact(messages)
+            self._ask_for_something_written(messages, result)
 
             if result.tool_calls >= self.max_tool_calls:
                 result.budget_limited = True
@@ -381,6 +397,39 @@ class InvestigationLoop:
             if int(row["template_id"]) not in shown and int(row["template_id"]) not in cited
         ]
         return unopened[:MAX_NUDGED_TEMPLATES]
+
+    def _ask_for_something_written(
+        self, messages: list[Message], result: InvestigationResult
+    ) -> None:
+        """Ask a run that has recorded nothing to write down what it has. Once.
+
+        The other two nudges answer a conclusion; this one answers the absence of one. Both
+        of them fire when the model stops calling tools, so a run that spends every call
+        searching is never spoken to at all -- which is exactly how two investigations of a
+        2.19M-event log used twenty calls each and wrote not one note between them.
+
+        Deliberately not a demand for a conclusion: a note is revisable and cheap, and the
+        prompt already says to write one when you finish looking at something rather than at
+        the end. This is that instruction arriving when it is nearly too late.
+        """
+        if result.silent_nudges or self.db.notes():
+            return
+        if result.tool_calls < self.max_tool_calls * SILENT_NUDGE_AFTER:
+            return
+        messages.append(
+            Message(
+                role="user",
+                text=(
+                    f"You have used {result.tool_calls} of your {self.max_tool_calls} tool "
+                    "calls and recorded no findings. Write down what you have established so "
+                    "far with write_note, citing the templates and log event ids you have "
+                    "actually read. A note you can revise later is worth more than a "
+                    "conclusion you run out of budget before writing, and an investigation "
+                    "that records nothing is indistinguishable from one that found nothing."
+                ),
+            )
+        )
+        result.silent_nudges += 1
 
     def _nudge(self, messages: list[Message], turn: Turn, result: InvestigationResult) -> bool:
         """Refuse a conclusion that ignored something it was shown, up to `max_coverage_nudges`.
@@ -551,6 +600,7 @@ class InvestigationLoop:
                 (INVESTIGATE_HISTORY_COMPACTIONS, result.compactions),
                 (INVESTIGATE_COVERAGE_NUDGES, result.coverage_nudges),
                 (INVESTIGATE_DIGEST_NUDGES, result.digest_nudges),
+                (INVESTIGATE_SILENT_NUDGES, result.silent_nudges),
                 (
                     INVESTIGATE_OUTCOME,
                     "budget_limited"
