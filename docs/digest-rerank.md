@@ -131,6 +131,58 @@ The honest reading: the ranking demonstrably fixed what it was built to fix — 
 starts from the evidence, converges more often, and costs 28% less — and the scorecard total is
 unchanged, because it was never a measurement of where the search started.
 
+## Three runs per case: what was signal and what was one lucky run
+
+The comparison above is one run against one run. Repeating it three times per case, loop model
+only (`--runs 3 --no-adversarial`, 1.77M tokens), separates the two.
+
+| case | recorded n=1 | first re-run n=1 | three runs | spread |
+|---|---|---|---|---|
+| pytest-pandas | 11/13 | 7/13 | 7, 7, 7 | **none** |
+| mypy-pandas | 11/13 | 11/13 | 8, 8, 11 | 3 |
+| lint-react | 10/12 | 10/12 | 10, 10, 11 | 1 |
+| cargo-tokio | 8/14 | 9/14 | 8, 9, 7 | 2 |
+| jest-nextjs | 5/12 | 8/12 | 8, 8, 8 | **none** |
+| **total** | **45/64** | **45/64** | **mean 42.3/64** | |
+
+The two cases the ranking change actually moved are the two with **zero** spread, which is the
+result. `jest-nextjs` writes two notes and cites `fatal: detected dubious ownership` in three
+runs out of three — against a recorded run that wrote nothing at all in 21 steps. `pytest-pandas`
+scores 7/13 in three runs out of three, having scored 11/13 before. Neither is the model varying.
+
+The middle three vary by one to three checks, which is the number to keep in mind before
+reading anything into a single run — including the two single runs above. The old arm's own
+spread was never measured, so the totals are not comparable; the per-case zero-spread results
+are.
+
+## Why pytest-pandas lost four checks
+
+Not a search failure and not variance. Its scratchpad says exactly what happened:
+
+* the **signal set is ranks 1-5**, and the run **cited all five** — the coverage nudge fired and
+  was satisfied;
+* the three missed markers sit at ranks **16, 20 and 20** — inside the 40-template digest, and
+  outside the signal set, so nothing ever asked about them;
+* ranks 1-5 are all single-occurrence **banner lines**: `==== ERRORS ====`,
+  `=== FAILURES ===`, `= 45 failed, 162298 passed, ... =`,
+  `##[error]Process completed with exit code 1.`
+
+A pytest banner is rare, bursty, and contains the word ERROR, so it takes the maximum of all
+three terms. The old ranking failed randomly; this one fails **systematically, towards section
+headers about errors rather than the errors themselves**. The model then concludes from the
+summary — true, and shallower than the ground truth wants.
+
+Two cheap things follow, both measurable with `mistify eval --digest` and no model calls:
+
+1. **Discount templates that are mostly punctuation.** A pattern whose alphanumeric content is
+   a small fraction of its length is a separator, not evidence.
+2. **The signal cut lands inside a tie.** Ranks 1-5 all score 0.869 exactly; "the largest gap in
+   the distribution" is not meaningful when the top of the distribution is flat, and the set the
+   nudge enforces is then arbitrary among equals.
+
+The coverage nudge fired on **15 runs out of 15**, so it is now part of the normal path rather
+than a backstop — and on this case it enforced the wrong five templates.
+
 ## Tried, and not taken
 
 Weight sweep over the same 20 cases, with the recovered term forced on everywhere (so these

@@ -221,11 +221,25 @@ five dev cases re-run, **45/64 before and 45/64 after**, and hardly the same 45.
 went from no notes at all in 21 steps to a converged conclusion citing the real root cause
 (1/12 to 8/12 on the handoff's own accounting); `cargo-tokio` gained one; `pytest-pandas` lost
 four by concluding in 13 steps with one note where it used to take 21 and write two. The whole
-sweep cost 607k tokens against 837k. One run per arm, so a three-check swing is not
-distinguishable from noise — and **every new run lost its critique to a 20-requests-per-day cap
-on `gemini-3.5-flash`**, which cannot move a scored check but means these are investigations
-without critiques. The next measurement worth paying for is repeats: `--runs 3
---no-adversarial` keeps the whole sweep on the loop model's own quota.
+sweep cost 607k tokens against 837k. **Then three runs per case** (`--runs 3
+--no-adversarial`, 1.77M tokens, mean 42.3/64) said which of those was signal: the two cases the
+change moved are the two with **zero spread across three runs** — `jest-nextjs` at 8/12 three
+times out of three, `pytest-pandas` at 7/13 three times out of three. The middle three cases
+vary by one to three checks, which is the margin to hold in mind before reading anything into a
+single run, the two above included.
+
+`pytest-pandas` is now diagnosed rather than mysterious: the signal set is ranks 1-5, the run
+cited all five and satisfied the nudge, and the three markers it missed sit at ranks 16, 20 and
+20 — inside the digest, outside the signal set, so nothing asked. Ranks 1-5 are single-occurrence
+pytest **banners** (`==== ERRORS ====`, the summary count, `##[error]Process completed with exit
+code 1`), which take the maximum of all three terms. The old ranking failed randomly; this one
+fails towards section headers about errors. Two free follow-ups in `docs/digest-rerank.md`:
+discount templates that are mostly punctuation, and fix a signal cut that lands inside a
+five-way tie at 0.869. The coverage nudge fired on 15 runs of 15.
+
+Note for any batch: **the critique's free tier is 20 requests per day** on `gemini-3.5-flash`,
+which `min_interval_seconds` cannot help with. `--no-adversarial` keeps a sweep on the loop
+model's own quota.
 
 ### Cheap and well understood
 
