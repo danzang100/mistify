@@ -708,3 +708,59 @@ def test_a_trace_id_is_read_from_whichever_field_carries_it(box: ToolBox) -> Non
     assert _trace_id({"dd.trace_id": 42}) == "42"
     # A boolean is an int in Python and is never a trace id.
     assert _trace_id({"trace_id": True}) is None
+
+
+# ------------------------------------------- how much of a long line comes back
+
+
+def _plant_long_line(db: ScratchpadDB, length: int = 1200) -> int:
+    """Give one event a stack-trace-sized `raw`, and return its template id."""
+    row = db._conn.execute("SELECT id, template_id FROM log_events LIMIT 1").fetchone()
+    db._conn.execute(
+        "UPDATE log_events SET raw = ?, message = ? WHERE id = ?",
+        ("SolrException " + "x" * length, "SolrException " + "x" * length, row["id"]),
+    )
+    db._conn.commit()
+    return int(row["template_id"])
+
+
+def test_one_line_comes_back_whole(loaded_db: ScratchpadDB) -> None:
+    """A narrow result spends its whole value budget on the few cells it has.
+
+    Measured on a real Java log with 1,204-character lines: an investigation found the
+    failing template and then spent six of its twenty tool calls -- max_lines=1, LIMIT 1,
+    substr(raw, 1, 500), length(raw) -- trying to get past a flat 200-character clip. It ran
+    out of budget and wrote no conclusion.
+    """
+    template_id = _plant_long_line(loaded_db)
+    box = ToolBox(loaded_db, PERMISSIVE)
+
+    result = call(box, "get_slice", template_id=template_id, max_lines=1)
+
+    assert "more chars)" not in result.content
+    assert "x" * 1000 in result.content
+
+
+def test_a_wide_result_still_clips(loaded_db: ScratchpadDB) -> None:
+    """The control: the budget is shared, so sixty lines cannot each be a kilobyte.
+
+    Without this the change above would be indistinguishable from removing the clip, which
+    is what fills a context window with one slice.
+    """
+    template_id = _plant_long_line(loaded_db)
+    box = ToolBox(loaded_db, PERMISSIVE)
+
+    result = call(box, "get_slice", template_id=template_id, max_lines=60)
+
+    assert "more chars)" in result.content
+    assert max(len(line) for line in result.content.splitlines()) < 600
+
+
+def test_the_clip_still_says_how_much_it_dropped(loaded_db: ScratchpadDB) -> None:
+    """A model told the count knows to narrow the query; one handed a short string does not."""
+    template_id = _plant_long_line(loaded_db, length=9000)
+    box = ToolBox(loaded_db, PERMISSIVE)
+
+    result = call(box, "get_slice", template_id=template_id, max_lines=1)
+
+    assert "more chars)" in result.content

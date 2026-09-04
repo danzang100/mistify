@@ -77,9 +77,25 @@ SQL_ROW_CAP: Final = 200
 
 CONFIDENCE_LEVELS: Final[tuple[str, ...]] = ("low", "medium", "high")
 
-#: Longest a single rendered value may be before it is clipped. Raw lines are unbounded in
-#: principle -- a stack trace or a serialised payload arrives as one field.
+#: Floor on how much of a single value is rendered. Raw lines are unbounded in principle --
+#: a stack trace or a serialised payload arrives as one field -- so something has to give,
+#: and 200 characters is what a wide result can afford per cell.
 CELL_CHARS: Final = 200
+
+#: Characters one tool result may spend on values, shared out across its cells. A narrow
+#: result therefore shows more of each line than a wide one, which is what makes asking for
+#: fewer rows a way to see more rather than a way to see the same 200 characters again.
+#:
+#: Measured on a real Java application log whose lines run to 1,204 characters: an
+#: investigation found the failing template, then spent **six of its twenty tool calls** on
+#: `max_lines=1`, `LIMIT 1`, `substr(raw, 1, 500)` and `length(raw), raw` trying to get past
+#: a flat 200-character clip, ran out of budget and wrote no conclusion at all. Every one of
+#: those calls now returns the whole line.
+RESULT_VALUE_BUDGET: Final = 12_000
+
+#: Ceiling per value even when a result has one cell. One serialised payload should not be
+#: able to fill the conversation on its own.
+MAX_CELL_CHARS: Final = 4_000
 
 #: Longest audit description written to `query_log`. Model-authored SQL can be long.
 AUDIT_CHARS: Final = 500
@@ -209,6 +225,9 @@ class ToolBox:
                     "suppressed unless you ask for a template_id explicitly, which is "
                     "treated as deliberate and returns that template's lines regardless. "
                     f"max_lines defaults to {SLICE_LINES_DEFAULT} and is capped at "
+                    f"{SLICE_LINES_MAX}. Long lines are shortened to share a fixed budget "
+                    f"across the result, so asking for fewer lines shows more of each one: "
+                    f"one line comes back whole. "
                     f"{SLICE_LINES_MAX}; narrow the time window rather than raising it. "
                     "Each line comes back with its trace id where it has one, and passing "
                     "trace_id back returns every line of that one request across services."
@@ -859,12 +878,12 @@ def _clip(text: str, limit: int = CELL_CHARS) -> str:
     return f"{flat[:limit]}...(+{len(flat) - limit} more chars)"
 
 
-def _cell(value: object) -> str:
+def _cell(value: object, limit: int = CELL_CHARS) -> str:
     if value is None:
         return "-"
     if isinstance(value, float):
         return f"{value:.3f}"
-    return _clip(str(value))
+    return _clip(str(value), limit)
 
 
 def _table(columns: Sequence[str], rows: Sequence[Sequence[object]]) -> str:
@@ -873,8 +892,10 @@ def _table(columns: Sequence[str], rows: Sequence[Sequence[object]]) -> str:
     Repeating field names per row costs more tokens than the whole rest of the result on a
     200-line slice, so the names are stated once.
     """
+    cells = max(1, len(rows) * max(1, len(columns)))
+    allowance = min(MAX_CELL_CHARS, max(CELL_CHARS, RESULT_VALUE_BUDGET // cells))
     lines = ["columns: " + " | ".join(columns)]
-    lines.extend(" | ".join(_cell(value) for value in row) for row in rows)
+    lines.extend(" | ".join(_cell(value, allowance) for value in row) for row in rows)
     return "\n".join(lines)
 
 
