@@ -250,6 +250,16 @@ Note for any batch: **the critique's free tier is 20 requests per day** on `gemi
 which `min_interval_seconds` cannot help with. `--no-adversarial` keeps a sweep on the loop
 model's own quota.
 
+### Scoring: silence no longer passes
+
+`Check.scorable` landed. `avoids[...]` is a substring search over the conclusion, so an empty
+conclusion passed every one — 81 times out of 81 across a day of runs, never once failing. Runs
+with no conclusion now record those checks as unscorable, gated by a new `concludes-something`
+check. Re-scored across every recorded investigation: three runs a provider outage killed before
+their first tool call go from **15/42 to 0/27**, the recorded `jest-nextjs` from 5/13 to **0/8**,
+and every run that actually concluded is unchanged. Issue 11's other half — a judge question
+asking whether a finding asserts that something is wrong — is still open.
+
 ### Cheap and well understood
 
 - **Elastic adapter.** The last format. Needs `elasticsearch:8` plus Filebeat for authentic ECS

@@ -57,12 +57,12 @@ class RunReport:
         investigation was correct and the critique timed out" is a different fact from "the
         investigation was wrong", and one number cannot carry both.
         """
-        return self.error is None and all(check.passed for check in self.checks)
+        return self.error is None and all(check.passed for check in self.checks if check.scorable)
 
     @property
     def scored(self) -> bool:
         """Whether the scratchpad got far enough to be graded at all."""
-        return bool(self.checks)
+        return any(check.scorable for check in self.checks)
 
 
 @dataclass(slots=True)
@@ -80,7 +80,12 @@ class CaseReport:
         """How often one named check passed. The per-check view is what actually guides work:
         an aggregate pass rate cannot tell you which question is failing."""
         seen = [c for run in self.runs for c in run.checks if c.name == check_name]
-        return f"{sum(1 for c in seen if c.passed)}/{len(seen)}"
+        scorable = [c for c in seen if c.scorable]
+        if not scorable:
+            # Every run left this question unaskable. Reporting 0/3 would blame the model for
+            # a check that never ran; reporting 3/3 would credit it for the same thing.
+            return f"-/{len(seen)}"
+        return f"{sum(1 for c in scorable if c.passed)}/{len(scorable)}"
 
     def check_names(self) -> list[str]:
         names: list[str] = []
@@ -251,7 +256,12 @@ def write_results(reports: list[CaseReport], directory: Path) -> Path:
                                 "passed": run.passed,
                                 "error": run.error,
                                 "checks": [
-                                    {"name": c.name, "passed": c.passed, "detail": c.detail}
+                                    {
+                                        "name": c.name,
+                                        "passed": c.passed,
+                                        "scorable": c.scorable,
+                                        "detail": c.detail,
+                                    }
                                     for c in run.checks
                                 ],
                                 "metrics": run.metrics,

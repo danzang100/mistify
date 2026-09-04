@@ -35,6 +35,7 @@ from mistify.eval.fixtures import (
     generate_quiet_hour,
     write_quiet_hour,
 )
+from mistify.eval.harness import CaseReport, RunReport
 from mistify.eval.scoring import score_run
 from mistify.scratchpad.db import ScratchpadDB
 
@@ -859,3 +860,54 @@ def test_the_ranks_are_kept_beside_the_recall(tmp_path: Path) -> None:
     assert written["cases"][0]["recall"] == "0/1"
     assert written["cases"][0]["markers"][0]["rank"] == 57
     assert written["cases"][0]["severity_source"] == "lexical"
+
+
+# ------------------------------------------ checks that could not be asked
+
+
+def test_a_run_with_no_conclusion_scores_nothing_rather_than_five(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """An empty conclusion contains no forbidden substring, so `avoids` used to pass on it.
+
+    Measured: `jest-nextjs` scored 5 of 12 having written no notes, and three runs killed by a
+    provider outage before their first tool call scored 5 of 13. Both read as a mediocre
+    investigation; neither was an investigation.
+    """
+    case = replace(INCIDENT_CASE, must_not_claim=("network failure", "disk full"))
+    checks = {c.name: c for c in score_run(loaded_db, case)}
+
+    assert checks["concludes-something"].passed is False
+    avoids = [c for c in checks.values() if c.name.startswith("avoids[")]
+    assert avoids and not any(c.scorable for c in avoids)
+    assert checks["citations-resolve"].scorable is False
+    assert sum(1 for c in checks.values() if c.scorable and c.passed) == 0
+
+
+def test_a_run_that_concluded_is_scored_normally(loaded_db: ScratchpadDB) -> None:
+    """The control: the gate must open again the moment there is something to read.
+
+    Without this the test above passes on a scorer that marks everything unscorable forever.
+    """
+    case = replace(INCIDENT_CASE, must_not_claim=("network failure", "disk full"))
+    root = _template_id(loaded_db, ROOT_CAUSE_MARKER)
+    loaded_db.write_note(1, "the pool was exhausted", {"template_ids": [root]}, "high")
+
+    checks = {c.name: c for c in score_run(loaded_db, case)}
+
+    assert checks["concludes-something"].passed is True
+    assert all(c.scorable for c in checks.values())
+    assert checks["citations-resolve"].passed is True
+
+
+def test_a_question_no_run_could_answer_is_not_a_zero(loaded_db: ScratchpadDB) -> None:
+    """Per-check rates skip unscorable checks rather than counting them against the model."""
+    case = replace(INCIDENT_CASE, must_not_claim=("network failure",))
+    checks = score_run(loaded_db, case)
+    report = CaseReport(case="x", summary="", fixture_version=1)
+    report.runs = [RunReport(case="x", index=1, checks=checks)]
+
+    avoids = next(c.name for c in checks if c.name.startswith("avoids["))
+    assert report.rate_for(avoids) == "-/1"
+    assert report.rate_for("concludes-something") == "0/1"
+    assert report.runs[0].scored is True

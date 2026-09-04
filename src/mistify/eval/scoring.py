@@ -22,6 +22,13 @@ from mistify.scratchpad.db import ScratchpadDB
 
 __all__ = ["Check", "score_run"]
 
+#: What an unscorable check says instead of a verdict. A run with no conclusion passes every
+#: `avoids[...]` -- an empty string contains no forbidden substring -- and `citations-resolve`,
+#: which has no citations to fault. Measured: `jest-nextjs` scored 5 of 12 having written no
+#: notes at all, and three runs killed by a provider outage before their first tool call scored
+#: 5 of 13. Both read as a mediocre investigation on a scorecard; neither was an investigation.
+_VACUOUS = "no conclusion was written, so this question could not be asked"
+
 #: Confidences that count as a claim rather than an observation. The quiet-hour bar: describing
 #: normal operation at low or medium confidence is a reasonable thing for an investigation to
 #: do, and asserting a root cause at high confidence when none was planted is the failure.
@@ -35,6 +42,11 @@ class Check:
     name: str
     passed: bool
     detail: str
+    #: False when the question could not be asked of this run at all, as distinct from asked
+    #: and answered badly. A run that wrote no conclusion has nothing for `avoids[...]` to
+    #: search, and a check that cannot fail must not be counted as one that passed -- see
+    #: `_VACUOUS`. Unscorable checks are reported separately and excluded from totals.
+    scorable: bool = True
 
 
 #: Above this share of a file's *events*, a marker is not identifying anything. A citation check
@@ -151,6 +163,11 @@ def score_run(db: ScratchpadDB, case: EvalCase) -> list[Check]:
     """Every check this case defines, against one finished investigation."""
     checks: list[Check] = []
     cited = _cited_templates(db)
+    # Computed here rather than beside the checks that read it: `does-not-lead-with` is the
+    # first question that only passes because nothing was written, and it comes before the
+    # conclusion text is otherwise needed.
+    conclusion = _conclusion_text(db)
+    vacuous = not conclusion.strip()
     template_rows = db.run_readonly_sql(
         "SELECT template_id, pattern FROM templates ORDER BY template_id", max_rows=5000
     )
@@ -215,7 +232,10 @@ def score_run(db: ScratchpadDB, case: EvalCase) -> list[Check]:
             Check(
                 name=f"does-not-lead-with[{marker}]",
                 passed=template_id not in leading,
-                detail=f"template {template_id}; leading issue cites {sorted(leading) or 'none'}",
+                scorable=not vacuous,
+                detail=_VACUOUS
+                if vacuous
+                else f"template {template_id}; leading issue cites {sorted(leading) or 'none'}",
             )
         )
 
@@ -233,8 +253,22 @@ def score_run(db: ScratchpadDB, case: EvalCase) -> list[Check]:
             )
         )
 
+    # The gate itself. A run is entitled to conclude
+    # nothing -- that is what the quiet hour is for -- but it is not entitled to the checks
+    # that only pass because there is nothing to read.
+    checks.append(
+        Check(
+            name="concludes-something",
+            passed=bool(conclusion.strip()),
+            detail=(
+                f"{len(db.notes())} note(s) recorded"
+                if conclusion.strip()
+                else "the investigation recorded no notes"
+            ),
+        )
+    )
+
     if case.must_mention or case.must_not_claim:
-        conclusion = _conclusion_text(db)
         for term in case.must_mention:
             checks.append(
                 Check(
@@ -249,9 +283,12 @@ def score_run(db: ScratchpadDB, case: EvalCase) -> list[Check]:
                 Check(
                     name=f"avoids[{term}]",
                     passed=not claimed,
+                    scorable=not vacuous,
                     detail=(
-                        f"conclusion contains {term!r} -- note that negation is not detected, "
-                        "so a run that explicitly ruled this out also fails here"
+                        _VACUOUS
+                        if vacuous
+                        else f"conclusion contains {term!r} -- note that negation is not "
+                        "detected, so a run that explicitly ruled this out also fails here"
                         if claimed
                         else "not claimed"
                     ),
@@ -263,7 +300,8 @@ def score_run(db: ScratchpadDB, case: EvalCase) -> list[Check]:
         Check(
             name="citations-resolve",
             passed=not citation_warnings,
-            detail="; ".join(citation_warnings) or "every cited id exists",
+            scorable=not vacuous,
+            detail=_VACUOUS if vacuous else "; ".join(citation_warnings) or "every cited id exists",
         )
     )
 

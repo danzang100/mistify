@@ -463,9 +463,17 @@ def _echo_case(report: CaseReport) -> None:
     click.echo(f"  {report.pass_rate:>7}  runs fully passing")
     for run in report.runs:
         if run.error:
-            passed = sum(1 for c in run.checks if c.passed)
+            # Only the checks that could actually be asked. A run that died before its first
+            # tool call used to be reported as "5/13 checks passed", which is the vacuous floor
+            # of four `avoids` and `citations-resolve` on an empty scratchpad.
+            askable = [c for c in run.checks if c.scorable]
+            passed = sum(1 for c in askable if c.passed)
+            unaskable = len(run.checks) - len(askable)
+            trailer = f", {unaskable} unscorable" if unaskable else ""
             scored = (
-                f" (scored anyway: {passed}/{len(run.checks)} checks passed)" if run.checks else ""
+                f" (scored anyway: {passed}/{len(askable)} checks passed{trailer})"
+                if askable
+                else f" (nothing scorable: {unaskable} check(s) needed a conclusion)"
             )
             click.echo(f"  run {run.index} did not complete{scored}: {run.error}")
         elif run.metrics.get("baseline"):

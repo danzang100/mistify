@@ -22,7 +22,7 @@ or one of the design documents, the fix column says which document to amend.
 | 9. Conversation growth is bounded but not budgeted | Medium | 4 |
 | 13. `parse_timestamp` cannot read common log format | Low | 5 |
 | 12. Model requests had no timeout | ~~High~~ | **Fixed** |
-| 11. The quiet-hour bar cannot tell right from wrong | High | next |
+| 11. The quiet-hour bar cannot tell right from wrong | High | next — vacuity gated, judge question outstanding |
 | 10. The investigator under-cites what it reasons over | ~~Medium~~ | **Fixed** — the check moved earlier, not a better prompt |
 | 14. Burstiness and rarity are degenerate on ordinal timestamps | Medium | next |
 
@@ -339,9 +339,23 @@ wrong one.
 it currently cannot distinguish the behaviour we want from the behaviour we are guarding
 against. A check that fails both is worse than no check, because its output looks like evidence.
 
-**Fix.** A judge question, not a threshold: *does this finding assert that something is wrong?*
-One call, one boolean, and unlike the entailment judge it is asking about the claim rather than
-about its citations. Deterministic checks on this case stay as secondary signals.
+**Wider than filed, and half fixed.** The same defect runs through the positive cases:
+`avoids[...]` is a substring search over the conclusion, so an empty conclusion passes every one
+of them. It passed 81 times out of 81 across a day of runs and never failed. `jest-nextjs`
+scored 5 of 12 having written no notes at all, and three runs killed by a provider outage
+*before their first tool call* scored 5 of 13.
+
+**What landed.** `Check.scorable`. A run with no conclusion has `avoids[...]`,
+`citations-resolve` and `does-not-lead-with[...]` recorded as unscorable rather than passed,
+with a new `concludes-something` check as the gate; totals, per-check rates and the CLI count
+only what could be asked. Re-scored over every recorded run: the three outage runs go from
+15/42 to 0/27, the recorded `jest-nextjs` from 5/13 to 0/8, and **every run that actually
+concluded is unchanged**, which is the control.
+
+**Still open: the quiet hour itself.** A judge question, not a threshold: *does this finding
+assert that something is wrong?* One call, one boolean, and unlike the entailment judge it asks
+about the claim rather than about its citations. `judge.py` already has the machinery; this is a
+second prompt and a second entry point. Deterministic checks stay as secondary signals.
 
 **Note.** The bar was chosen deliberately over "zero notes", on my framing that a
 high-confidence note meant an invented incident. The framing was wrong and the data showed it
