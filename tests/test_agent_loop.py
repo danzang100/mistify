@@ -32,6 +32,7 @@ from mistify.metrics import (
     ADVERSARIAL_OUTPUT_TOKENS,
     ADVERSARIAL_REBUTTAL_MODEL,
     ADVERSARIAL_UNEXPLAINED_SIGNAL,
+    ANOMALY_SEVERITY_SOURCE,
     ANOMALY_SIGNAL_TEMPLATE_IDS,
     INVESTIGATE_BUDGET_LIMITED,
     INVESTIGATE_CACHED_INPUT_TOKENS,
@@ -137,6 +138,30 @@ def test_the_digest_leads_with_the_most_anomalous_template(loaded_db: Scratchpad
     prompt = build_system_prompt(loaded_db)
     body = prompt.split("most anomalous first")[1]
     assert ROOT_CAUSE_MARKER in body.splitlines()[2]
+
+
+def test_the_prompt_says_when_severity_was_read_out_of_the_text(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """A ranking built from words is a weaker claim than one built from a level field.
+
+    The prompt tells the model to treat the ranking as a search order; when the severity term
+    came from matching "error" in a line, it has to say so, or the model is calibrating
+    against a level nobody parsed.
+    """
+    loaded_db.record(ANOMALY_SEVERITY_SOURCE, "lexical")
+
+    prompt = build_system_prompt(loaded_db)
+
+    assert "no severity field" in prompt
+    assert "words in each template" in prompt
+
+
+def test_the_prompt_stays_quiet_when_severity_was_parsed(loaded_db: ScratchpadDB) -> None:
+    """The control: the ordinary case adds nothing, and the digest is the cached prefix."""
+    prompt = build_system_prompt(loaded_db)
+
+    assert "Ranking:" not in prompt
 
 
 def test_every_tool_call_is_logged_for_audit(loaded_db: ScratchpadDB) -> None:

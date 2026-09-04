@@ -12,13 +12,23 @@ acted on twice before anyone read them closely.
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from mistify.agent.loop import build_system_prompt
+from mistify.common.config import MistifyConfig
 from mistify.eval.cases import CASES, PRECURSOR_MARKER, EvalCase, case_names, get_case
+from mistify.eval.digest import (
+    CaseDigest,
+    MarkerRank,
+    digest_recall,
+    run_digest_case,
+    write_digest_results,
+)
 from mistify.eval.fixtures import (
     RED_HERRING_MARKER,
     ROOT_CAUSE_MARKER,
@@ -766,3 +776,86 @@ def test_negation_is_not_detected_and_the_detail_says_so(loaded_db: ScratchpadDB
     check = next(c for c in score_run(loaded_db, case) if c.name == "avoids[network failure]")
     assert not check.passed
     assert "negation is not detected" in check.detail
+
+
+# ------------------------------------------- where the evidence sits in the digest
+
+
+def test_the_planted_evidence_is_inside_the_digest(loaded_db: ScratchpadDB) -> None:
+    """The question that costs nothing and belongs before a paid run."""
+    measured = digest_recall(loaded_db, INCIDENT_CASE.must_cite, limit=40)
+
+    assert measured.found == len(INCIDENT_CASE.must_cite)
+    assert all(m.rank is not None and m.events > 0 for m in measured.markers)
+
+
+def test_a_marker_no_template_carries_is_reported_as_absent(loaded_db: ScratchpadDB) -> None:
+    """The control for the test above, and a distinct outcome from a bad rank.
+
+    A marker resolving to nothing is a fact about templating, not about the ranking, and
+    counting it as "rank 9,999" would blame the wrong stage.
+    """
+    measured = digest_recall(loaded_db, ("no line in this file says this",), limit=40)
+
+    assert [m.rank for m in measured.markers] == [None]
+    assert measured.found == 0
+    assert measured.recall == "0/1"
+
+
+def test_a_narrow_digest_excludes_what_a_wide_one_holds(loaded_db: ScratchpadDB) -> None:
+    """Recall is a statement about the limit, so the limit has to be able to change it."""
+    markers = INCIDENT_CASE.must_cite
+    wide = digest_recall(loaded_db, markers, limit=40)
+    narrow = digest_recall(loaded_db, markers, limit=1)
+
+    assert narrow.found <= wide.found
+    assert [m.rank for m in narrow.markers] == [m.rank for m in wide.markers]
+
+
+def test_the_digest_measured_is_the_digest_the_model_reads(loaded_db: ScratchpadDB) -> None:
+    """Both must rank through the same call, or this measures a list nobody is shown.
+
+    The failure this guards against is the one the scorer already made once: a check that
+    reads a document instead of the source it renders from, agreeing with it until it does
+    not.
+    """
+    limit = 5
+    prompt = build_system_prompt(loaded_db, digest_limit=limit)
+    shown = [line.split("]")[0].lstrip("[") for line in prompt.splitlines() if line.startswith("[")]
+
+    ranked = loaded_db.top_templates(limit=limit, order_by="anomaly_score")
+    assert shown == [str(row["template_id"]) for row in ranked]
+    assert len(shown) == limit
+
+
+def test_a_case_with_no_markers_is_skipped_rather_than_scored(
+    tmp_path: Path, config: MistifyConfig
+) -> None:
+    """The quiet hour has nothing to cite, so it has no digest recall to report.
+
+    Zero-of-zero would read as a perfect score on the scorecard, which is the way a suite
+    comes to overstate what it measured.
+    """
+    measured = run_digest_case(QUIET_CASE, config, tmp_path, limit=40)
+
+    assert measured.error is not None
+    assert measured.markers == []
+
+
+def test_the_ranks_are_kept_beside_the_recall(tmp_path: Path) -> None:
+    """A file holding only the fraction cannot say what to change or what improved."""
+    measured = CaseDigest(
+        case="example",
+        limit=40,
+        template_count=9,
+        event_count=100,
+        severity_source="lexical",
+        markers=[MarkerRank(marker="pool exhausted", rank=57, events=40, templates=1)],
+    )
+
+    destination = write_digest_results([measured], tmp_path / "out")
+    written = json.loads(destination.read_text(encoding="utf-8"))
+
+    assert written["cases"][0]["recall"] == "0/1"
+    assert written["cases"][0]["markers"][0]["rank"] == 57
+    assert written["cases"][0]["severity_source"] == "lexical"

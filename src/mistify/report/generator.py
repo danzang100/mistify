@@ -32,6 +32,7 @@ from mistify.metrics import (
     ADVERSARIAL_UNREBUTTED_HIGH_SEVERITY,
     ALL_METRICS,
     ANOMALY_NEEDLE_POSITION,
+    ANOMALY_SEVERITY_SOURCE,
     ANOMALY_SIGNAL_TEMPLATE_IDS,
     INGEST_EVENTS_LOADED,
     INGEST_FALLBACK,
@@ -398,6 +399,17 @@ def _health_warnings(view: MetricView) -> list[str]:
         warnings.append(
             f"One template accounts for {share:.0%} of all events. A "
             "dominant noisy template crowds attention even after compression."
+        )
+
+    # "none" means neither the severity field nor the template text told the ranking anything,
+    # so half its weight was redistributed onto rarity and burstiness. That is a materially
+    # weaker ordering than either of the other two sources and the reader has to know which
+    # one produced the list they are about to read top-down.
+    if view.triggers(ANOMALY_SEVERITY_SOURCE):
+        warnings.append(
+            "No severity could be read from this file, from a field or from the template "
+            "text, so the ranking rests on rarity and burstiness alone. Treat the order of "
+            "the templates below as weak evidence about where to look."
         )
 
     if view.triggers(ANOMALY_NEEDLE_POSITION):

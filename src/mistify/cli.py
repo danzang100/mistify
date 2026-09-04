@@ -20,6 +20,7 @@ from mistify.scratchpad.db import ScratchpadDB
 
 if TYPE_CHECKING:
     from mistify.agent.loop import InvestigationResult
+    from mistify.eval.cases import EvalCase
     from mistify.eval.harness import CaseReport
 
 __all__ = ["cli"]
@@ -271,6 +272,23 @@ def run_command(
         "on demand into .cache and never committed."
     ),
 )
+@click.option(
+    "--digest",
+    "digest_only",
+    is_flag=True,
+    help=(
+        "Ingest each case and report where its known evidence lands in the ranked digest the "
+        "investigation starts from. No model is called. Exits non-zero if any marker sits "
+        "outside the digest, because a run started from there is testing the ranking rather "
+        "than the loop."
+    ),
+)
+@click.option(
+    "--digest-limit",
+    default=40,
+    show_default=True,
+    help="Templates the digest shows. Matches agent.loop.build_system_prompt's default.",
+)
 @click.option("--list", "list_only", is_flag=True, help="List the cases and exit.")
 @click.option("--no-adversarial", is_flag=True, help="Skip the critique, to halve the cost.")
 @click.option(
@@ -285,6 +303,8 @@ def eval_command(
     runs: int,
     baseline: str | None,
     logdx_split: str | None,
+    digest_only: bool,
+    digest_limit: int,
     list_only: bool,
     no_adversarial: bool,
     judge: bool,
@@ -344,6 +364,10 @@ def eval_command(
     # One directory per sweep, so a result and the reports behind it stay together and an old
     # sweep can be deleted in one go rather than by picking timestamps out of a shared folder.
     results_dir = Path(out) if out else Path(config.report.output_dir) / "eval"
+    if digest_only:
+        _run_digest(cases, config, results_dir, digest_limit)
+        return
+
     if judge and config.llm.judge_model in {config.llm.model, config.llm.adversarial_model}:
         # Not fatal, because the judge is opt-in tooling rather than a shipped guarantee -- but
         # a judge sharing a model with the thing it judges is the correlated-blind-spot problem
@@ -381,6 +405,54 @@ def eval_command(
     if any(not run.passed for report in reports for run in report.runs):
         # A failing eval exits non-zero so it can gate anything, but the report is printed
         # first: the numbers are the point, and an exit code nobody can read is not a result.
+        raise SystemExit(1)
+
+
+def _run_digest(
+    cases: list[EvalCase], config: MistifyConfig, results_dir: Path, limit: int
+) -> None:
+    """Measure the ranking instead of the investigation. Ingest only; no provider is built.
+
+    The question this answers is the cheap one that belongs before a paid sweep: is the
+    evidence a correct diagnosis rests on anywhere in the list the model reads first? A case
+    whose markers are all below the digest can still be solved -- one was, citing 4 of 4 from a
+    digest holding none of them -- but its score says something about search, not about
+    reasoning.
+    """
+    import tempfile
+
+    from mistify.eval.digest import run_digest_case, write_digest_results
+
+    results = []
+    with tempfile.TemporaryDirectory(prefix="mistify-digest-") as workspace:
+        for case in cases:
+            measured = run_digest_case(case, config, Path(workspace), limit)
+            results.append(measured)
+            if measured.error:
+                click.echo(f"\n{case.name}: skipped -- {measured.error}")
+                continue
+            click.echo(
+                f"\n{case.name}: {measured.recall} markers in the top {limit} "
+                f"({measured.template_count} templates, {measured.event_count} events, "
+                f"severity {measured.severity_source})"
+            )
+            for marker in measured.markers:
+                # The rank of a marker that missed is the number that says how badly, and it is
+                # what a second measurement is compared against.
+                where = "not in any template" if marker.rank is None else f"#{marker.rank}"
+                mark = "  " if marker.in_digest(limit) else "->"
+                click.echo(
+                    f"  {mark} {where:>6}  {marker.events} event(s) / "
+                    f"{marker.templates} template(s)  {marker.marker[:60]}"
+                )
+
+    destination = write_digest_results(results, results_dir)
+    scored = [r for r in results if not r.error]
+    found = sum(r.found for r in scored)
+    total = sum(len(r.markers) for r in scored)
+    click.echo(f"\ntotal {found}/{total} markers inside the top {limit}")
+    click.echo(f"results {destination}")
+    if found < total:
         raise SystemExit(1)
 
 

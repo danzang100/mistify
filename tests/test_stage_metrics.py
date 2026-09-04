@@ -16,6 +16,7 @@ from mistify.common.models import TemplateSummary
 from mistify.metrics import (
     ANOMALY_NEEDLE_POSITION,
     ANOMALY_SEVERITY_INFORMATIVE,
+    ANOMALY_SEVERITY_SOURCE,
     ANOMALY_TOP_SCORE,
     ANOMALY_TOP_TEMPLATE_ID,
     INGEST_LINES_READ,
@@ -203,7 +204,7 @@ def _summaries(worst_id: int) -> list[TemplateSummary]:
 def test_needle_position_is_one_when_the_worst_ranks_first(config: MistifyConfig) -> None:
     """The needle question asked directly: is the worst thing met early, or dug for?"""
     values = _by_metric(
-        anomaly_metrics(config, _scored(), _summaries(9), _scored()[:2], 1, True, 0.0)
+        anomaly_metrics(config, _scored(), _summaries(9), _scored()[:2], 1, True, 0.0, "field")
     )
     assert values[ANOMALY_NEEDLE_POSITION] == 1
     assert values[ANOMALY_TOP_TEMPLATE_ID] == 9
@@ -212,21 +213,23 @@ def test_needle_position_is_one_when_the_worst_ranks_first(config: MistifyConfig
 
 def test_needle_position_reports_a_buried_severe_template(config: MistifyConfig) -> None:
     values = _by_metric(
-        anomaly_metrics(config, _scored(), _summaries(2), _scored()[:2], 0, True, 0.0)
+        anomaly_metrics(config, _scored(), _summaries(2), _scored()[:2], 0, True, 0.0, "field")
     )
     assert values[ANOMALY_NEEDLE_POSITION] == 3
 
 
 def test_uninformative_severity_is_recorded(config: MistifyConfig) -> None:
     values = _by_metric(
-        anomaly_metrics(config, _scored(), _summaries(9), _scored()[:1], 0, False, 1.0)
+        anomaly_metrics(config, _scored(), _summaries(9), _scored()[:1], 0, False, 1.0, "lexical")
     )
     assert values[ANOMALY_SEVERITY_INFORMATIVE] is False
+    # The two are different facts now: no field, but the template text still ranked the file.
+    assert values[ANOMALY_SEVERITY_SOURCE] == "lexical"
 
 
 def test_nothing_scored_reports_no_ranking(config: MistifyConfig) -> None:
     """An empty incident has no top template, and must not invent one."""
-    values = _by_metric(anomaly_metrics(config, [], [], [], 0, True, 0.0))
+    values = _by_metric(anomaly_metrics(config, [], [], [], 0, True, 0.0, "field"))
     assert ANOMALY_TOP_TEMPLATE_ID not in values
     assert ANOMALY_NEEDLE_POSITION not in values
 
@@ -238,6 +241,6 @@ def test_every_entry_is_a_declared_metric(config: MistifyConfig) -> None:
     declared = {m.key for m in ALL_METRICS}
     entries = [
         *templating_metrics(config, _templater(), 0.5, 1.0, None, []),
-        *anomaly_metrics(config, _scored(), _summaries(9), _scored()[:1], 0, True, 0.0),
+        *anomaly_metrics(config, _scored(), _summaries(9), _scored()[:1], 0, True, 0.0, "field"),
     ]
     assert all(metric.key in declared for metric, _ in entries)

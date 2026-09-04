@@ -319,6 +319,18 @@ rendered report per run. The checks say whether a run passed; only the report sa
 concluded, and a sweep that kept just the score cannot be re-read later to find out why — which
 is exactly what happened to this project's first nine runs.
 
+`--digest` answers the cheap question that belongs *before* a paid sweep: is the evidence a
+correct diagnosis rests on anywhere in the ranked list the model reads first? It ingests each
+case, resolves its known markers against the digest, prints the rank of every one and exits
+non-zero if any sits below it. No model is called. The question was worth asking: on the five
+LogDx-CI dev cases the answer was zero of eighteen markers, which is why severity is now
+recovered from the template text when a file carries no severity field — see
+`docs/digest-rerank.md`.
+
+```bash
+uv run mistify eval --digest --logdx dev
+```
+
 `--baseline naive|templated` replaces the investigation with a grep pipeline and scores it
 with the same checks — no model calls. On the incident both variants lead with the red herring;
 on the quiet hour both correctly claim nothing. The agent is the mirror image. See

@@ -66,6 +66,7 @@ EXPECTED_METRIC_KEYS = {
     ("templating", "over_merged_ids"),
     ("anomaly", "scored_templates"),
     ("anomaly", "severity_informative"),
+    ("anomaly", "severity_source"),
     ("anomaly", "unmapped_severity_share"),
     ("anomaly", "signal_templates"),
     ("anomaly", "signal_template_ids"),

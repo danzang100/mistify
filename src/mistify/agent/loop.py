@@ -162,6 +162,29 @@ class InvestigationResult:
         return self.input_per_step[-1] / self.input_per_step[0]
 
 
+#: How the severity term was filled, in the words the model is given. `field` is the ordinary
+#: case and says nothing -- the system prompt already describes it. The other two are the ones
+#: worth a sentence, because they change how far the ranking can be trusted.
+_RANKING_BASIS: dict[str, str] = {
+    "lexical": (
+        "this file carried no severity field, so the severity part of the score was read "
+        "from the words in each template ('error', 'failed', 'timeout'). A template can look "
+        "alarming and be routine, and a quietly-worded line can be the fault."
+    ),
+    "none": (
+        "this file carried no severity field and its text yielded no severity either, so the "
+        "score is rarity and burstiness alone. The order below is weak evidence about where "
+        "to look."
+    ),
+}
+
+
+def _severity_source(db: ScratchpadDB) -> str:
+    """What the ingest recorded about where the severity term came from, or "field"."""
+    row = next((r for r in db.metrics("anomaly") if r["metric"] == "severity_source"), None)
+    return "field" if row is None else str(row["value"])
+
+
 def build_system_prompt(db: ScratchpadDB, digest_limit: int = 40) -> str:
     """System prompt plus the incident's template digest.
 
@@ -173,6 +196,7 @@ def build_system_prompt(db: ScratchpadDB, digest_limit: int = 40) -> str:
     incident = db.incident() or {}
     first_ts, last_ts = db.time_bounds()
     templates = db.top_templates(limit=digest_limit, order_by="anomaly_score")
+    ranking = _RANKING_BASIS.get(_severity_source(db))
 
     lines = [
         SYSTEM_PROMPT,
@@ -184,9 +208,20 @@ def build_system_prompt(db: ScratchpadDB, digest_limit: int = 40) -> str:
         f"- templates: {db.template_count()}",
         f"- window: {first_ts} to {last_ts}",
         "",
-        f"## Templates, most anomalous first (showing {len(templates)} of {db.template_count()})",
-        "",
     ]
+    if ranking is not None:
+        # Where the severity term came from, when it did not come from a severity field. The
+        # prompt already tells the model the ranking is a search order rather than a verdict;
+        # this says how much to trust it, which differs by a lot between a parsed level and a
+        # word matched in the line.
+        lines.extend([f"Ranking: {ranking}", ""])
+    lines.extend(
+        [
+            "## Templates, most anomalous first "
+            f"(showing {len(templates)} of {db.template_count()})",
+            "",
+        ]
+    )
     for template in templates:
         mix = ", ".join(f"{k}:{v}" for k, v in sorted(template["severity_mix"].items()))
         lines.append(

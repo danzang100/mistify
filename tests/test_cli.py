@@ -230,3 +230,47 @@ def test_missing_credential_explains_what_to_set(
     assert "GEMINI_API_KEY" in result.output
     assert ".env" in result.output
     assert "--investigator skeleton" in result.output
+
+
+def test_eval_digest_reports_the_ranking_without_calling_a_model(
+    runner: CliRunner, config_file: Path
+) -> None:
+    """The pre-flight check: where the known evidence sits, for the price of an ingest.
+
+    No provider is configured in the test environment at all, so a mode that reached for one
+    would fail rather than pass quietly.
+    """
+    result = runner.invoke(
+        cli,
+        ["eval", "--digest", "--case", "pool-exhaustion", "--config", str(config_file)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "markers in the top 40" in result.output
+    assert ROOT_CAUSE_MARKER in result.output
+
+
+def test_eval_digest_fails_when_the_evidence_is_below_the_digest(
+    runner: CliRunner, config_file: Path
+) -> None:
+    """The control: the gate has to be able to fail, so squeeze the digest until it does.
+
+    A run started from a digest holding none of the evidence is measuring the ranking rather
+    than the loop, which is worth an exit code rather than a line of output nobody reads.
+    """
+    result = runner.invoke(
+        cli,
+        [
+            "eval",
+            "--digest",
+            "--digest-limit",
+            "1",
+            "--case",
+            "pool-exhaustion",
+            "--config",
+            str(config_file),
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "markers in the top 1" in result.output

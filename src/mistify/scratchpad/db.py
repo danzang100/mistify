@@ -257,7 +257,7 @@ class ScratchpadDB:
         return len(summaries)
 
     def template_burst_stats(self, bucket_minutes: int = 1) -> list[dict[str, Any]]:
-        """Per-template aggregates the anomaly scorer needs (decision G3).
+        """Per-template aggregates the anomaly scorer needs (decision G3), and their patterns.
 
         Buckets on an ISO minute prefix, which works because timestamps are normalised to
         UTC at ingestion -- a raw local-time string would bucket two services differently.
@@ -273,7 +273,10 @@ class ScratchpadDB:
             "  SELECT template_id, MAX(n) AS max_per_bucket, COUNT(*) AS active_buckets"
             "   FROM per_bucket GROUP BY template_id"
             ")"
-            " SELECT t.template_id, t.occurrence_count, t.max_severity_rank,"
+            # `pattern` is here for the anomaly scorer's benefit: on a source with no severity
+            # field the term is recovered from the template's own text rather than dropped,
+            # and the text is the only place left to read it from.
+            " SELECT t.template_id, t.pattern, t.occurrence_count, t.max_severity_rank,"
             "        COALESCE(b.max_per_bucket, 0) AS max_per_bucket,"
             "        COALESCE(b.active_buckets, 0) AS active_buckets"
             " FROM templates t LEFT JOIN burst b ON b.template_id = t.template_id"

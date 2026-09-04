@@ -24,6 +24,7 @@ or one of the design documents, the fix column says which document to amend.
 | 12. Model requests had no timeout | ~~High~~ | **Fixed** |
 | 11. The quiet-hour bar cannot tell right from wrong | High | next |
 | 10. The investigator under-cites what it reasons over | ~~Medium~~ | **Fixed** — the check moved earlier, not a better prompt |
+| 14. Burstiness and rarity are degenerate on ordinal timestamps | Medium | next |
 
 ---
 
@@ -394,3 +395,36 @@ change.
 
 **Where.** `mistify/common/models.py::parse_timestamp`, and the `clf` entry in
 `mistify/bootstrap/schema.py::TIMESTAMP_PATTERNS` documents the situation.
+
+---
+
+## 14 — Burstiness and rarity are degenerate on ordinal timestamps
+
+**Problem.** A file read as `raw_lines` has no timestamps; the adapter supplies line ordinals so
+the schema and every ordering query have something to work with. Burstiness is then measured
+over one-minute buckets of *line numbers*, and its formula saturates for anything rare:
+`max_per_bucket / (count / total_buckets)` gives a template with one occurrence a burstiness of
+`1 - 1/total_buckets` regardless of what it is. Rarity is near-constant for the same reason —
+9,307 templates for 10,992 events means almost every template has a count of one. Two of the
+three terms carry no information, and until Phase 5 the third carried none either, which is how
+the digest came to be ordered by first appearance.
+
+**What landed.** Severity is now recovered from the template text when the source has no
+severity field, which lifted ground-truth markers inside the top 40 from 1 of 65 to 39 of 65
+across 20 LogDx-CI cases (`docs/digest-rerank.md`). That fixed the term with the heaviest
+weight and left the other two as they are.
+
+**Measured, and deliberately not taken.** Zeroing burstiness and rarity as well scores best of
+six weightings — 31 of 47 markers on unseen cases against the shipped 27 — but the corpus that
+says so is entirely ordinal-timestamped. An unlabelled log *with* real timestamps is the case
+that would be damaged, and nothing here measures it.
+
+**Fix.** Detect the condition rather than the corpus: the pipeline already counts
+`unparseable_timestamp` per line, so a file whose timestamps are synthetic could drop
+burstiness the same way an unlabelled file drops severity — one rule, one metric, the same
+redistribution. Rarity needs its own answer; inverse log frequency against the most common
+template says nothing when the mode is one.
+
+**Where.** `mistify/scratchpad/anomaly.py::_burstiness_component` and `_rarity_component`;
+`severity_source` is the shape the decision should take. Related: Issue 2 (scores are global)
+and Issue 8 (no duration term), both of which also live in the same function.

@@ -203,18 +203,22 @@ that never ran past 8; and a 3× ingest "speedup" that was cold-versus-warm page
 
 Ordered by value per unit of effort.
 
-### Free, and it should come first
+### Done since: the digest was re-ranked
 
-**Re-rank the digest.** Across **all five** dev cases, **zero** ground-truth markers appeared in
-the top-40 templates the loop starts from — including a case with only 170 templates. On a CI
-log all three anomaly terms are degenerate: severity is guessed and mostly unmapped, burstiness
-is computed over `raw_lines` ordinals that mean nothing, and rarity cannot discriminate when
-almost every line is unique.
+Severity is now recovered from the template text when the file carries no severity field, rather
+than being dropped. Ground-truth markers inside the top 40 went **1 of 65 to 39 of 65** across
+20 LogDx-CI cases; on the 15 cases and 47 markers the change was *not* designed on, 1 to 25. The
+full measurement, the weight sweep that was rejected, and the three cases it does not help are
+in [`docs/digest-rerank.md`](docs/digest-rerank.md). `mistify eval --digest` runs the
+check on any split for the price of an ingest.
 
-So the ordering that decides what the model sees first carries close to no signal. Re-ranking by
-something that survives on unstructured logs and re-scoring the **recorded** scratchpads costs no
-model calls, because scoring reads the scratchpad rather than replaying the investigation. This
-is probably worth more than any prompt change.
+**The re-scoring half of that plan produced nothing, and could not have.** The five recorded
+investigations re-score to the same 45/64 under both rankings, check for check, even though the
+two orderings share not one template in their top ten. No LogDx check reads the ranking:
+`does-not-lead-with[...]` is the only one that does and it needs `must_not_lead`, which no LogDx
+case sets. Whether a better digest produces a better diagnosis needs a fresh run — five cases,
+~170k tokens each, at `min_interval_seconds: 5.5`. That is the next thing worth paying for, and
+there is now a reason to expect a different answer.
 
 ### Cheap and well understood
 

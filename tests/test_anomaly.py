@@ -9,8 +9,10 @@ from mistify.eval.fixtures import RED_HERRING_MARKER, ROOT_CAUSE_MARKER
 from mistify.scratchpad.anomaly import (
     DEFAULT_WEIGHTS,
     AnomalyComponents,
+    lexical_severity,
     score_templates,
     select_signal_templates,
+    severity_source,
 )
 from mistify.scratchpad.db import ScratchpadDB
 
@@ -304,3 +306,103 @@ def test_signal_set_of_nothing_is_empty() -> None:
 def test_signal_set_is_ranked_regardless_of_input_order() -> None:
     scrambled = [_component(3, 0.1), _component(1, 0.9), _component(2, 0.5)]
     assert [c.template_id for c in select_signal_templates(scrambled)] == [1, 2, 3]
+
+
+# ------------------------------------------------- severity recovered from text
+
+
+def _text_row(template_id: int, pattern: str, count: int = 1) -> dict[str, object]:
+    """A template with a pattern and nothing else to rank it by: no severity, one occurrence.
+
+    Every row this builds is identical apart from its text, so any ordering the scorer
+    produces came from the words and from nothing else.
+    """
+    return {
+        "template_id": template_id,
+        "pattern": pattern,
+        "occurrence_count": count,
+        "max_severity_rank": 0,
+        "max_per_bucket": count,
+    }
+
+
+def test_failure_words_read_as_error() -> None:
+    assert lexical_severity("error[E0308]: mismatched types") == pytest.approx(0.8)
+    assert lexical_severity("Traceback (most recent call last):") == pytest.approx(0.8)
+    assert lexical_severity("1 of 10 tests failed") == pytest.approx(0.8)
+
+
+def test_hedging_words_read_as_warn() -> None:
+    assert lexical_severity("npm WARN deprecated <*>") == pytest.approx(0.5)
+    assert lexical_severity("Connection timed out after <*>ms") == pytest.approx(0.5)
+
+
+def test_an_ordinary_line_reads_as_info() -> None:
+    """The control for the two above: an unremarkable line must not be lifted by the term.
+
+    Without this the vocabulary could match everything and the tests above would still pass,
+    which is the shape of a check that cannot fail.
+    """
+    assert lexical_severity("Downloading <*> from registry") == pytest.approx(0.15)
+    assert lexical_severity("Run actions/checkout@v4") == pytest.approx(0.15)
+
+
+def test_a_failure_word_inside_an_identifier_does_not_count() -> None:
+    """`test_error_handling` is the name of a passing test, not a failure."""
+    assert lexical_severity("PASSED tests/test_error_handling.py::test_failover") == pytest.approx(
+        0.15
+    )
+
+
+def test_colour_codes_do_not_hide_a_failure() -> None:
+    """A CI log paints its errors red, and the escape leaves no word boundary before them."""
+    assert lexical_severity("\x1b[31;1merror\x1b[0m: linker failed") == pytest.approx(0.8)
+    # The control: stripping the escapes must not invent a severity where there is none.
+    assert lexical_severity("\x1b[32;1mok\x1b[0m: 41 packages audited") == pytest.approx(0.15)
+
+
+def test_severity_source_names_where_the_term_came_from() -> None:
+    rows = [_text_row(1, "build failed"), _text_row(2, "Downloading <*>")]
+    assert severity_source(rows, severity_informative=True) == "field"
+    assert severity_source(rows, severity_informative=False) == "lexical"
+
+
+def test_a_uniformly_worded_file_drops_the_term_rather_than_flattening_it() -> None:
+    """Issue 3's shape: when every template says the same thing, the term ranks nothing."""
+    rows = [_text_row(1, "error: a failed"), _text_row(2, "error: b failed")]
+    assert severity_source(rows, severity_informative=False) == "none"
+
+
+def test_rows_without_patterns_keep_the_old_redistribution() -> None:
+    """The scorer is still callable on aggregates alone -- it just has nothing to recover."""
+    rows = [_row(1, 10, 0), _row(2, 500, 0)]
+    assert severity_source(rows, severity_informative=False) == "none"
+
+
+def test_the_failing_template_outranks_the_chatty_one_without_a_severity_field() -> None:
+    """The whole point: on a log with no severity, the text is what is left to rank by.
+
+    Measured on the corpus this exists for: across five LogDx-CI dev cases not one
+    ground-truth marker reached the top 40 before this, because every template tied and the
+    tie was broken by the order the lines first appeared.
+    """
+    rows = [
+        _text_row(1, "Downloading <*> from registry", count=1),
+        _text_row(2, "error: cannot find module <*>", count=1),
+    ]
+    scored = score_templates(rows, total_buckets=BUCKETS, severity_informative=False)
+    assert [c.template_id for c in scored] == [2, 1]
+
+
+def test_a_severity_field_still_beats_the_words_when_there_is_one() -> None:
+    """The control: recovery is for files with no severity, and must not override one.
+
+    An INFO line reading "error rate returned to normal" is exactly the case where the field
+    is right and the vocabulary is wrong.
+    """
+    rows = [
+        _text_row(1, "error rate returned to normal") | {"max_severity_rank": 2},
+        _text_row(2, "pool acquisition slow") | {"max_severity_rank": 4},
+    ]
+    scored = score_templates(rows, total_buckets=BUCKETS, severity_informative=True)
+    assert [c.template_id for c in scored] == [2, 1]

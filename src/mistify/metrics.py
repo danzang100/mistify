@@ -219,6 +219,17 @@ TEMPLATING_OVER_MERGED_IDS = Metric("templating", "over_merged_ids", "str", load
 ANOMALY_SCORED_TEMPLATES = Metric("anomaly", "scored_templates", "int")
 ANOMALY_SEVERITY_INFORMATIVE = Metric("anomaly", "severity_informative", "bool")
 ANOMALY_UNMAPPED_SEVERITY_SHARE = Metric("anomaly", "unmapped_severity_share", "float")
+#: Where the severity term's values came from: "field" when the source carried one, "lexical"
+#: when it was recovered from the template text, "none" when neither discriminated and the
+#: weight was redistributed. `severity_informative` alone cannot say which of the last two
+#: happened, and they rank a file very differently.
+ANOMALY_SEVERITY_SOURCE = Metric(
+    "anomaly",
+    "severity_source",
+    "str",
+    load_bearing=True,
+    trigger_values=frozenset({"none"}),
+)
 ANOMALY_SIGNAL_TEMPLATES = Metric("anomaly", "signal_templates", "int")
 ANOMALY_SIGNAL_TEMPLATE_IDS = Metric("anomaly", "signal_template_ids", "str")
 ANOMALY_SUPPRESSED_NOISE = Metric("anomaly", "suppressed_noise_templates", "int")
@@ -420,6 +431,7 @@ ALL_METRICS: tuple[Metric, ...] = (
     ANOMALY_SCORED_TEMPLATES,
     ANOMALY_SEVERITY_INFORMATIVE,
     ANOMALY_UNMAPPED_SEVERITY_SHARE,
+    ANOMALY_SEVERITY_SOURCE,
     ANOMALY_SIGNAL_TEMPLATES,
     ANOMALY_SIGNAL_TEMPLATE_IDS,
     ANOMALY_SUPPRESSED_NOISE,

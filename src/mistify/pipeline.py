@@ -25,7 +25,11 @@ from mistify.metrics import SCRATCHPAD_ORPHAN_EVENTS
 from mistify.redaction.parallel import RedactionPool
 from mistify.redaction.redactor import Redactor
 from mistify.redaction.vault import RedactionVault
-from mistify.scratchpad.anomaly import score_templates, select_signal_templates
+from mistify.scratchpad.anomaly import (
+    score_templates,
+    select_signal_templates,
+    severity_source,
+)
 from mistify.scratchpad.db import ScratchpadDB
 from mistify.stage_metrics import (
     anomaly_metrics,
@@ -418,16 +422,22 @@ def ingest(
         stats = adapter.stats
 
         # Severity carries the heaviest weight, so a source with no severity field would
-        # otherwise spend half the score on a constant. Detect that and redistribute.
+        # otherwise spend half the score on a constant. Detect that; the scorer then reads
+        # severity out of the template text instead, and redistributes only if that is
+        # constant too.
         unmapped_share = stats.unmapped_severity / stats.lines_read if stats.lines_read else 0.0
         severity_informative = unmapped_share <= config.anomaly.severity_unmapped_ceiling
 
+        burst_stats = db.template_burst_stats(config.anomaly.bucket_minutes)
         scored = score_templates(
-            db.template_burst_stats(config.anomaly.bucket_minutes),
+            burst_stats,
             total_buckets=db.bucket_count(config.anomaly.bucket_minutes),
             weights=config.anomaly.weights(),
             severity_informative=severity_informative,
         )
+        # Asked of the same rows the scorer just used, so the metric describes the ranking that
+        # was actually produced rather than a second guess at it.
+        source = severity_source(burst_stats, severity_informative)
         db.update_anomaly_scores([(c.template_id, c.score) for c in scored])
         over_merged = find_over_merged(summaries, config.drain3.over_merge_severity_span)
 
@@ -459,6 +469,7 @@ def ingest(
                     len(noisy),
                     severity_informative,
                     unmapped_share,
+                    source,
                 ),
                 (SCRATCHPAD_ORPHAN_EVENTS, orphans),
             ]

@@ -19,6 +19,7 @@ from mistify.metrics import (
     ANOMALY_NEEDLE_POSITION,
     ANOMALY_SCORED_TEMPLATES,
     ANOMALY_SEVERITY_INFORMATIVE,
+    ANOMALY_SEVERITY_SOURCE,
     ANOMALY_SIGNAL_TEMPLATE_IDS,
     ANOMALY_SIGNAL_TEMPLATES,
     ANOMALY_SUPPRESSED_NOISE,
@@ -207,8 +208,15 @@ def anomaly_metrics(
     suppressed_noise: int,
     severity_informative: bool,
     unmapped_share: float,
+    severity_source: str,
 ) -> Entries:
     """Ranking outcome, including where the worst template landed.
+
+    `severity_source` is recorded beside `severity_informative` because the two are no longer
+    the same question: a file with no severity field now has its severity read out of the
+    template text instead, and only on the text failing to discriminate either is the term
+    dropped. A reader who sees the ranking put something odd first needs to know which of the
+    three produced it.
 
     `max_severity_rank_position` is the needle question asked directly: reading the ranked
     list from the top, would an investigator meet the most severe thing in the file early, or
@@ -217,6 +225,7 @@ def anomaly_metrics(
     entries: Entries = [
         (ANOMALY_SCORED_TEMPLATES, len(scored)),
         (ANOMALY_SEVERITY_INFORMATIVE, severity_informative),
+        (ANOMALY_SEVERITY_SOURCE, severity_source),
         (ANOMALY_UNMAPPED_SEVERITY_SHARE, round(unmapped_share, 4)),
         (ANOMALY_SIGNAL_TEMPLATES, len(signal_templates)),
         (

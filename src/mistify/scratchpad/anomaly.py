@@ -23,11 +23,23 @@ Three components, each normalised to [0, 1]:
 They are combined as a **weighted sum, not a product**. A product zeroes the whole score
 whenever any single component is zero, which would silently discard every template of the
 most common shape regardless of how severe or bursty it was.
+
+**When the source carries no severity field, severity is read out of the template text
+instead of being discarded.** Dropping it was measured and it is the worse of the two: across
+all five LogDx-CI dev cases, *zero* ground-truth evidence markers reached the top-40 digest
+the investigation starts from -- including a 170-template case where the top 40 is a quarter
+of the file. With severity gone and almost every line unique, rarity and burstiness both
+saturate, thousands of templates tie on score, and the tie is broken by template id, which is
+the order the lines first appeared. So the ranking that decides what the model reads first was
+"whatever the build printed earliest", which on a CI log is the setup section. Recovering
+severity from the text puts 14 of those 18 markers inside the top 40, and 39 of 65 across
+twenty cases -- 25 of 47 on the fifteen it was not designed on. See `docs/digest-rerank.md`.
 """
 
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -37,8 +49,10 @@ from mistify.common.models import SEVERITIES
 __all__ = [
     "DEFAULT_WEIGHTS",
     "AnomalyComponents",
+    "lexical_severity",
     "score_templates",
     "select_signal_templates",
+    "severity_source",
 ]
 
 #: Relative contribution of each component. Normalised before use, so these are ratios
@@ -59,6 +73,51 @@ _SEVERITY_WEIGHT: dict[str, float] = {
     "ERROR": 0.80,
     "FATAL": 1.00,
 }
+
+
+#: Words that put a template at ERROR, and words that put it at WARN, when the file carried no
+#: severity field of its own. Two tiers rather than a graded count: counting how many failure
+#: words a pattern contains ranks a stack frame above the exception that produced it, and on
+#: the dev cases the two put the same number of markers in the digest, so the simpler rule
+#: wins.
+#:
+#: Case-insensitive, which is the whole point. The line-level guess in `RawLinesAdapter` reads
+#: only upper-case log levels, so `error[E0308]: mismatched types` and `error: Module has no
+#: attribute` -- the exact lines the ground truth calls critical -- map to nothing. The
+#: vocabulary is what CI logs and application logs actually say when they fail, not what a
+#: level field would have said.
+_LEXICAL_ERROR = re.compile(
+    r"(?i)\b(?:error|errors|failed|failure|failures|fail|fails|failing|fatal|panic|panicked"
+    r"|exception|traceback|assert|asserted|assertion|segfault|core dumped|aborted)\b"
+)
+_LEXICAL_WARN = re.compile(
+    r"(?i)\b(?:warn|warning|warnings|timeout|timed out|refused|denied|unable|cannot|could not"
+    r"|no such|not found|missing|invalid|undefined|unexpected|killed|non-zero|deprecated)\b"
+)
+
+#: Escape sequences a template pattern can still carry. 71.9% of the lines in one real GitHub
+#: Actions log are wrapped in them, and `\x1b[31;1merror\x1b[0m` has no word boundary before
+#: `error` -- so the vocabulary would miss precisely the lines a terminal painted red.
+_ANSI = re.compile("\x1b\\[[0-9;]*[A-Za-z]")
+
+
+def lexical_severity(pattern: str) -> float:
+    """Severity read out of a template's own text, on the same scale as the severity field.
+
+    Returns exactly the `_SEVERITY_WEIGHT` value for ERROR, WARN or INFO, so this drops into
+    the severity term without retuning any weight: it is the same question answered from a
+    worse source, not a fourth component competing for a share of the score.
+
+    INFO rather than zero for a template that says nothing alarming, because that is what an
+    unlabelled line *is* -- an absence of evidence, and the same value every line would have
+    got from `normalize_severity` had the term been kept at all.
+    """
+    text = _ANSI.sub("", pattern)
+    if _LEXICAL_ERROR.search(text):
+        return _SEVERITY_WEIGHT["ERROR"]
+    if _LEXICAL_WARN.search(text):
+        return _SEVERITY_WEIGHT["WARN"]
+    return _SEVERITY_WEIGHT["INFO"]
 
 
 @dataclass(slots=True)
@@ -118,6 +177,26 @@ def _rarity_component(count: int, max_count: int) -> float:
     return max(0.0, 1.0 - (math.log1p(count) / math.log1p(max_count)))
 
 
+def severity_source(rows: Sequence[Mapping[str, Any]], severity_informative: bool) -> str:
+    """Where the severity term's values come from for this file: a field, the text, or nowhere.
+
+    A separate public function, and the one `score_templates` itself consults, so the metric
+    the run records cannot drift from the ranking the run produced. The alternative -- the
+    pipeline deciding and the scorer deciding again -- is two answers to one question with
+    nothing keeping them equal.
+
+    `"lexical"` requires the recovered values to actually differ between templates. A file
+    where every template says "error" is the incident Issue 3 describes, a log entirely on
+    fire, and a term with one value on every row ranks nothing above anything else: it is the
+    same silent no-op as the unmapped severity field this exists to replace, so it is dropped
+    the same way and the weight is redistributed.
+    """
+    if severity_informative:
+        return "field"
+    recovered = {lexical_severity(str(row.get("pattern", ""))) for row in rows}
+    return "lexical" if len(recovered) > 1 else "none"
+
+
 def score_templates(
     rows: Sequence[Mapping[str, Any]],
     total_buckets: int,
@@ -142,7 +221,8 @@ def score_templates(
         return []
 
     resolved = dict(DEFAULT_WEIGHTS if weights is None else weights)
-    if not severity_informative:
+    source = severity_source(rows, severity_informative)
+    if source == "none":
         resolved["severity"] = 0.0
     total_weight = sum(resolved.values())
     if total_weight <= 0:
@@ -153,7 +233,11 @@ def score_templates(
     scored: list[AnomalyComponents] = []
     for row in rows:
         count = int(row["occurrence_count"])
-        severity = _severity_component(int(row["max_severity_rank"]))
+        severity = (
+            lexical_severity(str(row.get("pattern", "")))
+            if source == "lexical"
+            else _severity_component(int(row["max_severity_rank"]))
+        )
         burstiness = _burstiness_component(int(row["max_per_bucket"]), count, total_buckets)
         rarity = _rarity_component(count, max_count)
 

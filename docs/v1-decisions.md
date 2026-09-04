@@ -69,6 +69,21 @@ The three components:
   inverting the signal the component exists to capture.
 - **rarity** — inverse log frequency, scaled against the most common template in the incident.
 
+**Phase 5 addition — severity recovered from the text.** On a source with no severity field,
+the severity term used to be dropped and its weight redistributed. Measured against LogDx-CI,
+that was the worse of the two options: with the heaviest term gone and almost every line
+unique, the remaining two saturate, thousands of templates tie, and the tie-break
+(`occurrence_count DESC, template_id`) orders the digest by first appearance — which on a CI
+log is the setup section. Not one ground-truth marker reached the top 40 in any of five cases.
+
+Severity is now read from the template's own words when there is no field to read it from —
+ERROR-equivalent for failure vocabulary, WARN-equivalent for hedging vocabulary, INFO
+otherwise, on the same non-linear scale, so no weight changed. Across 20 cases it moved markers
+inside the top 40 from 1 of 65 to 39 of 65, and 1 of 47 to 25 of 47 on the cases it was not
+designed on. It is still dropped when the recovered values are constant across templates, which
+is the log-entirely-on-fire case; `anomaly.severity_source` records which of the three happened
+and the report warns when it is neither. See `digest-rerank.md`.
+
 The weights are config-driven (`anomaly:` in `config.yaml`) rather than constants, so the
 Phase 5 evaluation harness can sweep them instead of requiring a code change per experiment.
 Components are retained alongside the score, not collapsed into it, so a report or the
