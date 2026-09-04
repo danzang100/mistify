@@ -9,20 +9,23 @@ is decided by our code, not the model's, so it should be testable without one.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
 from mistify.agent.adversarial import run_adversarial_check, unexplained_signal_templates
 from mistify.agent.loop import (
+    DIGEST_LIMIT,
     ELIDED,
     INVESTIGATOR_NAME,
+    MAX_NUDGED_TEMPLATES,
     InvestigationLoop,
     build_system_prompt,
 )
 from mistify.agent.tools import ToolBox
 from mistify.common.models import NoiseThresholds
 from mistify.eval.fixtures import ROOT_CAUSE_MARKER
-from mistify.llm.base import Turn, Usage
+from mistify.llm.base import ToolCall, Turn, Usage
 from mistify.llm.scripted import ScriptedProvider, text_turn, tool_call_turn
 from mistify.metrics import (
     ADVERSARIAL_INPUT_TOKENS,
@@ -919,11 +922,16 @@ def test_a_conclusion_that_covers_the_signal_is_accepted(loaded_db: ScratchpadDB
         _note_turn(template_id, f"c{i}") for i, template_id in enumerate(_signal_ids(loaded_db))
     ]
     script.append(text_turn("done"))
+    # One more turn to absorb the digest-coverage question, which a scripted run always earns:
+    # it writes notes without ever pulling a slice, so it has opened nothing.
+    script.append(text_turn("still done"))
     provider = ScriptedProvider(script)
 
     result = InvestigationLoop(loaded_db, provider, _toolbox(loaded_db)).run()
 
-    assert result.coverage_nudges == 0
+    # Every nudge this run took was the weaker one. The signal question was never asked, which
+    # is what this test is a control for.
+    assert result.coverage_nudges == result.digest_nudges
 
 
 def test_the_nudge_fires_at_most_the_configured_number_of_times(
@@ -950,7 +958,90 @@ def test_a_chronic_template_does_not_trigger_the_nudge(loaded_db: ScratchpadDB) 
 
     script = [_note_turn(template_id, f"c{i}") for i, template_id in enumerate(acute)]
     script.append(text_turn("done"))
+    script.append(text_turn("still done"))
 
     result = InvestigationLoop(loaded_db, ScriptedProvider(script), _toolbox(loaded_db)).run()
 
+    # As above: the chronic template did not send this run back. Only the digest question did.
+    assert result.coverage_nudges == result.digest_nudges
+
+
+# --------------------------------------------- the digest-coverage nudge
+
+
+def test_a_conclusion_that_never_opened_the_digest_is_sent_back(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """The gap the signal nudge cannot see.
+
+    Measured across fifteen runs: the loop opened a median of four of the forty templates it
+    was handed, and every ground-truth marker it failed to cite sat in a template it never
+    opened. `pytest-pandas` cited all five signal templates, satisfied the existing nudge, and
+    stopped with its evidence unopened at ranks 16, 20 and 20.
+    """
+    script = [
+        _note_turn(template_id, f"c{i}") for i, template_id in enumerate(_signal_ids(loaded_db))
+    ]
+    script.append(text_turn("done"))
+    script.append(text_turn("still done"))
+    provider = ScriptedProvider(script)
+
+    result = InvestigationLoop(loaded_db, provider, _toolbox(loaded_db)).run()
+
+    assert result.digest_nudges == 1
+    asked = provider.calls[-1].messages[-1].text
+    assert "have not looked at any of them" in asked
+    assert "get_slice" in asked
+
+
+def test_reading_the_digest_earns_no_nudge(loaded_db: ScratchpadDB) -> None:
+    """The control: a run that opened what it was shown is not sent back.
+
+    Without it the test above passes on a loop that nudges every conclusion, which is the
+    false-alarm shape this project has removed once already.
+    """
+    toolbox = _toolbox(loaded_db)
+    # Every template the digest names, read the way a thorough run would read them.
+    for row in loaded_db.top_templates(limit=DIGEST_LIMIT, order_by="anomaly_score"):
+        toolbox.dispatch(
+            ToolCall(
+                id=f"t{row['template_id']}",
+                name="get_slice",
+                arguments={"template_id": int(row["template_id"]), "max_lines": 5},
+            )
+        )
+    script = [
+        _note_turn(template_id, f"c{i}") for i, template_id in enumerate(_signal_ids(loaded_db))
+    ]
+    script.append(text_turn("done"))
+
+    result = InvestigationLoop(loaded_db, ScriptedProvider(script), toolbox).run()
+
+    assert result.digest_nudges == 0
     assert result.coverage_nudges == 0
+
+
+def test_the_nudge_names_at_most_three_templates(loaded_db: ScratchpadDB) -> None:
+    """A question, not a shopping list -- and the prompt tells the model not to pad."""
+    script = [
+        _note_turn(template_id, f"c{i}") for i, template_id in enumerate(_signal_ids(loaded_db))
+    ]
+    script.append(text_turn("done"))
+    script.append(text_turn("still done"))
+    provider = ScriptedProvider(script)
+
+    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db)).run()
+
+    asked = provider.calls[-1].messages[-1].text
+    named = re.findall(r"\b\d+\b", asked.split("Template(s)")[1].split("rank high")[0])
+    assert 1 <= len(named) <= MAX_NUDGED_TEMPLATES
+
+
+def test_the_configured_cap_covers_both_questions(loaded_db: ScratchpadDB) -> None:
+    """One budget for both, so a model that declines twice cannot spin the loop."""
+    provider = ScriptedProvider([text_turn("done"), text_turn("still done")])
+
+    result = InvestigationLoop(loaded_db, provider, _toolbox(loaded_db), coverage_nudges=1).run()
+
+    assert result.coverage_nudges == 1
+    assert len(provider.calls) == 2

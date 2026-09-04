@@ -24,7 +24,7 @@ keeps going; the model retries. `dispatch` raising would end an investigation ov
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -130,6 +130,25 @@ class ToolBox:
         #: cite events 1 and 2, the first two lines of the file, for a claim about a service
         #: that appears in neither. The ids exist, so the report's existence check passed it.
         self._seen_events: set[int] = set()
+        #: Templates this investigation has actually pulled lines from, as opposed to having
+        #: been listed in the digest. The digest names forty; measured across fifteen runs the
+        #: loop opened a median of four of them, and every ground-truth marker it failed to
+        #: cite was in a template it never opened. That gap is what the digest-coverage nudge
+        #: asks about, so it has to be tracked from rows returned rather than from queries
+        #: issued -- a wide slice shows many templates without naming any.
+        self._shown_templates: set[int] = set()
+
+    @property
+    def shown_templates(self) -> set[int]:
+        """Templates whose lines the model has been shown. A copy: callers must not edit it."""
+        return set(self._shown_templates)
+
+    def _note_shown(self, rows: Sequence[Mapping[str, Any]]) -> None:
+        """Record every template represented in a tool result the model is about to read."""
+        for row in rows:
+            value = row.get("template_id")
+            if value is not None:
+                self._shown_templates.add(int(value))
 
     # ---------------------------------------------------------------- schema
 
@@ -465,6 +484,7 @@ class ToolBox:
             trace_id=trace_id,
         )
         self._seen_events.update(int(row["id"]) for row in rows)
+        self._note_shown(rows)
 
         filters = _describe(
             start_ts=start_ts,
@@ -552,6 +572,7 @@ class ToolBox:
             # Only when the query actually read log_events: `id` is a column on several
             # tables, and counting a note id as an event the model has seen would let a
             # fabricated citation back through the gate below.
+            self._note_shown(rows)
             self._seen_events.update(
                 int(row["id"]) for row in rows if isinstance(row.get("id"), int)
             )

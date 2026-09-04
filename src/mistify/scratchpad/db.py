@@ -393,6 +393,28 @@ class ScratchpadDB:
         self._conn.commit()
         return int(cursor.lastrowid or 0)
 
+    def clear_investigation(self) -> dict[str, int]:
+        """Delete everything a previous investigation wrote, leaving the ingest untouched.
+
+        For `investigate --restart`. Notes, the queries behind them and the critique all belong
+        to one attempt; leaving any of them for the next attempt to inherit is how a run comes
+        to be scored against findings it did not write. The harness already avoids this by
+        copying a fresh scratchpad per run -- this is the same guarantee for the CLI path.
+
+        Metrics are left alone: they are upserted by key, so the next run overwrites its own.
+        """
+        counts = {}
+        for table in (
+            "scratchpad_notes",
+            "query_log",
+            "adversarial_objections",
+            "adversarial_summary",
+        ):
+            cursor = self._conn.execute(f"DELETE FROM {table}")
+            counts[table] = cursor.rowcount if cursor.rowcount > 0 else 0
+        self._conn.commit()
+        return counts
+
     def notes(self) -> list[ScratchpadNote]:
         rows = self._conn.execute(
             "SELECT id, step, note, supporting_evidence_json, confidence, created_at"

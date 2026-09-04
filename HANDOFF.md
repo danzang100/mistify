@@ -250,6 +250,25 @@ Note for any batch: **the critique's free tier is 20 requests per day** on `gemi
 which `min_interval_seconds` cannot help with. `--no-adversarial` keeps a sweep on the loop
 model's own quota.
 
+### The loop looks past the first five now, and cannot inherit another run's notes
+
+**A digest-coverage nudge.** Measured across fifteen runs, the loop opened a median of **four
+of the forty** templates it was handed, and every ground-truth marker it failed to cite sat in
+a template it never opened. The existing nudge only asks about the signal set, so `pytest-pandas`
+cited all five, satisfied it, and stopped with its evidence unopened at ranks 16, 20 and 20. A
+second, weaker question now follows the first: the three highest-ranked digest templates the run
+never pulled lines from, open them or say why they do not matter. `investigate.digest_nudges`
+records which question fired. `pipeline.coverage_nudges` is now config, having been a
+constructor default the runner never passed.
+
+**`investigate` refuses a scratchpad that already holds notes**, and takes `--resume` (keep them
+and tell the investigator they are there) or `--restart` (delete the previous notes, queries and
+critique). The harness has always copied a fresh scratchpad per run; the CLI inherited silently,
+which is how a run comes to be scored against findings it did not write.
+
+Neither is measured against a model yet: `pytest-pandas` x3 is the sweep that would say whether
+the nudge converts into citations, and it is still blocked on `flash-lite` returning 503.
+
 ### Scoring: silence no longer passes
 
 `Check.scorable` landed. `avoids[...]` is a substring search over the conclusion, so an empty

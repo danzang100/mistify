@@ -83,17 +83,56 @@ _investigator_option = click.option(
 @click.option("--incident-id", required=True)
 @_investigator_option
 @click.option("--no-adversarial", is_flag=True, help="Skip the adversarial check.")
+@click.option(
+    "--resume",
+    is_flag=True,
+    help="Investigate again, keeping the notes already in the scratchpad and telling the "
+    "investigator they are there.",
+)
+@click.option(
+    "--restart",
+    is_flag=True,
+    help="Delete the previous investigation -- its notes, queries and critique -- and start "
+    "over. The ingest is untouched.",
+)
 @_config_option
 def investigate_command(
-    incident_id: str, investigator: str, no_adversarial: bool, config_path: Path | None
+    incident_id: str,
+    investigator: str,
+    no_adversarial: bool,
+    resume: bool,
+    restart: bool,
+    config_path: Path | None,
 ) -> None:
     """Investigate an ingested incident."""
     config = load_config(config_path)
     path = config.scratchpad_path(incident_id)
     if not path.exists():
         raise click.ClickException(f"no scratchpad for incident {incident_id!r} at {path}")
+    if resume and restart:
+        raise click.ClickException("--resume and --restart ask for opposite things")
 
     with ScratchpadDB(path) as db:
+        # A second investigation of a scratchpad that already holds notes is two runs sharing
+        # one record: the new run does not know the old notes are not its own -- it sees them
+        # only if it happens to call `read_notes` -- and anything scoring the scratchpad
+        # afterwards counts both. The eval harness has always avoided this by copying a fresh
+        # scratchpad per run; this is the same guarantee for the path a person uses. Refusing
+        # is deliberate: neither answer is safe to assume, and silently picking one is how the
+        # harness once scored a run against findings an interrupted run had left behind.
+        existing = db.notes()
+        if existing and not (resume or restart):
+            raise click.ClickException(
+                f"incident {incident_id!r} already holds {len(existing)} note(s) from an "
+                "earlier investigation. Pass --resume to continue from them, or --restart to "
+                "delete them and investigate again."
+            )
+        if restart and existing:
+            cleared = db.clear_investigation()
+            click.echo(
+                "restarted: cleared "
+                + ", ".join(f"{n} {t.replace('_', ' ')}" for t, n in cleared.items() if n)
+            )
         if investigator == "skeleton":
             skeleton = run_skeleton_investigation(db)
             click.echo(f"steps  {skeleton.steps}")
@@ -102,7 +141,12 @@ def investigate_command(
                 click.echo(f"  [{note.confidence}] {note.note}")
             return
 
-        result = _run_agent(db, config, adversarial=not no_adversarial)
+        result = _run_agent(
+            db,
+            config,
+            adversarial=not no_adversarial,
+            incident_context=RESUME_CONTEXT if resume and existing else "",
+        )
         click.echo(f"steps       {result.steps}")
         click.echo(f"tool calls  {result.tool_calls}")
         click.echo(f"notes       {len(result.notes)}")
@@ -557,7 +601,22 @@ def eval_templating_command(
         )
 
 
-def _run_agent(db: ScratchpadDB, config: MistifyConfig, adversarial: bool) -> InvestigationResult:
+#: What a resumed investigation is told before it starts. Without it the earlier notes are
+#: invisible unless the model happens to call `read_notes`, and it can spend its budget
+#: rediscovering what is already written down -- or contradict it without noticing.
+RESUME_CONTEXT = (
+    "This incident has already been investigated once and that attempt's notes are in the "
+    "scratchpad. Call read_notes first. Build on what is there, correct it where you disagree, "
+    "and do not repeat work it already did."
+)
+
+
+def _run_agent(
+    db: ScratchpadDB,
+    config: MistifyConfig,
+    adversarial: bool,
+    incident_context: str = "",
+) -> InvestigationResult:
     """The investigation, with credential failures turned into usage errors.
 
     The run itself lives in `mistify.agent.runner` so the eval harness drives exactly what this
@@ -567,7 +626,9 @@ def _run_agent(db: ScratchpadDB, config: MistifyConfig, adversarial: bool) -> In
     from mistify.llm.registry import MissingCredentialError
 
     try:
-        return run_investigation(db, config, adversarial=adversarial)
+        return run_investigation(
+            db, config, adversarial=adversarial, incident_context=incident_context
+        )
     except MissingCredentialError as exc:
         raise click.ClickException(str(exc)) from exc
 

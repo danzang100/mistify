@@ -33,6 +33,7 @@ from mistify.metrics import (
     INVESTIGATE_CACHED_INPUT_TOKENS,
     INVESTIGATE_CAVEAT,
     INVESTIGATE_COVERAGE_NUDGES,
+    INVESTIGATE_DIGEST_NUDGES,
     INVESTIGATE_HISTORY_COMPACTIONS,
     INVESTIGATE_INPUT_GROWTH,
     INVESTIGATE_INPUT_TOKENS,
@@ -60,6 +61,16 @@ __all__ = [
 ]
 
 INVESTIGATOR_NAME = "agent-loop"
+
+#: Templates the digest shows, and therefore the set the coverage nudge holds the investigation
+#: to. One constant rather than two defaults, because `build_system_prompt` and the nudge must
+#: agree about what "you were shown this" means.
+DIGEST_LIMIT = 40
+
+#: How many unopened templates a single nudge may name. The digest holds forty and a nudge
+#: listing thirty of them is a shopping list, not a question -- and the prompt tells the model
+#: not to pad the investigation, which a long list invites it to do.
+MAX_NUDGED_TEMPLATES = 3
 
 CAVEAT = (
     "A model drove this investigation through the scratchpad tools. Every claim below cites "
@@ -153,6 +164,10 @@ class InvestigationResult:
     input_per_step: list[int] = field(default_factory=list)
     compactions: int = 0
     coverage_nudges: int = 0
+    #: How many of those nudges were about unopened digest templates rather than about an
+    #: unexplained signal template. Two different failures wearing one counter would make the
+    #: next sweep unreadable.
+    digest_nudges: int = 0
 
     @property
     def input_growth(self) -> float:
@@ -185,7 +200,7 @@ def _severity_source(db: ScratchpadDB) -> str:
     return "field" if row is None else str(row["value"])
 
 
-def build_system_prompt(db: ScratchpadDB, digest_limit: int = 40) -> str:
+def build_system_prompt(db: ScratchpadDB, digest_limit: int = DIGEST_LIMIT) -> str:
     """System prompt plus the incident's template digest.
 
     The digest goes in the system prompt rather than the first user message because it is the
@@ -302,8 +317,38 @@ class InvestigationLoop:
         raw = MetricView(self.db.metrics("anomaly")).text(ANOMALY_SIGNAL_TEMPLATE_IDS) or ""
         return [int(part) for part in raw.split(",") if part.strip()]
 
+    def _unopened_digest_templates(self) -> list[int]:
+        """Digest templates the model was never shown lines from, and never cited.
+
+        The gap this closes was measured rather than supposed: across fifteen runs the loop
+        opened a median of four of the forty templates it was handed, and **every** ground-truth
+        marker it failed to cite lived in a template it never opened. The existing nudge asks
+        only about the signal set -- the top few by score -- so on `pytest-pandas` the run cited
+        all five, satisfied it, and stopped with its evidence unopened at ranks 16, 20 and 20.
+
+        Cited-but-unopened is deliberately excluded: naming a template in a note is a claim
+        about it, and asking the model to look at something it has already committed to is a
+        different question from asking about something it ignored.
+        """
+        shown = self.toolbox.shown_templates
+        cited: set[int] = set()
+        for note in self.db.notes():
+            cited.update(int(i) for i in note.evidence.get("template_ids", []))
+        ranked = self.db.top_templates(limit=DIGEST_LIMIT, order_by="anomaly_score")
+        unopened = [
+            int(row["template_id"])
+            for row in ranked
+            if int(row["template_id"]) not in shown and int(row["template_id"]) not in cited
+        ]
+        return unopened[:MAX_NUDGED_TEMPLATES]
+
     def _nudge(self, messages: list[Message], turn: Turn, result: InvestigationResult) -> bool:
-        """Refuse a conclusion that leaves an acute signal template unaccounted for, once.
+        """Refuse a conclusion that ignored something it was shown, up to `max_coverage_nudges`.
+
+        Two questions, strongest first. The signal set is the acute one -- a high-scoring
+        template active in the window that no note cites. Failing that, the weaker one: a
+        template near the top of the digest the model never opened at all. The second exists
+        because the first stopped being enough; see `_unopened_digest_templates`.
 
         `unexplained_signal_templates` is model-free and already existed -- it just ran too
         late to change anything, in the adversarial pass, after the investigation had ended.
@@ -320,25 +365,33 @@ class InvestigationLoop:
         if result.coverage_nudges >= self.max_coverage_nudges:
             return False
         unexplained, _ = unexplained_signal_templates(self.db, self._signal_template_ids())
-        if not unexplained:
-            return False
+        if unexplained:
+            question = (
+                f"Before you finish: template(s) {', '.join(str(i) for i in unexplained)} were "
+                "ranked as signal, were active during the incident window, and no note you have "
+                "written cites them. For each one, either write a note citing it, or write a "
+                "note saying why it is not relevant to this incident. A reasoned dismissal is a "
+                "finding; silence is not."
+            )
+        else:
+            unopened = self._unopened_digest_templates()
+            if not unopened:
+                return False
+            result.digest_nudges += 1
+            question = (
+                "Before you finish: you were shown the "
+                f"{DIGEST_LIMIT} most anomalous templates and have pulled lines from "
+                f"{len(self.toolbox.shown_templates)} of them. Template(s) "
+                f"{', '.join(str(i) for i in unopened)} rank high and you have not looked at "
+                "any of them. Read them with get_slice, then either cite what you find or "
+                "write a note saying why they are not relevant. Do not restate your conclusion "
+                "unchanged; if they change nothing, say so and why."
+            )
 
-        listed = ", ".join(str(i) for i in unexplained)
         # The assistant's own turn goes back first: without it the conversation has two user
         # messages in a row, which is not a shape any provider accepts.
         messages.append(Message(role="assistant", text=turn.text))
-        messages.append(
-            Message(
-                role="user",
-                text=(
-                    f"Before you finish: template(s) {listed} were ranked as signal, were active "
-                    "during the incident window, and no note you have written cites them. For "
-                    "each one, either write a note citing it, or write a note saying why it is "
-                    "not relevant to this incident. A reasoned dismissal is a finding; silence "
-                    "is not."
-                ),
-            )
-        )
+        messages.append(Message(role="user", text=question))
         result.coverage_nudges += 1
         return True
 
@@ -457,6 +510,7 @@ class InvestigationLoop:
                 (INVESTIGATE_INPUT_GROWTH, round(result.input_growth, 2)),
                 (INVESTIGATE_HISTORY_COMPACTIONS, result.compactions),
                 (INVESTIGATE_COVERAGE_NUDGES, result.coverage_nudges),
+                (INVESTIGATE_DIGEST_NUDGES, result.digest_nudges),
                 (
                     INVESTIGATE_OUTCOME,
                     "budget_limited"

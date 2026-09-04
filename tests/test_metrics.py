@@ -95,6 +95,7 @@ EXPECTED_METRIC_KEYS = {
     ("investigate", "input_growth_factor"),
     ("investigate", "history_compactions"),
     ("investigate", "coverage_nudges"),
+    ("investigate", "digest_nudges"),
     ("synthesis", "provider"),
     ("synthesis", "model"),
     ("synthesis", "outcome"),

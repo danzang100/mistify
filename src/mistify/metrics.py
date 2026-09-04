@@ -312,6 +312,10 @@ INVESTIGATE_HISTORY_COMPACTIONS = Metric("investigate", "history_compactions", "
 #: unaccounted for, and asked for one more turn. The check itself is model-free; this counts
 #: how often it had to fire.
 INVESTIGATE_COVERAGE_NUDGES = Metric("investigate", "coverage_nudges", "int")
+#: Of those nudges, the ones asking about a digest template the model never opened. Separate
+#: from the total because the two questions fail for different reasons and the fix for one is
+#: not the fix for the other.
+INVESTIGATE_DIGEST_NUDGES = Metric("investigate", "digest_nudges", "int")
 
 # ------------------------------------------------------------------ synthesis
 
@@ -459,6 +463,7 @@ ALL_METRICS: tuple[Metric, ...] = (
     INVESTIGATE_INPUT_GROWTH,
     INVESTIGATE_HISTORY_COMPACTIONS,
     INVESTIGATE_COVERAGE_NUDGES,
+    INVESTIGATE_DIGEST_NUDGES,
     SYNTHESIS_PROVIDER,
     SYNTHESIS_MODEL,
     SYNTHESIS_OUTCOME,

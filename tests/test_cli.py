@@ -10,6 +10,7 @@ from click.testing import CliRunner
 
 from mistify.cli import cli
 from mistify.eval.fixtures import ROOT_CAUSE_MARKER
+from mistify.scratchpad.db import ScratchpadDB
 
 
 @pytest.fixture
@@ -274,3 +275,60 @@ def test_eval_digest_fails_when_the_evidence_is_below_the_digest(
 
     assert result.exit_code == 1, result.output
     assert "markers in the top 1" in result.output
+
+
+def test_investigating_twice_refuses_rather_than_inheriting_notes(
+    runner: CliRunner, incident_file: Path, config_file: Path
+) -> None:
+    """Two runs sharing one scratchpad is two investigations sharing one record.
+
+    The second run does not know the notes are not its own, and anything scoring the scratchpad
+    afterwards counts both. The eval harness copies a fresh scratchpad per run to avoid exactly
+    this; the CLI used to inherit silently.
+    """
+    common = ["--incident-id", "twice", "--config", str(config_file)]
+    ingest = runner.invoke(cli, ["ingest", "--source", str(incident_file), *common])
+    assert ingest.exit_code == 0, ingest.output
+    first = runner.invoke(cli, ["investigate", "--investigator", "skeleton", *common])
+    assert first.exit_code == 0, first.output
+
+    second = runner.invoke(cli, ["investigate", "--investigator", "skeleton", *common])
+
+    assert second.exit_code != 0
+    assert "already holds" in second.output
+    assert "--resume" in second.output and "--restart" in second.output
+
+
+def test_restart_clears_the_previous_investigation(
+    runner: CliRunner, incident_file: Path, config_file: Path, tmp_path: Path
+) -> None:
+    """`--restart` is the other answer, and it says how much it deleted."""
+    common = ["--incident-id", "again", "--config", str(config_file)]
+    runner.invoke(cli, ["ingest", "--source", str(incident_file), *common])
+    runner.invoke(cli, ["investigate", "--investigator", "skeleton", *common])
+    with ScratchpadDB(tmp_path / "incident_again.sqlite") as db:
+        before = len(db.notes())
+    assert before, "the skeleton investigator is expected to write notes"
+
+    restarted = runner.invoke(
+        cli, ["investigate", "--investigator", "skeleton", "--restart", *common]
+    )
+
+    assert restarted.exit_code == 0, restarted.output
+    assert "restarted: cleared" in restarted.output
+    with ScratchpadDB(tmp_path / "incident_again.sqlite") as db:
+        # The rerun wrote its own; what matters is that it did not inherit the first run's.
+        assert len(db.notes()) == before
+
+
+def test_a_first_investigation_needs_no_flag(
+    runner: CliRunner, incident_file: Path, config_file: Path
+) -> None:
+    """The control: the refusal must not stand in front of an ordinary first run."""
+    common = ["--incident-id", "once", "--config", str(config_file)]
+    runner.invoke(cli, ["ingest", "--source", str(incident_file), *common])
+
+    result = runner.invoke(cli, ["investigate", "--investigator", "skeleton", *common])
+
+    assert result.exit_code == 0, result.output
+    assert "already holds" not in result.output

@@ -27,9 +27,17 @@ __all__ = ["run_investigation"]
 
 
 def run_investigation(
-    db: ScratchpadDB, config: MistifyConfig, adversarial: bool = True
+    db: ScratchpadDB,
+    config: MistifyConfig,
+    adversarial: bool = True,
+    incident_context: str = "",
 ) -> InvestigationResult:
     """Drive the model loop, optionally let a stronger model conclude, then let a critique answer.
+
+    `incident_context` replaces the opening instruction when a caller has something the model
+    needs to know before it starts -- resuming an investigation whose notes are already in the
+    scratchpad, for instance, where silence would let it mistake another run's findings for its
+    own.
 
     The order is load-bearing. Synthesis runs *before* the adversarial pass because the
     conclusion is the main thing the critique exists to attack; critiquing the loop's notes and
@@ -46,8 +54,9 @@ def run_investigation(
         max_tokens=config.llm.max_tokens,
         task_budget_tokens=config.llm.task_budget_tokens,
         tool_result_history_steps=config.pipeline.tool_result_history_steps,
+        coverage_nudges=config.pipeline.coverage_nudges,
     )
-    result = loop.run()
+    result = loop.run(incident_context)
 
     if config.llm.synthesis_model is not None:
         from mistify.agent.synthesis import run_synthesis

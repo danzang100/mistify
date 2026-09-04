@@ -46,6 +46,13 @@ class PipelineConfig(_Strict):
     #: everything, which is what the cost curve looked like before this existed.
     tool_result_history_steps: int = Field(default=3, ge=0)
 
+    #: How many times a conclusion may be sent back for ignoring something the investigation
+    #: was shown. Zero accepts the first conclusion offered. It was a constructor default the
+    #: runner never passed, so the one lever measurement says matters could not be moved
+    #: without editing source -- and it fired on fifteen runs out of fifteen, which makes it
+    #: part of the normal path rather than a backstop.
+    coverage_nudges: int = Field(default=1, ge=0)
+
 
 def _registered_adapters() -> list[str]:
     """Every adapter the registry implements, in a stable order.
