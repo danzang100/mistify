@@ -1,6 +1,6 @@
 """The bounded investigation loop.
 
-The model is given the ranked template list and four tools, and works until it writes a
+The model is given the ranked template list and five tools, and works until it writes a
 conclusion or runs out of tool calls. Three things about that are deliberate.
 
 **It is bounded, and says when the bound bit.** An investigation that stops because it ran out

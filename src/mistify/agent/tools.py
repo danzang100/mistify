@@ -1,4 +1,4 @@
-"""The four tools the investigator is given, and the dispatcher behind them.
+"""The five tools the investigator is given, and the dispatcher behind them.
 
 This is the whole surface the model gets on the incident: rank templates, pull a bounded
 slice of raw lines, run read-only SQL, write a note. There is deliberately no way to reach
@@ -100,7 +100,7 @@ class _Outcome:
 
 
 class ToolBox:
-    """The scratchpad, a definition of noise, and a step counter, bound to four tools.
+    """The scratchpad, a definition of noise, and a step counter, bound to five tools.
 
     One instance per investigation. The step counter is held here rather than passed per
     call so `query_log` and `scratchpad_notes` order the same way and a note can be lined up
