@@ -93,6 +93,44 @@ set `must_not_lead`, which no LogDx case does. So the recorded score is ranking-
 construction, and the only way to find out whether a better digest produces a better diagnosis
 is a fresh run — five cases, ~170k tokens each, at `min_interval_seconds: 5.5`.
 
+## The paid run: the total did not move, the failure mode did
+
+Five dev cases, one run each, same models and `min_interval_seconds: 5.5`, scored against the
+five recorded runs the ranking change was measured against.
+
+**45/64 before, 45/64 after** — and almost none of that is the same 45.
+
+| case | before | after | steps | notes | outcome | tokens |
+|---|---|---|---|---|---|---|
+| pytest-pandas | 11/13 | **7/13** | 21 → 13 | 2 → 1 | budget-limited → converged | 178k → 94k |
+| mypy-pandas | 11/13 | 11/13 | 20 → 22 | 2 → 3 | converged → budget-limited | 147k → 189k |
+| lint-react | 10/12 | 10/12 | 15 → 9 | 2 → 2 | converged | 128k → 125k |
+| cargo-tokio | 8/14 | **9/14** | 20 → 9 | 2 → 2 | converged | 175k → 76k |
+| jest-nextjs | 5/12 | **8/12** | 21 → 14 | **0 → 2** | budget-limited → converged | 209k → 122k |
+| **total** | **45/64** | **45/64** | | | | 837k → **607k** |
+
+The number worth reading is `jest-nextjs`. Before, it was the case that spent 21 steps and 209k
+tokens and wrote **no notes at all** — its 5/12 was `avoids` and `citations-resolve` passing
+trivially on an empty conclusion, so its real score was 1/12. It now converges in 14 steps
+citing `fatal: detected dubious ownership in repository at '/work'`, which is the root cause.
+That is 1/12 to 8/12 on the case the old digest failed hardest.
+
+`pytest-pandas` went the other way, and it is not a search failure: its four markers are all
+inside the new digest. It concluded in 13 steps with one note where it previously took 21 and
+wrote two, and the three citations it lost are the ones the second note carried. A better
+starting list appears to have made it stop sooner, and stopping sooner cost it evidence.
+
+**Caveats, both load-bearing.** One run per arm, on a loop whose run-to-run spread has never
+been measured — a three-check swing is not distinguishable from noise at n=1. And every run in
+the new arm lost its critique to the free tier's 20-requests-per-day cap on `gemini-3.5-flash`
+(the first two to a 503 before that). The critique writes only to the adversarial tables, never
+to notes, so no scored check can move because of it — but "the investigation was scored, the
+critique never ran" is what these five runs are.
+
+The honest reading: the ranking demonstrably fixed what it was built to fix — the model now
+starts from the evidence, converges more often, and costs 28% less — and the scorecard total is
+unchanged, because it was never a measurement of where the search started.
+
 ## Tried, and not taken
 
 Weight sweep over the same 20 cases, with the recovered term forced on everywhere (so these

@@ -216,9 +216,16 @@ check on any split for the price of an ingest.
 investigations re-score to the same 45/64 under both rankings, check for check, even though the
 two orderings share not one template in their top ten. No LogDx check reads the ranking:
 `does-not-lead-with[...]` is the only one that does and it needs `must_not_lead`, which no LogDx
-case sets. Whether a better digest produces a better diagnosis needs a fresh run — five cases,
-~170k tokens each, at `min_interval_seconds: 5.5`. That is the next thing worth paying for, and
-there is now a reason to expect a different answer.
+case sets. Whether a better digest produces a better diagnosis was then measured directly:
+five dev cases re-run, **45/64 before and 45/64 after**, and hardly the same 45. `jest-nextjs`
+went from no notes at all in 21 steps to a converged conclusion citing the real root cause
+(1/12 to 8/12 on the handoff's own accounting); `cargo-tokio` gained one; `pytest-pandas` lost
+four by concluding in 13 steps with one note where it used to take 21 and write two. The whole
+sweep cost 607k tokens against 837k. One run per arm, so a three-check swing is not
+distinguishable from noise — and **every new run lost its critique to a 20-requests-per-day cap
+on `gemini-3.5-flash`**, which cannot move a scored check but means these are investigations
+without critiques. The next measurement worth paying for is repeats: `--runs 3
+--no-adversarial` keeps the whole sweep on the loop model's own quota.
 
 ### Cheap and well understood
 
