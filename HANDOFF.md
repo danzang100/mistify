@@ -293,6 +293,20 @@ signal templates, which it dismissed as startup warnings with four event ids. Th
 ran on `gemini-3.5-flash` for 3,729 tokens, raised one low-severity objection (an INFO line
 cited as a timeout), and the investigation rebutted it rather than folding.
 
+A fifth run, same configuration, reproduced it exactly: converged, 3 notes, 26 of 30 calls,
+silent nudge at call 18, first note at step 19 naming the same core failure. Left alone the
+loop circles (three runs); asked once it writes (two runs). It also found a second failure
+the fourth run missed — connection refused to an external pricing host,
+`capplink.cappcon.com:33443` — so the primary cause is stable across runs and the secondary
+is not.
+
+**The critique earned its keep on the fifth run.** Two medium objections, both conceded: the
+conclusion claimed a 503 status the cited rows do not contain (they show `errorCode 3003` and
+`status:500`), and attributed a bare `java.net.ConnectException: Connection timed out` to Solr
+with nothing in the row saying so. Verified by hand against the file. That is the entailment
+gap — ids that resolve, claims that do not follow — caught by the mechanism built for it, on
+somebody's real production log, for 5,874 tokens.
+
 Read with care: one run, three changes in it. The nudge is the one with a visible causal
 chain; the extra ten calls cannot be separated from it at n=1.
 
