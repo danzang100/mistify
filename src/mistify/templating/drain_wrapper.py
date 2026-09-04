@@ -8,6 +8,8 @@ Templating runs on already-redacted text (decision G1). Two consequences worth s
     distinct source value would produce a distinct placeholder hash, and a template that
     should read "Connection to <REDACTED> failed" would fragment into one cluster per
     address -- redaction would silently destroy the compression it is meant to be neutral to.
+3.  A timestamp the *transport* stamped on every line is masked for the same reason. See
+    `_TRANSPORT_TIMESTAMP`.
 """
 
 from __future__ import annotations
@@ -27,6 +29,30 @@ from mistify.common.models import TemplateResult, TemplateSummary, severity_rank
 from mistify.redaction.patterns import placeholder_pattern
 
 __all__ = ["DrainTemplater", "read_snapshot"]
+
+#: A timestamp the log transport stamped on the front of every line, as distinct from one the
+#: application wrote. GitHub Actions prefixes every line of every job with an ISO-8601 instant,
+#: so the first token of every line is unique -- and Drain3 keeps it, because a token is only
+#: generalised once two messages already share a cluster, which these never do.
+#:
+#: Measured before adding it, on three real CI logs, counting templates through this templater:
+#:
+#:     corpus            shipped   + this mask   + numbers   + hex   + paths
+#:     jest-nextjs         9,501           848         834      833      610
+#:     hibernate          22,342           600         608      606      563
+#:     pytest-pandas       1,512           941         904      888      840
+#:
+#: One regex, 11x on one corpus and 37x on another. Numbers, hex and UUIDs -- the usual
+#: suspects, and the ones this change was expected to need -- buy tens of templates and on
+#: hibernate cost eight, because `parametrize_numeric_tokens` already generalises any token
+#: carrying a digit. Paths are the only other real contributor and only where a build prints a
+#: file list, so they are left out until a corpus needs them.
+#:
+#: Deliberately narrow: anchored at the start, and only the `T...Z` form. A timestamp in the
+#: middle of a line is the application's own and part of what it said; a syslog or Hadoop date
+#: is not this shape and is left to `parametrize_numeric_tokens`, which is what the Loghub
+#: numbers below were measured against.
+_TRANSPORT_TIMESTAMP = r"^\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s*"
 
 
 def read_snapshot(path: str | Path) -> str:
@@ -84,6 +110,7 @@ class DrainTemplater:
         config.drain_max_clusters = max_clusters
         config.masking_instructions = [
             MaskingInstruction(placeholder_pattern(), "REDACTED"),
+            MaskingInstruction(_TRANSPORT_TIMESTAMP, "TS"),
         ]
 
         self.snapshot_path = snapshot_path

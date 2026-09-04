@@ -250,6 +250,25 @@ Note for any batch: **the critique's free tier is 20 requests per day** on `gemi
 which `min_interval_seconds` cannot help with. `--no-adversarial` keeps a sweep on the loop
 model's own quota.
 
+### One regex took 43,589 templates to 7,795
+
+The architecture assumes Drain3 hands the ranking hundreds of templates; on CI logs it was
+handing it tens of thousands. The cause was not assertion values, hex or UUIDs — those are
+already absorbed by `parametrize_numeric_tokens`. It was the ISO instant GitHub Actions stamps
+on the front of **every** line, which Drain3 keeps, because a token is only generalised once two
+messages share a cluster and these never did.
+
+Masked as transport rather than content: jest-nextjs 9,501 templates to 848, hibernate 22,342 to
+600, pytest-pandas 1,512 to 941; across all twenty LogDx-CI cases 43,589 to 7,795. **Loghub
+grouping accuracy is unchanged to the digit** (0.910 mean; the mask is anchored and matches only
+the `T...Z` form, so syslog, Hadoop and BGL dates pass through). Numbers, hex and paths were
+measured on top of it and left out — numbers buy 14 templates on one corpus and cost 8 on
+another.
+
+Digest recall barely moves — @5 flat at 19, @10 26 to 28, @20 35 to 36, @40 40 to 39 — and that
+is the point worth reading: the mask does not find more evidence, it makes the digest a
+meaningful share of the file. Hibernate's forty templates were 0.2% of its file and are now 8.8%.
+
 ### The loop looks past the first five now, and cannot inherit another run's notes
 
 **A digest-coverage nudge.** Measured across fifteen runs, the loop opened a median of **four

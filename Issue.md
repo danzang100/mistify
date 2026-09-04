@@ -443,6 +443,13 @@ redistribution. Rarity needs its own answer; inverse log frequency against the m
 template says nothing when the mode is one, which is the remaining half of the flat-tie problem
 now that singleton burstiness is gone.
 
+**Related, and now fixed at the source.** The flat tie had a second cause outside the scorer:
+GitHub Actions stamps an ISO instant on the front of every line, and Drain3 kept it, so almost
+every line was its own template. Masking it as transport rather than content took the twenty
+LogDx-CI cases from **43,589 templates to 7,795** — hibernate from 22,071 to 453 — with Loghub
+grouping accuracy unchanged to the digit. Rarity is still degenerate, but on a far smaller
+population.
+
 **Where.** `mistify/scratchpad/anomaly.py::_burstiness_component` and `_rarity_component`;
 `severity_source` is the shape the decision should take. Related: Issue 2 (scores are global)
 and Issue 8 (no duration term), both of which also live in the same function.
