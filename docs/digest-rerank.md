@@ -172,16 +172,59 @@ three terms. The old ranking failed randomly; this one fails **systematically, t
 headers about errors rather than the errors themselves**. The model then concludes from the
 summary — true, and shallower than the ground truth wants.
 
-Two cheap things follow, both measurable with `mistify eval --digest` and no model calls:
-
-1. **Discount templates that are mostly punctuation.** A pattern whose alphanumeric content is
-   a small fraction of its length is a separator, not evidence.
-2. **The signal cut lands inside a tie.** Ranks 1-5 all score 0.869 exactly; "the largest gap in
-   the distribution" is not meaningful when the top of the distribution is flat, and the set the
-   nudge enforces is then arbitrary among equals.
-
 The coverage nudge fired on **15 runs out of 15**, so it is now part of the normal path rather
-than a backstop — and on this case it enforced the wrong five templates.
+than a backstop, and on this case it enforced the wrong five templates.
+
+## The banners were a symptom: one occurrence is not a burst
+
+Two fixes were proposed from the paragraph above, implemented, measured across all twenty cases,
+and **both rejected**. A correction first: the claim that the signal cut *landed inside* a tie
+was wrong. The largest-gap rule put the cut at exactly the end of the tied block, which is what
+it is supposed to do. What is true is worse -- **the tied block itself is enormous**: 507 of
+`jest-nextjs`'s 9,307 templates share the top score, so its entire 40-template digest came from
+inside one flat block, ordered by template id, which is first-seen order.
+
+Measured at three depths, 65 markers:
+
+| variant | top 5 | top 10 | top 40 |
+|---|---|---|---|
+| neither | 16 | 24 | 41 |
+| discount mostly-punctuation templates | 15 | 23 | 40 |
+| break ties by recency instead of id | 14 | 25 | **48** |
+| both | 13 | 24 | 47 |
+| **one occurrence is not bursty** | **21** | **27** | 42 |
+
+* The **punctuation discount** removes banners from the top five, which was its purpose, and
+  costs a marker at every depth. Nothing free supports it.
+* The **recency tie-break** wins at 40 and is a trap: it moves `jest-nextjs`'s root cause,
+  `fatal: detected dubious ownership`, from rank 3 to rank **504** -- out of the digest. That is
+  the marker three runs out of three cited. It is a git checkout failure near the *start* of a
+  build, and "prefer the end of the file" is precisely wrong for it.
+
+Asking why the ties existed found the actual defect. Burstiness is
+`max_per_bucket / (count / total_buckets)`, so a template that fired **once** divides by a mean
+of `1/total_buckets` and scores `1 - 1/total_buckets`: maximal burstiness, for every singleton
+in the file. Not a measurement -- an artefact of the denominator, and the thing that fuses the
+top of the ranking into one tie.
+
+A single occurrence now scores zero burstiness, and that alone does everything the two rejected
+fixes were meant to do. Measured through `mistify eval --digest` on all twenty cases:
+
+| depth | before | after |
+|---|---|---|
+| top 5 | 14 | **19** |
+| top 10 | 22 | **26** |
+| top 20 | 35 | 35 |
+| top 40 | 39 | 40 |
+
+Depth 40 is a wash; the evidence moves *up*, which is the half that matters -- the set the
+coverage nudge enforces is five templates, not forty. `pytest-pandas`'s top five is now five
+lines that each name a failing test, with no banners in it: the punctuation discount was
+redundant, because banners only ever ranked through the artefact. `jest-nextjs` keeps its root
+cause in the digest (3 to 12) and gains a second marker (510 to **3**).
+
+Not free of losses: `lint-react` (140,144 to 161,165) and `tsc-typescript` (167 to 192) sink
+further. Both are cases whose evidence is worded calmly and was already far outside the digest.
 
 ## Tried, and not taken
 

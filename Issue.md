@@ -411,8 +411,11 @@ the digest came to be ordered by first appearance.
 
 **What landed.** Severity is now recovered from the template text when the source has no
 severity field, which lifted ground-truth markers inside the top 40 from 1 of 65 to 39 of 65
-across 20 LogDx-CI cases (`docs/digest-rerank.md`). That fixed the term with the heaviest
-weight and left the other two as they are.
+across 20 LogDx-CI cases (`docs/digest-rerank.md`). **Burstiness then lost its worst case**: a
+template with one occurrence scored `1 - 1/total_buckets`, the maximum, because the mean it
+divides by is `1/total_buckets`. Singletons now score zero there, which moved markers into the
+top five from 14 of 65 to 19 and cleared the section banners out of the set the coverage nudge
+enforces. Rarity is untouched.
 
 **Measured, and deliberately not taken.** Zeroing burstiness and rarity as well scores best of
 six weightings — 31 of 47 markers on unseen cases against the shipped 27 — but the corpus that
@@ -423,7 +426,8 @@ that would be damaged, and nothing here measures it.
 `unparseable_timestamp` per line, so a file whose timestamps are synthetic could drop
 burstiness the same way an unlabelled file drops severity — one rule, one metric, the same
 redistribution. Rarity needs its own answer; inverse log frequency against the most common
-template says nothing when the mode is one.
+template says nothing when the mode is one, which is the remaining half of the flat-tie problem
+now that singleton burstiness is gone.
 
 **Where.** `mistify/scratchpad/anomaly.py::_burstiness_component` and `_rarity_component`;
 `severity_source` is the shape the decision should take. Related: Issue 2 (scores are global)

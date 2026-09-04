@@ -406,3 +406,42 @@ def test_a_severity_field_still_beats_the_words_when_there_is_one() -> None:
     ]
     scored = score_templates(rows, total_buckets=BUCKETS, severity_informative=True)
     assert [c.template_id for c in scored] == [2, 1]
+
+
+# --------------------------------------- burstiness of a single occurrence
+
+
+def test_one_occurrence_is_not_bursty() -> None:
+    """A single event has no distribution to be concentrated in.
+
+    The formula divides by a mean of `1/total_buckets`, so a singleton used to score
+    `1 - 1/total_buckets` -- maximal burstiness, for every template that fired once. That
+    artefact is what tied the top of the ranking into one flat block.
+    """
+    scored = score_templates([_row(1, 1, 4, max_per_bucket=1)], total_buckets=BUCKETS)
+
+    assert scored[0].burstiness == 0.0
+
+
+def test_a_real_burst_is_still_bursty() -> None:
+    """The control: the term has to keep working for what it was built to detect."""
+    packed = _row(1, 40, 4, max_per_bucket=40)
+    spread = _row(2, 40, 4, max_per_bucket=1)
+    scored = {c.template_id: c for c in score_templates([packed, spread], total_buckets=BUCKETS)}
+
+    assert scored[1].burstiness > scored[2].burstiness
+    assert scored[1].burstiness > 0.9
+
+
+def test_a_repeated_error_outranks_a_one_off_that_reads_the_same() -> None:
+    """The ranking consequence, on the shape that caused it.
+
+    `==== ERRORS ====` fires once, is unique and says ERROR, so it took the maximum of all
+    three terms and crowded the templates the coverage nudge makes an investigation account
+    for. A failure that actually repeats now outranks the banner announcing it.
+    """
+    banner = _text_row(1, "==================== ERRORS ====================", count=1)
+    failure = _text_row(2, "assert index.get_loc(<*>) == 1", count=4) | {"max_per_bucket": 4}
+    scored = score_templates([banner, failure], total_buckets=BUCKETS, severity_informative=False)
+
+    assert [c.template_id for c in scored] == [2, 1]

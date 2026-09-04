@@ -158,8 +158,22 @@ def _burstiness_component(max_per_bucket: int, total: int, total_buckets: int) -
 
     A ratio of 1.0 is uniform; higher is peaked. Mapped through `1 - 1/ratio` so the result
     saturates towards 1 rather than running away on extreme peaks.
+
+    **One occurrence has no distribution to be concentrated, and scores zero rather than one.**
+    The formula divides by a mean of `1/total_buckets`, so a template that fired once came out
+    at `1 - 1/total_buckets` -- indistinguishable from a genuine burst, for every singleton in
+    the file. That is what made the top of the ranking a single flat tie: 507 of one case's
+    9,307 templates shared the top score, and its whole 40-template digest came from inside that
+    block, ordered by template id, which is the order the lines first appeared. Measured across
+    twenty LogDx-CI cases, dropping the artefact moves ground-truth markers into the top five
+    from 16 of 65 to 21, and into the top ten from 24 to 27.
+
+    It also removes the section banners that crowded the set the coverage nudge enforces:
+    `==== ERRORS ====` fires once, is unique, and says ERROR, so it took the maximum of all
+    three terms. With this it takes two of them, and `pytest-pandas`'s top five becomes five
+    lines that name a failing test.
     """
-    if total <= 0 or max_per_bucket <= 0 or total_buckets <= 1:
+    if total <= 1 or max_per_bucket <= 0 or total_buckets <= 1:
         return 0.0
     mean_per_bucket = total / total_buckets
     if mean_per_bucket <= 0:

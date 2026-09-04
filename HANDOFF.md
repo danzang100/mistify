@@ -233,9 +233,18 @@ cited all five and satisfied the nudge, and the three markers it missed sit at r
 20 — inside the digest, outside the signal set, so nothing asked. Ranks 1-5 are single-occurrence
 pytest **banners** (`==== ERRORS ====`, the summary count, `##[error]Process completed with exit
 code 1`), which take the maximum of all three terms. The old ranking failed randomly; this one
-fails towards section headers about errors. Two free follow-ups in `docs/digest-rerank.md`:
-discount templates that are mostly punctuation, and fix a signal cut that lands inside a
-five-way tie at 0.869. The coverage nudge fired on 15 runs of 15.
+fails towards section headers about errors. The coverage nudge fired on 15 runs of 15.
+
+**Chasing that found a real defect in burstiness.** Two follow-ups — discounting
+mostly-punctuation templates, and breaking score ties by recency rather than template id — were
+implemented, measured on all twenty cases and rejected: the first costs a marker at every depth,
+the second moves `jest-nextjs`'s root cause from rank 3 to 504, and that is the marker three
+runs of three cited. (The earlier claim that the signal cut lands *inside* a tie was wrong. The
+cut is right; the tie is the problem — 507 of that case's 9,307 templates share the top score.)
+The cause: `max_per_bucket / (count / total_buckets)` gives a template that fired **once** a
+burstiness of `1 - 1/total_buckets`, so every singleton in every file is maximally bursty.
+Zeroing it moves markers into the top five from 14 of 65 to 19 and into the top ten from 22 to
+26, empties the banners out of `pytest-pandas`'s signal set, and leaves depth 40 flat.
 
 Note for any batch: **the critique's free tier is 20 requests per day** on `gemini-3.5-flash`,
 which `min_interval_seconds` cannot help with. `--no-adversarial` keeps a sweep on the loop
