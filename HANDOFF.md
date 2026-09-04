@@ -269,6 +269,33 @@ Digest recall barely moves — @5 flat at 19, @10 26 to 28, @20 35 to 36, @40 40
 is the point worth reading: the mask does not find more evidence, it makes the digest a
 meaningful share of the file. Hibernate's forty templates were 0.2% of its file and are now 8.8%.
 
+### The loop converged on a real customer log, on the fourth attempt
+
+A 568 MB Java application log, 2,188,970 events, 2,824 templates, ingested in 82 seconds.
+Its actual defect is a Solr core that failed to initialise and stayed down: `SolrCore
+'mainitemdata' is not available due to init failure: Error opening new searcher`, **37,653
+times in one day**, every hour. The ranking never surfaced it — the digest is forty
+two-occurrence templates, because 78% of the file is level ERROR (the application writes its
+INFO to STDERR) so severity is a constant and rarity picks singletons.
+
+| run | change | notes | tool calls | outcome | input tokens |
+|---|---|---|---|---|---|
+| 1 | as shipped | 2 | 20 (cap) | budget-limited | 1,581,188 |
+| 2 | + digest char budget | 0 | 20 (cap) | budget-limited | 289,496 |
+| 3 | + whole-line reads | 0 | 20 (cap) | budget-limited | 311,643 |
+| 4 | + silent nudge, budget 30 | **3** | 26 of 30 | **converged** | 434,969 |
+
+Every run found the Solr template by search — steps 8, 10, 10 and 5 — and the first three
+then kept searching until the wall. What changed on the fourth is that something asked it to
+write. The silent nudge fired at call 18; note @19 named the core failure with evidence; two
+more notes followed unprompted; the coverage nudge then made it account for the ranking's own
+signal templates, which it dismissed as startup warnings with four event ids. The critique
+ran on `gemini-3.5-flash` for 3,729 tokens, raised one low-severity objection (an INFO line
+cited as a timeout), and the investigation rebutted it rather than folding.
+
+Read with care: one run, three changes in it. The nudge is the one with a visible causal
+chain; the extra ten calls cannot be separated from it at n=1.
+
 ### The digest is budgeted in characters, not templates
 
 `digest_limit` counts templates, which is the wrong unit when a template can be five
