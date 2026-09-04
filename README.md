@@ -29,6 +29,10 @@ with no account anywhere, and so does the entire test suite.
 | 5 | Evaluation harness (Loghub, LogDx-CI, baselines) | not started |
 | 6 | MCP server, HTML/PDF reports, packaging | not started |
 
+[`docs/implementation-map.html`](docs/implementation-map.html) describes what is actually
+built, stage by stage, with the measurement behind each number — the other five documents in
+`docs/` describe the v1 plan rather than the code.
+
 Deferred problems, each with a recommended fix and a target phase, are in
 [`Issue.md`](Issue.md). Two of them (#1 two rankings, #2 whole-file anomaly scores) are Phase 3
 decisions that are now due.

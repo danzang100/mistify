@@ -1,0 +1,1096 @@
+<title>Mistify Implementation Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+
+<style>
+  :root {
+    --paper: #F1F2F3;
+    --surface: #FBFBFC;
+    --surface-sunk: #E9EBED;
+    --ink: #14181D;
+    --muted: #5B646E;
+    --rule: #DBDEE2;
+    --rule-strong: #C2C7CD;
+    --accent: #8F5F14;
+    --accent-soft: #EEE2CB;
+    --good: #2C6E52;
+    --bad: #97302F;
+    --warn: #8A6212;
+
+    --sans: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+    --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+    --measure: 68ch;
+    --step: 1.5rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #131619;
+      --surface: #1A1E23;
+      --surface-sunk: #0E1114;
+      --ink: #E4E7EA;
+      --muted: #98A1AB;
+      --rule: #2A3037;
+      --rule-strong: #3A424B;
+      --accent: #D9A64E;
+      --accent-soft: #342C1C;
+      --good: #6FBE94;
+      --bad: #DD8583;
+      --warn: #C9A24A;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #131619;
+    --surface: #1A1E23;
+    --surface-sunk: #0E1114;
+    --ink: #E4E7EA;
+    --muted: #98A1AB;
+    --rule: #2A3037;
+    --rule-strong: #3A424B;
+    --accent: #D9A64E;
+    --accent-soft: #342C1C;
+    --good: #6FBE94;
+    --bad: #DD8583;
+    --warn: #C9A24A;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 20px 96px;
+  }
+
+  @media (min-width: 940px) {
+    .shell {
+      grid-template-columns: 190px minmax(0, 1fr);
+      gap: 48px;
+      padding: 0 32px 120px;
+    }
+  }
+
+  /* ---------------------------------------------------------------- masthead */
+
+  .masthead {
+    grid-column: 1 / -1;
+    border-bottom: 2px solid var(--ink);
+    padding: 40px 0 20px;
+    margin-bottom: 40px;
+  }
+
+  .eyebrow {
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 10px;
+  }
+
+  h1 {
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 6vw, 3.6rem);
+    line-height: 1.02;
+    letter-spacing: -0.015em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    max-width: 62ch;
+    font-size: 1.14rem;
+    color: var(--muted);
+    margin: 0 0 26px;
+  }
+
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 12.5px;
+  }
+
+  .fact {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 12px 22px 12px 0;
+    margin-right: 22px;
+    border-right: 1px solid var(--rule);
+  }
+
+  .fact:last-child { border-right: 0; }
+
+  .fact b {
+    font-weight: 500;
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fact span {
+    font-family: var(--sans);
+    font-size: 11px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ------------------------------------------------------------------- rail */
+
+  .rail { display: none; }
+
+  @media (min-width: 940px) {
+    .rail {
+      display: block;
+      align-self: start;
+      position: sticky;
+      top: 24px;
+      font-family: var(--sans);
+      font-size: 13.5px;
+    }
+    .rail ol {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      border-left: 1px solid var(--rule-strong);
+    }
+    .rail a {
+      display: block;
+      padding-left: 12px;
+      color: var(--muted);
+      text-decoration: none;
+      border-left: 2px solid transparent;
+      margin-left: -1px;
+    }
+    .rail a:hover, .rail a:focus-visible {
+      color: var(--ink);
+      border-left-color: var(--accent);
+    }
+  }
+
+  main { min-width: 0; }
+
+  section { margin-bottom: 56px; scroll-margin-top: 20px; }
+
+  h2 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 1.62rem;
+    letter-spacing: -0.005em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+
+  h2 + .deck {
+    color: var(--muted);
+    margin: 0 0 24px;
+    max-width: var(--measure);
+  }
+
+  h3 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 1.12rem;
+    margin: 32px 0 8px;
+  }
+
+  p { max-width: var(--measure); margin: 0 0 14px; }
+
+  a { color: var(--accent); }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: var(--surface-sunk);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  strong { font-weight: 600; }
+
+  /* ------------------------------------------------------------------ stages */
+
+  .stages {
+    list-style: none;
+    counter-reset: stage;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--rule);
+  }
+
+  .stages li {
+    counter-increment: stage;
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 16px;
+    padding: 18px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .stages li::before {
+    content: counter(stage, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+    padding-top: 3px;
+  }
+
+  .stage-name {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 1.05rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px;
+  }
+
+  .stage-name span {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--muted);
+  }
+
+  .stages p { margin: 5px 0 0; font-size: 0.97rem; }
+
+  /* ------------------------------------------------------------------ tables */
+
+  .scroller { overflow-x: auto; margin: 18px 0 8px; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  caption {
+    caption-side: bottom;
+    text-align: left;
+    font-family: var(--sans);
+    font-size: 12.5px;
+    color: var(--muted);
+    padding-top: 10px;
+  }
+
+  th {
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--muted);
+    border-bottom: 1px solid var(--rule-strong);
+    padding: 0 16px 7px 0;
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 7px 16px 7px 0;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+
+  td.num, th.num { text-align: right; padding-right: 22px; }
+  tr.total td { border-bottom: 0; border-top: 1px solid var(--rule-strong); font-weight: 500; }
+  .up { color: var(--good); }
+  .down { color: var(--bad); }
+
+  /* ------------------------------------------------------------------- chips */
+
+  .chip {
+    display: inline-block;
+    font-family: var(--sans);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border: 1px solid currentColor;
+    border-radius: 2px;
+    vertical-align: 2px;
+  }
+
+  .chip-built { color: var(--good); }
+  .chip-open { color: var(--warn); }
+  .chip-cut { color: var(--bad); }
+
+  /* -------------------------------------------------------------- log sample */
+
+  .terminal {
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 18px 0;
+  }
+
+  .terminal pre {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.75;
+    margin: 0;
+    white-space: pre;
+  }
+
+  .terminal .rank { color: var(--accent); }
+  .terminal .dim { color: var(--muted); }
+
+  /* -------------------------------------------------------------- callout */
+
+  .note {
+    border-left: 3px solid var(--rule-strong);
+    padding: 2px 0 2px 18px;
+    margin: 20px 0;
+    color: var(--muted);
+    max-width: var(--measure);
+  }
+
+  .note b { color: var(--ink); font-weight: 600; }
+
+  /* ------------------------------------------------------------------ seams */
+
+  .seams {
+    list-style: none;
+    margin: 20px 0 0;
+    padding: 0;
+    display: grid;
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+  }
+
+  .seam {
+    background: var(--surface);
+    padding: 16px 18px;
+    display: grid;
+    gap: 6px;
+  }
+
+  .seam h4 {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    margin: 0;
+    color: var(--accent);
+  }
+
+  .seam p { margin: 0; font-size: 0.95rem; }
+
+  .seam .emits {
+    font-family: var(--sans);
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+  }
+
+  /* ------------------------------------------------------------------ chart */
+
+  figure { margin: 24px 0 8px; }
+
+  figcaption {
+    font-family: var(--sans);
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-top: 10px;
+    max-width: var(--measure);
+  }
+
+  svg { display: block; max-width: 100%; height: auto; }
+
+  .cmd {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    padding: 10px 14px;
+    overflow-x: auto;
+    margin: 0 0 8px;
+  }
+
+  footer {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--rule);
+    padding-top: 18px;
+    font-family: var(--sans);
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="eyebrow">Implementation state · 4 September 2026</p>
+    <h1>Mistify Implementation Map</h1>
+    <p class="standfirst">
+      What is actually built in the incident log analysis agent, what each stage guarantees, and
+      every number that has been measured rather than assumed. The five documents in
+      <code>docs/</code> describe the v1 <em>plan</em>; this one describes the code.
+    </p>
+    <div class="facts">
+      <div class="fact"><span>Branch</span><b>phase4-adapters-and-scale</b></div>
+      <div class="fact"><span>Tests</span><b>916 passing, 91% cov.</b></div>
+      <div class="fact"><span>Source</span><b>13,341 lines / 58 modules</b></div>
+      <div class="fact"><span>Health metrics</span><b>84 declared</b></div>
+      <div class="fact"><span>Phases done</span><b>0–4, bar Elastic</b></div>
+    </div>
+  </header>
+
+  <nav class="rail" aria-label="Sections">
+    <ol>
+      <li><a href="#run">A run, end to end</a></li>
+      <li><a href="#scratchpad">The scratchpad</a></li>
+      <li><a href="#ranking">The ranking</a></li>
+      <li><a href="#loop">The loop</a></li>
+      <li><a href="#challenge">Critique &amp; report</a></li>
+      <li><a href="#evaluation">Evaluation</a></li>
+      <li><a href="#scale">Measured at scale</a></li>
+      <li><a href="#lacking">Where it is lacking</a></li>
+      <li><a href="#langfuse">Langfuse seams</a></li>
+      <li><a href="#commands">Commands</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <!-- ============================================================ run -->
+    <section id="run">
+      <h2>A run, end to end</h2>
+      <p class="deck">
+        Eight stages, in order. Each one is a real sequence step: the output of the stage above
+        is the only input to the stage below, and every stage records what it did in the
+        scratchpad's own metrics table.
+      </p>
+
+      <ol class="stages">
+        <li>
+          <div>
+            <div class="stage-name">Detect <span>adapters/registry.py</span></div>
+            <p>
+              Each registered adapter scores a sample; the winner is the best-scoring adapter of
+              the most <em>specific</em> tier above the confidence floor, not the highest score
+              outright. Loki JSONL scores a perfect 1.0 as generic JSON, which is how
+              <code>specificity</code> came to exist. Compression is sniffed by magic number,
+              never by extension; binary is refused by name; a directory reads as one incident.
+            </p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <div class="stage-name">Parse <span>adapters/{json_lines,otlp,loki,raw_lines}.py</span></div>
+            <p>
+              Four formats, all streaming — peak memory is flat regardless of file size. Nothing
+              unrecognised is refused: <code>raw_lines</code> reads one record per line, invents
+              no timestamp beyond a line ordinal, and says so in the metrics so the report can
+              distrust the incident window.
+            </p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <div class="stage-name">Redact <span>redaction/redactor.py</span></div>
+            <p>
+              Immediately after parse and before anything else — templater, database, or model —
+              sees a record. Five entity types by default; the same source value always yields
+              the same placeholder <code>[IPV4:a7f2]</code> within an incident, so the model can
+              correlate on it without recovering it. Optional reversible vault, off by default,
+              written to its own file because the model's SQL channel can read any table.
+            </p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <div class="stage-name">Template <span>templating/{drain_wrapper,calibration}.py</span></div>
+            <p>
+              Drain3, with the similarity threshold calibrated per file against a sample rather
+              than guessed once. A file that does not compress gets a lower cluster ceiling —
+              2.15× throughput on a real CI log for 0.17% more fragmentation.
+            </p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <div class="stage-name">Rank <span>scratchpad/anomaly.py</span></div>
+            <p>
+              A deterministic score per template from severity, burstiness and rarity, computed
+              from the incident's own distribution — no model, no baseline corpus. It decides the
+              digest the investigation starts from and the signal set it is held to. This is
+              where most of today's work went; see below.
+            </p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <div class="stage-name">Investigate <span>agent/loop.py</span></div>
+            <p>
+              A bounded model loop with five tools over the scratchpad. It cannot read the log
+              file. Every tool call is logged before the model sees the result, and a citation
+              naming an id the model was never shown is refused.
+            </p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <div class="stage-name">Challenge <span>agent/adversarial.py</span></div>
+            <p>
+              A different model — enforced at config load — attacks the conclusion, and the
+              investigation rebuts. Objections carry ids so an answer lands on the objection it
+              was written for. One check is model-free: was a high-scoring template left out?
+            </p>
+          </div>
+        </li>
+        <li>
+          <div>
+            <div class="stage-name">Report <span>report/generator.py</span></div>
+            <p>
+              Markdown, HTML or PDF, rendered from the scratchpad rather than from the loop's
+              narrative. Leads with health warnings — degraded parse, poor clustering, a
+              budget-limited run, a ranking with no severity to rank by — then findings with
+              their cited rows, then the challenge.
+            </p>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <!-- ===================================================== scratchpad -->
+    <section id="scratchpad">
+      <h2>The scratchpad is the interface</h2>
+      <p>
+        One SQLite file per incident, and the only thing any downstream stage reads. The report
+        renders from it, the scorer scores it, the model queries it through a read-only
+        connection with an authorizer. Nothing scrapes the rendered document — a scraper fails
+        silently when the document moves, and did, producing a table of confidently wrong numbers
+        during development.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Table</th><th>Holds</th><th>Read by</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>log_events</td><td>ts, source, severity, template_id, raw, message, fields, trace_id</td><td>tools, scorer</td></tr>
+            <tr><td>templates</td><td>pattern, counts, first/last seen, severity mix, anomaly_score</td><td>digest, ranking, report</td></tr>
+            <tr><td>scratchpad_notes</td><td>step, note, evidence, confidence — CHECK-constrained non-empty</td><td>report, scorer, critique</td></tr>
+            <tr><td>query_log</td><td>every tool call, in order, with row counts</td><td>audit trail, report appendix</td></tr>
+            <tr><td>run_metadata</td><td>84 declared metrics, upserted by key</td><td>report warnings, eval</td></tr>
+            <tr><td>adversarial_*</td><td>objections with ids, responses, concessions, revised confidence</td><td>report</td></tr>
+          </tbody>
+        </table>
+        <caption>Migrations are versioned; 0005 added a composite <code>(severity, ts)</code> index that took a severity-plus-window query from 124 ms to 0 ms.</caption>
+      </div>
+    </section>
+
+    <!-- ======================================================== ranking -->
+    <section id="ranking">
+      <h2>The ranking, and what was wrong with it</h2>
+      <p class="deck">
+        The score is a weighted sum — severity 0.5, burstiness 0.3, rarity 0.2, normalised —
+        never a product, because the most frequent template in any incident has rarity exactly
+        zero and a product would silence the loudest line in the file.
+      </p>
+
+      <p>
+        The digest is the top 40 templates, embedded in the system prompt. It is the model's
+        entire first view of the incident. In September it was measured against ground truth for
+        the first time, and the result was that <strong>none of it worked on CI logs</strong>:
+        across all five LogDx-CI dev cases, zero ground-truth markers reached the top 40 —
+        including a 170-template case where the top 40 is a quarter of the file.
+      </p>
+
+      <div class="terminal">
+        <pre><span class="dim">## Templates, most anomalous first (showing 40 of 1134)</span>
+
+<span class="rank">[477]</span> score=0.869 n=1  <span class="dim">ERROR:1</span> :: 2026-04-23T08:47:06Z ==== ERRORS ====
+<span class="rank">[512]</span> score=0.869 n=1  <span class="dim">ERROR:1</span> :: 2026-04-23T08:47:06Z ==== FAILURES ====
+<span class="rank">[755]</span> score=0.869 n=1  <span class="dim">ERROR:1</span> :: &gt; assert index.get_loc(np.datetime64("NaT")) == 1
+<span class="rank">[1033]</span> score=0.869 n=1 <span class="dim">ERROR:1</span> :: = 45 failed, 162298 passed, 52 errors in 71.2s
+<span class="rank">[1034]</span> score=0.869 n=1 <span class="dim">ERROR:1</span> :: ##[error]Process completed with exit code 1.</pre>
+      </div>
+
+      <h3>Three terms, three degeneracies</h3>
+      <p>
+        <strong>Severity</strong> was guessed per line by a regex reading only upper-case log
+        levels, so 97.1% of lines mapped to nothing and the heaviest term was correctly detected
+        as uninformative and dropped. <strong>Burstiness</strong> is
+        <code>max_per_bucket ÷ (count ÷ total_buckets)</code>, so a template that fired
+        <em>once</em> divided by a mean of <code>1/total_buckets</code> and scored the maximum.
+        <strong>Rarity</strong> cannot separate anything when 53–99% of templates in every case
+        occur exactly once.
+      </p>
+      <p>
+        With all three flat, thousands of templates tied, and the tie-break was
+        <code>template_id</code> — the order lines first appeared. The digest was the build's
+        setup section, which is systematically the wrong end of a CI log.
+      </p>
+
+      <h3>What shipped <span class="chip chip-built">measured</span></h3>
+      <p>
+        <strong>Severity is recovered from the template's own words</strong> when the source
+        carries no severity field: ERROR-equivalent for failure vocabulary, WARN-equivalent for
+        hedging vocabulary, INFO otherwise, on the same non-linear scale the severity field used,
+        so no weight was retuned. ANSI is stripped first — a CI log paints its errors red and
+        <code>\x1b[31;1merror</code> has no word boundary before <code>error</code>. It is still
+        dropped when the recovered values are constant, which is the log-entirely-on-fire case.
+        <code>anomaly.severity_source</code> records which of the three happened.
+      </p>
+      <p>
+        <strong>A single occurrence now scores zero burstiness.</strong> One event has no
+        distribution to be concentrated in; the old value was an artefact of the denominator, and
+        it is what fused 507 of one case's 9,307 templates into a single tied block.
+      </p>
+
+      <figure>
+        <svg viewBox="0 0 680 250" role="img" aria-label="Ground-truth markers inside the digest at three depths, before and after the burstiness fix">
+          <g font-family="IBM Plex Mono, monospace" font-size="11" fill="currentColor">
+            <line x1="100" y1="34" x2="100" y2="196" stroke="currentColor" stroke-width="1" opacity="0.35"></line>
+            <line x1="266" y1="34" x2="266" y2="196" stroke="currentColor" stroke-width="1" opacity="0.16"></line>
+            <line x1="432" y1="34" x2="432" y2="196" stroke="currentColor" stroke-width="1" opacity="0.16"></line>
+            <line x1="640" y1="34" x2="640" y2="196" stroke="currentColor" stroke-width="1" opacity="0.16"></line>
+            <text x="100" y="212" text-anchor="middle" opacity="0.7">0</text>
+            <text x="266" y="212" text-anchor="middle" opacity="0.7">20</text>
+            <text x="432" y="212" text-anchor="middle" opacity="0.7">40</text>
+            <text x="640" y="212" text-anchor="middle" opacity="0.7">65</text>
+            <text x="640" y="230" text-anchor="end" opacity="0.7">markers resolved, 20 cases</text>
+
+            <text x="0" y="52" font-family="IBM Plex Sans Condensed, sans-serif" font-size="12">top 5</text>
+            <rect x="100" y="40" width="116" height="16" fill="currentColor" opacity="0.28"></rect>
+            <text x="224" y="52">14</text>
+            <rect x="100" y="60" width="158" height="16" fill="#8F5F14"></rect>
+            <text x="266" y="72">19</text>
+
+            <text x="0" y="108" font-family="IBM Plex Sans Condensed, sans-serif" font-size="12">top 10</text>
+            <rect x="100" y="96" width="183" height="16" fill="currentColor" opacity="0.28"></rect>
+            <text x="291" y="108">22</text>
+            <rect x="100" y="116" width="216" height="16" fill="#8F5F14"></rect>
+            <text x="324" y="128">26</text>
+
+            <text x="0" y="164" font-family="IBM Plex Sans Condensed, sans-serif" font-size="12">top 40</text>
+            <rect x="100" y="152" width="324" height="16" fill="currentColor" opacity="0.28"></rect>
+            <text x="432" y="164">39</text>
+            <rect x="100" y="172" width="332" height="16" fill="#8F5F14"></rect>
+            <text x="440" y="184">40</text>
+
+            <rect x="100" y="16" width="10" height="10" fill="currentColor" opacity="0.28"></rect>
+            <text x="116" y="25" font-family="IBM Plex Sans Condensed, sans-serif" font-size="11.5">severity recovered</text>
+            <rect x="240" y="16" width="10" height="10" fill="#8F5F14"></rect>
+            <text x="256" y="25" font-family="IBM Plex Sans Condensed, sans-serif" font-size="11.5">+ singleton burstiness</text>
+          </g>
+        </svg>
+        <figcaption>
+          Before either fix the count was <strong>1 of 65</strong>. Depth 40 is now a wash; the
+          evidence moves <em>up</em>, which is the half that matters — the set the coverage nudge
+          enforces is five templates, not forty.
+        </figcaption>
+      </figure>
+
+      <h3>Tried and rejected, with the numbers <span class="chip chip-cut">cut</span></h3>
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Candidate</th><th class="num">top 5</th><th class="num">top 10</th><th class="num">top 40</th><th>Why not</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>discount mostly-punctuation templates</td><td class="num">15</td><td class="num">23</td><td class="num">40</td><td>Costs a marker at every depth; banners only ranked through the burstiness artefact anyway</td></tr>
+            <tr><td>break ties by recency, not id</td><td class="num">14</td><td class="num">25</td><td class="num down">48</td><td>Best at depth 40 and a trap: moves one case's root cause from rank 3 to 504 — the marker three runs of three cited</td></tr>
+            <tr><td>replace rarity with token IDF</td><td class="num">18</td><td class="num">26</td><td class="num">37</td><td>Worse at every depth and every weight</td></tr>
+            <tr class="total"><td>shipped: singleton burstiness</td><td class="num up">21</td><td class="num up">27</td><td class="num">42</td><td>Also empties the banners out of the signal set</td></tr>
+          </tbody>
+        </table>
+        <caption>Offline simulation over the same twenty ingests; the shipped path measures 19 / 26 / 40, the difference being score rounding at tie boundaries.</caption>
+      </div>
+    </section>
+
+    <!-- =========================================================== loop -->
+    <section id="loop">
+      <h2>The investigation loop</h2>
+      <p class="deck">
+        The model is given the ranked digest and five tools, and works until it writes a
+        conclusion or runs out of tool calls. It cannot read the log file.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Tool</th><th>Does</th><th>Guard</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>query_templates</td><td>ranked template list, four orderings</td><td>noise thresholds from config</td></tr>
+            <tr><td>get_slice</td><td>a bounded window of real lines</td><td>60 by default, 500 cap, says how many it withheld</td></tr>
+            <tr><td>run_sql</td><td>read-only SQL for what the tools do not cover</td><td>separate connection, SQLite authorizer, row cap</td></tr>
+            <tr><td>read_notes</td><td>everything concluded so far, with citations</td><td>cheap by design — notes are the durable channel</td></tr>
+            <tr><td>write_note</td><td>a hypothesis plus its evidence</td><td>refuses an event id the model was never shown</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>What bounds it</h3>
+      <p>
+        Twenty tool calls, then one final turn asking it to conclude from what it has;
+        <code>investigate.budget_limited</code> is recorded so the report can say the
+        investigation did not finish rather than presenting it as one that did. Tool output older
+        than three steps is reduced to its header line, because the whole conversation is
+        re-sent every step and one wide slice would otherwise be paid for forever. The system
+        prompt — digest included — is built once and never edited, so a provider that caches
+        prefixes can serve it from cache.
+      </p>
+
+      <h3>What pushes it <span class="chip chip-built">new</span></h3>
+      <p>
+        A conclusion that ignores something the run was shown is sent back, up to
+        <code>pipeline.coverage_nudges</code> times. Two questions, strongest first: a signal
+        template that no note cites, and — added today — the three highest-ranked digest
+        templates the run never pulled lines from. That second question exists because the first
+        stopped being enough: measured across fifteen runs, the loop opens a median of
+        <strong>4 of the 40</strong> templates it is handed, and every ground-truth marker it
+        failed to cite sat in a template it never opened.
+      </p>
+
+      <div class="note">
+        <b>Two runs may not share one scratchpad.</b> <code>investigate</code> now refuses an
+        incident that already holds notes and asks for <code>--resume</code> (keep them, and say
+        so in the opening turn) or <code>--restart</code> (delete the previous notes, queries and
+        critique). Inheriting silently is how a run comes to be scored against findings it did
+        not write.
+      </div>
+    </section>
+
+    <!-- ====================================================== challenge -->
+    <section id="challenge">
+      <h2>Critique and report</h2>
+      <p>
+        The critique runs on a model that must differ from whichever model wrote the conclusion —
+        enforced at config load, because a critique sharing a model with the thing it checks is
+        the correlated-blind-spot problem the architecture exists to avoid. Objections carry
+        stable ids the rebuttal quotes back. What was conceded, and the confidence
+        <em>after</em> being challenged, are stored separately from the original.
+      </p>
+      <p>
+        In practice on the free tier it often does not run at all: <code>gemini-3.5-flash</code>
+        allows <strong>20 requests per day</strong>, and every critique in the five-case sweep of
+        4 September died on that cap. The run is still scored on what it completed, which is a
+        deliberate harness property rather than an accident.
+      </p>
+    </section>
+
+    <!-- ===================================================== evaluation -->
+    <section id="evaluation">
+      <h2>Evaluation</h2>
+      <p class="deck">
+        Four independent harnesses, three of which call no model at all.
+      </p>
+
+      <div class="seams">
+        <div class="seam">
+          <h4>mistify eval</h4>
+          <p>Planted-answer cases — a pool exhaustion with a latency precursor and a red herring, and a quiet hour with nothing wrong in it. The score is arithmetic over the scratchpad.</p>
+          <p class="emits">--baseline naive|templated scores a grep pipeline with the same checks, no model calls</p>
+        </div>
+        <div class="seam">
+          <h4>mistify eval --logdx SPLIT</h4>
+          <p>35 real GitHub Actions failures with author-verified diagnoses, fetched on demand, never committed. <code>must_not_claim</code> becomes <code>avoids[]</code> — the plausible-but-wrong test no other public corpus offers.</p>
+          <p class="emits">CC-BY-4.0 · cached in .cache/logdx · six splits</p>
+        </div>
+        <div class="seam">
+          <h4>mistify eval --digest</h4>
+          <p>Added 4 September. Ingests each case and reports where its known evidence lands in the ranked digest, with every marker's rank kept beside the recall. Exits non-zero when evidence sits below the digest.</p>
+          <p class="emits">no model calls — the pre-flight before a paid sweep</p>
+        </div>
+        <div class="seam">
+          <h4>mistify eval-templating</h4>
+          <p>Grouping accuracy against Loghub-2k's human-annotated templates — the foundation everything else sits on. Mean 0.907 across four systems; OpenSSH is the outlier at 0.718.</p>
+          <p class="emits">no model calls</p>
+        </div>
+      </div>
+
+      <h3>What the loop scores on real CI failures</h3>
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr>
+              <th>Case</th><th class="num">templates</th>
+              <th class="num">recorded</th><th class="num">re-ranked ×3</th>
+              <th>notes / steps, after</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>pytest-pandas</td><td class="num">1,134</td><td class="num">11/13</td><td class="num down">7, 7, 7</td><td>2 notes, 15–18 steps</td></tr>
+            <tr><td>mypy-pandas</td><td class="num">2,848</td><td class="num">11/13</td><td class="num">8, 8, 11</td><td>1–2 notes, 21–22 steps</td></tr>
+            <tr><td>lint-react</td><td class="num">170</td><td class="num">10/12</td><td class="num">10, 10, 11</td><td>2 notes, 9–15 steps</td></tr>
+            <tr><td>cargo-tokio</td><td class="num">498</td><td class="num">8/14</td><td class="num">8, 9, 7</td><td>2 notes, 10–14 steps</td></tr>
+            <tr><td>jest-nextjs</td><td class="num">9,307</td><td class="num">5/12</td><td class="num up">8, 8, 8</td><td>2 notes, 13–14 steps</td></tr>
+            <tr class="total"><td>mean of three runs</td><td class="num"></td><td class="num">45/64</td><td class="num">42.3/64</td><td>1.77M tokens</td></tr>
+          </tbody>
+        </table>
+        <caption>
+          The two cases the re-ranking moved are the two with <em>zero</em> spread. jest-nextjs
+          previously wrote no notes at all in 21 steps — its 5/12 was <code>avoids</code> passing
+          on an empty conclusion, so 1/12 honestly counted — and now converges citing the real
+          root cause. pytest-pandas reproduces its loss three times out of three.
+        </caption>
+      </div>
+
+      <h3>Silence no longer scores <span class="chip chip-built">new</span></h3>
+      <p>
+        <code>avoids[...]</code> is a substring search over the conclusion, so an empty conclusion
+        passed every one of them — 81 times out of 81 across a day of runs, never once failing.
+        <code>Check.scorable</code> now separates "could not be asked" from "answered badly", the
+        same distinction the harness already drew between a run that failed and a run that never
+        got there.
+      </p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Arm</th><th class="num">old scoring</th><th class="num">new scoring</th><th class="num">unscorable</th></tr></thead>
+          <tbody>
+            <tr><td>recorded, pre-rerank</td><td class="num">49/69</td><td class="num">44/64</td><td class="num">5</td></tr>
+            <tr><td>re-ranked, 1 run</td><td class="num">50/69</td><td class="num">50/69</td><td class="num">0</td></tr>
+            <tr><td>spread, runs 1–3</td><td class="num">46, 47, 49/69</td><td class="num">unchanged</td><td class="num">0</td></tr>
+            <tr><td>three runs killed by a 503 outage</td><td class="num">15/42</td><td class="num">0/27</td><td class="num">15</td></tr>
+          </tbody>
+        </table>
+        <caption>Two rows move and the rest do not: every run that actually concluded is untouched, which is the control.</caption>
+      </div>
+    </section>
+
+    <!-- ========================================================== scale -->
+    <section id="scale">
+      <h2>Measured at scale</h2>
+      <p class="deck">
+        Every figure below was measured on one machine, 16 logical cores, Windows. Rows marked
+        extrapolated are labelled as such rather than presented as observations.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Format</th><th class="num">records/s</th><th class="num">file B/event</th><th class="num">scratchpad B/event</th><th class="num">peak RAM</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>loki (logcli jsonl)</td><td class="num">4,504</td><td class="num">200</td><td class="num">410</td><td class="num">12.4 MB</td></tr>
+            <tr><td>raw_lines (BGL, real)</td><td class="num">3,363</td><td class="num">141</td><td class="num">302</td><td class="num">7.3 MB</td></tr>
+            <tr><td>json_lines</td><td class="num">3,040</td><td class="num">221</td><td class="num">558</td><td class="num">20.3 MB</td></tr>
+            <tr><td>otlp</td><td class="num">2,855</td><td class="num">493</td><td class="num">759</td><td class="num">23.0 MB</td></tr>
+          </tbody>
+        </table>
+        <caption>Memory is flat to the byte across a 3× file size for all four. At 10 GB, storage binds before CPU: ~15–25 GB of scratchpad.</caption>
+      </div>
+
+      <p>
+        The single largest win was not an optimisation but a bug: Drain3 was writing its entire
+        cluster tree on every new cluster — 97.5% of a 489-second ingest, every write discarded
+        by the next. Removing it took 4,000 lines from 130.31 s to 3.06 s. Parallel redaction
+        gives 3.20× on its own stage and 1.55× end to end; Amdahl caps the whole run near 1.7×
+        because redaction is 42% of an ingest, so eight workers reach 90% of the ceiling and
+        sixteen buy 2% more.
+      </p>
+    </section>
+
+    <!-- ======================================================= lacking -->
+    <section id="lacking">
+      <h2>Where it is lacking</h2>
+      <p class="deck">
+        In the order I would take them. Each is stated with the measurement that says it matters,
+        not the intuition that suggested it.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Gap</th><th>Evidence</th><th>State</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>The loop stops at the first conclusive-looking line</td>
+              <td>pytest-pandas: 7/13 three times, zero spread, all four markers inside its digest</td>
+              <td><span class="chip chip-open">nudge widened, unmeasured</span></td>
+            </tr>
+            <tr>
+              <td>No resume after a provider error</td>
+              <td>Three runs died at the first call on a 503; every critique died on a 429 the same day</td>
+              <td><span class="chip chip-built">unsafe path closed</span></td>
+            </tr>
+            <tr>
+              <td>Evidence evaporates before the conclusion</td>
+              <td>Compaction keeps a header line only; runs write 1–3 notes across 9–22 steps</td>
+              <td><span class="chip chip-open">open</span></td>
+            </tr>
+            <tr>
+              <td>The quiet hour cannot tell right from wrong</td>
+              <td>The check fails a confident <em>correct</em> finding for the same reason it fails a wrong one</td>
+              <td><span class="chip chip-open">judge question outstanding</span></td>
+            </tr>
+            <tr>
+              <td>Rarity is degenerate</td>
+              <td>53–99% of templates occur exactly once; dropping it is a wash, replacing it with token IDF is worse</td>
+              <td><span class="chip chip-open">gate proposed</span></td>
+            </tr>
+            <tr>
+              <td>Cardinality beats every ranking</td>
+              <td>22,071 templates for 46,195 events puts the digest at 0.2% of the file</td>
+              <td><span class="chip chip-open">templating, not ranking</span></td>
+            </tr>
+            <tr>
+              <td>Elastic, the last format</td>
+              <td>Needs a live stack to fixture honestly; the Loki capture script is the template</td>
+              <td><span class="chip chip-open">deferred</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <b>One premise did not survive checking.</b> Multi-line records were billed as the reason
+        OpenSSH sits at 0.718 grouping accuracy. <code>OpenSSH_2k.log</code> has zero continuation
+        lines — so do Hadoop, BGL and Apache. In CI logs the rate is 0–10%, and GitHub Actions
+        prefixes every line with its own timestamp, so the usual "no timestamp means continuation"
+        rule finds nothing. It is worth doing for pytest assertion blocks and rustc diagnostics,
+        not as a cardinality fix.
+      </div>
+    </section>
+
+    <!-- ======================================================= langfuse -->
+    <section id="langfuse">
+      <h2>Where Langfuse fits</h2>
+      <p class="deck">
+        Five seams, in the order they pay off. The project has one property that makes this
+        unusually safe: everything a model ever sees has already been through redaction, so a
+        trace carries <code>[IPV4:a7f2]</code> and never the address. The vault is the one thing
+        that must never be exported.
+      </p>
+
+      <ul class="seams">
+        <li class="seam">
+          <h4>llm/base.py — the LLMProvider protocol</h4>
+          <p>
+            A tracing provider that wraps any other and emits one <em>generation</em> per
+            <code>converse()</code>: model, latency, prompt and completion, and the
+            <code>Usage</code> the seam already returns. One decorator class in
+            <code>llm/registry.py::build_provider</code> covers the loop, the critique, the judge
+            and the bootstrapper at once, because all four go through this seam.
+          </p>
+          <p class="emits">emits: generation · model, input/output/cached tokens, stop reason</p>
+        </li>
+        <li class="seam">
+          <h4>agent/loop.py — one trace per investigation</h4>
+          <p>
+            The loop already numbers its steps and logs every tool call before the model sees the
+            result. Each step becomes a span, each tool call a child span carrying the query and
+            row count from <code>query_log</code>. The incident id is the natural trace id, and
+            <code>investigate.*</code> metrics — steps, nudges, compactions, input growth — are
+            the trace's metadata.
+          </p>
+          <p class="emits">emits: trace · spans per step and tool call · tags for outcome, budget_limited</p>
+        </li>
+        <li class="seam">
+          <h4>eval/harness.py — datasets and runs</h4>
+          <p>
+            The strongest fit. LogDx-CI cases are a dataset; each sweep is a dataset run; each
+            <code>Check</code> is a score, named exactly as it is today
+            (<code>cites[...]</code>, <code>avoids[...]</code>). The new
+            <code>Check.scorable</code> flag maps cleanly onto <em>not scoring</em> a run rather
+            than scoring it zero — which is the distinction the vacuity gate exists to preserve,
+            and one a naive export would destroy.
+          </p>
+          <p class="emits">emits: dataset run · one score per check · run-level metrics</p>
+        </li>
+        <li class="seam">
+          <h4>eval/judge.py — model-graded scores</h4>
+          <p>
+            The entailment judge already returns a verdict plus a one-sentence reason per note.
+            That is a Langfuse score with a comment, attached to the same trace as the run it
+            judges, which is what makes "the citations resolved but the claim did not follow"
+            visible next to the claim rather than in a separate report.
+          </p>
+          <p class="emits">emits: score · supported/unsupported + reason</p>
+        </li>
+        <li class="seam">
+          <h4>agent/loop.py::SYSTEM_PROMPT — prompt management</h4>
+          <p>
+            The system prompt is a module constant today, so a prompt change is a code change and
+            two sweeps a week apart cannot be compared unless someone remembers. Langfuse's prompt
+            registry would version it and let a run record which version produced it. Worth doing
+            <em>after</em> the ranking work settles, since the same argument applies to the
+            anomaly weights and those live in config already.
+          </p>
+          <p class="emits">emits: prompt version on every trace</p>
+        </li>
+      </ul>
+
+      <h3>How it should be wired</h3>
+      <p>
+        Opt-in, like <code>--judge</code>: a <code>tracing:</code> block in
+        <code>config.yaml</code> with <code>enabled: false</code> by default, credentials from
+        the environment beside <code>GEMINI_API_KEY</code>, and a no-op tracer when it is off so
+        no code path branches on whether tracing exists. Two properties of this project should be
+        preserved rather than traded away — <code>mistify eval</code> with no flags works
+        offline, and the three model-free harnesses stay model-free. A tracer that reaches for
+        the network by default breaks both.
+      </p>
+      <div class="note">
+        <b>Self-hosting is the better default here.</b> The scratchpad and the traces contain the
+        same redacted log text, and this project has consistently declined to send anything it
+        can avoid sending. Langfuse runs from its own compose file; point the SDK at it with
+        <code>LANGFUSE_HOST</code>.
+      </div>
+    </section>
+
+    <!-- ======================================================= commands -->
+    <section id="commands">
+      <h2>Reproducing any of this</h2>
+      <p>Nothing below calls a model except the last one.</p>
+      <div class="cmd">uv run mistify ingest --source examples/incident.jsonl --incident-id demo</div>
+      <div class="cmd">uv run mistify eval --digest --logdx dev</div>
+      <div class="cmd">uv run mistify eval --baseline templated</div>
+      <div class="cmd">uv run mistify eval-templating --sim-th 0.3 --sim-th 0.4 --sim-th 0.5</div>
+      <div class="cmd">uv run mistify eval --logdx dev --runs 3 --no-adversarial</div>
+      <p style="margin-top:16px">
+        The corpora download on demand into <code>.cache/</code> and are never committed. Budget
+        roughly 120k tokens and 9–22 steps per real case, and space the requests at
+        <code>llm.min_interval_seconds: 5.5</code> — the shipped 4.0 is exactly the free tier's
+        15 requests per minute with no headroom.
+      </p>
+    </section>
+
+  </main>
+
+  <footer>
+    Mistify · branch <code>phase4-adapters-and-scale</code> · this map describes commits through
+    <code>a0d52b2</code>. Where this document and the repository disagree, the repository is
+    right: <code>README.md</code> for phase status, <code>Issue.md</code> for deferred problems,
+    <code>docs/digest-rerank.md</code> for the ranking measurements, and the commit messages for
+    the numbers behind each change.
+  </footer>
+
+</div>
