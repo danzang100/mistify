@@ -42,6 +42,7 @@ from mistify.metrics import (
     INGEST_UNPARSEABLE_TIMESTAMP,
     INVESTIGATE_BUDGET_LIMITED,
     INVESTIGATE_CAVEAT,
+    INVESTIGATE_DIGEST_CHARS,
     INVESTIGATE_INVESTIGATOR,
     INVESTIGATE_TOOL_CALLS,
     REDACTION_MODE,
@@ -419,6 +420,13 @@ def _health_warnings(view: MetricView) -> list[str]:
             "The worst thing in the file is not surfacing near the top of the ranked list."
         )
 
+    if view.triggers(INVESTIGATE_DIGEST_CHARS):
+        size = int(_triggered_value(view, INVESTIGATE_DIGEST_CHARS))
+        warnings.append(
+            f"The ranked digest handed to the investigator was {size:,} characters, which is "
+            "re-sent on every step and dominates what this run cost. The templates in this "
+            "source have unusually long patterns."
+        )
     if view.triggers(SCRATCHPAD_ORPHAN_EVENTS):
         orphans = int(_triggered_value(view, SCRATCHPAD_ORPHAN_EVENTS))
         warnings.append(f"{orphans} event(s) reference a template that does not exist.")

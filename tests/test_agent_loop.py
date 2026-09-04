@@ -15,6 +15,7 @@ import pytest
 
 from mistify.agent.adversarial import run_adversarial_check, unexplained_signal_templates
 from mistify.agent.loop import (
+    DIGEST_CHAR_BUDGET,
     DIGEST_LIMIT,
     ELIDED,
     INVESTIGATOR_NAME,
@@ -40,6 +41,7 @@ from mistify.metrics import (
     INVESTIGATE_BUDGET_LIMITED,
     INVESTIGATE_CACHED_INPUT_TOKENS,
     INVESTIGATE_CAVEAT,
+    INVESTIGATE_DIGEST_CHARS,
     INVESTIGATE_INPUT_GROWTH,
     INVESTIGATE_INPUT_TOKENS_PER_STEP,
     INVESTIGATE_INVESTIGATOR,
@@ -1045,3 +1047,64 @@ def test_the_configured_cap_covers_both_questions(loaded_db: ScratchpadDB) -> No
 
     assert result.coverage_nudges == 1
     assert len(provider.calls) == 2
+
+
+# ------------------------------------------------ the digest's character budget
+
+
+def test_a_verbose_source_does_not_produce_a_fifty_thousand_token_digest(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """The limit counts templates; a template can be five kilobytes.
+
+    Measured on a real Java application log whose lines carry JSON payloads: forty templates
+    came to 208,843 characters, re-sent on every step, and the run spent 1.58M input tokens
+    and hit its tool-call cap.
+    """
+    loaded_db._conn.execute(
+        "UPDATE templates SET pattern = ? WHERE template_id = ("
+        " SELECT template_id FROM templates ORDER BY anomaly_score DESC LIMIT 1)",
+        ("payload " * 8000,),
+    )
+    loaded_db._conn.commit()
+
+    prompt = build_system_prompt(loaded_db)
+
+    assert len(prompt) < DIGEST_CHAR_BUDGET * 2
+    assert "more chars]" in prompt
+    assert "shown shortened" in prompt
+
+
+def test_shortening_drops_no_template(loaded_db: ScratchpadDB) -> None:
+    """A shortened pattern still ranks and is still listed: only its display is cut."""
+    before = [x for x in build_system_prompt(loaded_db).splitlines() if x.startswith("[")]
+    loaded_db._conn.execute("UPDATE templates SET pattern = pattern || ?", ("filler " * 5000,))
+    loaded_db._conn.commit()
+
+    after = [x for x in build_system_prompt(loaded_db).splitlines() if x.startswith("[")]
+
+    assert len(after) == len(before)
+    assert [x.split("]")[0] for x in after] == [x.split("]")[0] for x in before]
+
+
+def test_an_ordinary_digest_is_left_alone(loaded_db: ScratchpadDB) -> None:
+    """The control: twenty of twenty-two real incidents are already under budget.
+
+    Without this the tests above would pass on a build that truncated every pattern to a
+    hundred and sixty characters and made the digest useless.
+    """
+    prompt = build_system_prompt(loaded_db)
+
+    assert "shown shortened" not in prompt
+    for template in loaded_db.top_templates(limit=DIGEST_LIMIT, order_by="anomaly_score"):
+        assert str(template["pattern"]) in prompt
+
+
+def test_the_prompt_size_is_recorded(loaded_db: ScratchpadDB) -> None:
+    """Nobody noticed a 52k-token digest until one run cost 1.58M input tokens."""
+    provider = ScriptedProvider([text_turn("done"), text_turn("still done")])
+
+    InvestigationLoop(loaded_db, provider, _toolbox(loaded_db)).run()
+
+    view = MetricView(loaded_db.metrics("investigate"))
+    assert view.number(INVESTIGATE_DIGEST_CHARS) == len(build_system_prompt(loaded_db))

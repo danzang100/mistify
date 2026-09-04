@@ -33,6 +33,7 @@ from mistify.metrics import (
     INVESTIGATE_CACHED_INPUT_TOKENS,
     INVESTIGATE_CAVEAT,
     INVESTIGATE_COVERAGE_NUDGES,
+    INVESTIGATE_DIGEST_CHARS,
     INVESTIGATE_DIGEST_NUDGES,
     INVESTIGATE_HISTORY_COMPACTIONS,
     INVESTIGATE_INPUT_GROWTH,
@@ -66,6 +67,23 @@ INVESTIGATOR_NAME = "agent-loop"
 #: to. One constant rather than two defaults, because `build_system_prompt` and the nudge must
 #: agree about what "you were shown this" means.
 DIGEST_LIMIT = 40
+
+#: Characters the digest's template listing may occupy, about six thousand tokens. The limit
+#: above counts *templates*, which is the wrong unit when a template can be five kilobytes:
+#: measured across twenty-two real incidents the digest is a median 7,222 characters, and on
+#: a Java application log with JSON payloads on single lines it reached **208,843** -- 52k
+#: tokens, re-sent on every step. That one investigation spent 1.58M input tokens, thirteen
+#: times a normal case, and hit its tool-call cap before it could finish.
+#:
+#: Templates are never dropped to meet this, only shortened: dropping one changes what the
+#: ranking says, while shortening one changes only how much of a line the model reads before
+#: it opens the line properly with `get_slice`.
+DIGEST_CHAR_BUDGET = 24_000
+
+#: However tight the budget gets, a pattern is shown at least this far. Below roughly this
+#: the prefix is all timestamp and thread id and two templates cannot be told apart, which
+#: would make the digest useless rather than merely abbreviated.
+MIN_PATTERN_CHARS = 160
 
 #: How many unopened templates a single nudge may name. The digest holds forty and a nudge
 #: listing thirty of them is a shopping list, not a question -- and the prompt tells the model
@@ -237,11 +255,30 @@ def build_system_prompt(db: ScratchpadDB, digest_limit: int = DIGEST_LIMIT) -> s
             "",
         ]
     )
+    allowance = max(MIN_PATTERN_CHARS, DIGEST_CHAR_BUDGET // max(len(templates), 1))
+    shortened = 0
     for template in templates:
         mix = ", ".join(f"{k}:{v}" for k, v in sorted(template["severity_mix"].items()))
+        pattern = str(template["pattern"])
+        if len(pattern) > allowance:
+            # Said in characters rather than elided silently: a model that cannot tell a
+            # shortened pattern from a whole one will quote the shortening as if it were
+            # the line, which is the same error as citing a row it never read.
+            cut = len(pattern) - allowance
+            pattern = f"{pattern[:allowance]} ... [+{cut} more chars]"
+            shortened += 1
         lines.append(
             f"[{template['template_id']}] score={template['anomaly_score']:.3f} "
-            f"n={template['occurrence_count']} {mix} :: {template['pattern']}"
+            f"n={template['occurrence_count']} {mix} :: {pattern}"
+        )
+    if shortened:
+        lines.extend(
+            [
+                "",
+                f"{shortened} of these patterns are shown shortened to keep this list "
+                "readable. The ranking is over the whole template, not the part shown; use "
+                "get_slice on the template id to read whole lines.",
+            ]
         )
     return "\n".join(lines)
 
@@ -275,6 +312,9 @@ class InvestigationLoop:
 
     def run(self, incident_context: str = "") -> InvestigationResult:
         system = build_system_prompt(self.db)
+        # The largest thing in the conversation and the one re-sent on every step. Recorded
+        # because nobody noticed a 52k-token digest until one run cost 1.58M input tokens.
+        self.db.record(INVESTIGATE_DIGEST_CHARS, len(system))
         opening = incident_context.strip() or (
             "Investigate this incident. Start from the ranked templates above."
         )

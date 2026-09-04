@@ -317,6 +317,18 @@ INVESTIGATE_COVERAGE_NUDGES = Metric("investigate", "coverage_nudges", "int")
 #: not the fix for the other.
 INVESTIGATE_DIGEST_NUDGES = Metric("investigate", "digest_nudges", "int")
 
+#: Size of the system prompt, digest included. The prompt is re-sent on every step, so this
+#: is the multiplier on a run's whole input cost -- and it is set by the corpus, not by
+#: config. One real incident reached 208,843 characters before this had a name.
+INVESTIGATE_DIGEST_CHARS = Metric(
+    "investigate",
+    "digest_chars",
+    "int",
+    load_bearing=True,
+    threshold=40_000,
+    comparison="gt",
+)
+
 # ------------------------------------------------------------------ synthesis
 
 SYNTHESIS_PROVIDER = Metric("synthesis", "provider", "str")
@@ -464,6 +476,7 @@ ALL_METRICS: tuple[Metric, ...] = (
     INVESTIGATE_HISTORY_COMPACTIONS,
     INVESTIGATE_COVERAGE_NUDGES,
     INVESTIGATE_DIGEST_NUDGES,
+    INVESTIGATE_DIGEST_CHARS,
     SYNTHESIS_PROVIDER,
     SYNTHESIS_MODEL,
     SYNTHESIS_OUTCOME,

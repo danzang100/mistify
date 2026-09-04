@@ -14,3 +14,6 @@ build/
 .env
 # Deterministically regenerated from tests/fixtures/synthetic_incident.py
 examples/*.jsonl
+
+# Logs handed over for analysis. Real production data: never committed, like the corpora.
+test-logs/

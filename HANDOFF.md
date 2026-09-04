@@ -269,6 +269,21 @@ Digest recall barely moves — @5 flat at 19, @10 26 to 28, @20 35 to 36, @40 40
 is the point worth reading: the mask does not find more evidence, it makes the digest a
 meaningful share of the file. Hibernate's forty templates were 0.2% of its file and are now 8.8%.
 
+### The digest is budgeted in characters, not templates
+
+`digest_limit` counts templates, which is the wrong unit when a template can be five
+kilobytes. Measured across twenty-two real incidents the digest is a median 7,222 characters;
+on a Java application log whose lines carry JSON payloads it reached **208,843** — 52k tokens,
+re-sent on every step. That run spent **1.58M input tokens**, thirteen times a normal case,
+and hit its tool-call cap before it could finish.
+
+`DIGEST_CHAR_BUDGET` (24,000 characters, ~6k tokens) shortens patterns rather than dropping
+templates — dropping one changes what the ranking says, shortening one changes only how much
+of a line is read before `get_slice` opens it properly, and the digest says how many were
+shortened. That log's prompt goes 208,843 → **22,982** with all forty templates still listed;
+the twenty LogDx cases are byte-identical because they were already under budget.
+`investigate.digest_chars` records the size and the report warns above 40,000.
+
 ### The loop looks past the first five now, and cannot inherit another run's notes
 
 **A digest-coverage nudge.** Measured across fifteen runs, the loop opened a median of **four
