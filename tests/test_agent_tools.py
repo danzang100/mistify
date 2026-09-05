@@ -25,7 +25,14 @@ from mistify.agent.tools import (
     TOOL_NAMES,
     ToolBox,
 )
-from mistify.common.models import SEVERITIES, LogRecord, NoiseThresholds
+from mistify.common.models import (
+    NOTE_ROLE,
+    ROLE_ACCOUNTING,
+    ROLE_FINDING,
+    SEVERITIES,
+    LogRecord,
+    NoiseThresholds,
+)
 from mistify.eval.fixtures import RED_HERRING_MARKER, ROOT_CAUSE_MARKER
 from mistify.llm.base import ToolCall, ToolResult, ToolSpec
 from mistify.scratchpad.db import ScratchpadDB, _trace_id
@@ -386,8 +393,71 @@ def test_note_is_persisted_with_its_evidence_and_step(box: ToolBox) -> None:
     note = box.db.notes()[-1]
     assert note.step == box.step
     assert note.confidence == "high"
-    assert note.evidence == {"template_ids": [template_id], "log_event_ids": event_ids}
+    # The role is stamped by the toolbox, not sent by the model: no nudge has named anything,
+    # so this is a finding.
+    assert note.evidence == {
+        "template_ids": [template_id],
+        "log_event_ids": event_ids,
+        NOTE_ROLE: ROLE_FINDING,
+    }
     assert str(note.id) in result.content
+
+
+def test_note_answering_a_nudge_is_recorded_as_accounting(box: ToolBox) -> None:
+    """A note citing only what a nudge named is answering it, not reporting a discovery."""
+    template_id = dominant_template_id(box.db)
+    box.nudged_templates = {template_id}
+
+    call(
+        box,
+        "write_note",
+        note="Template is a startup warning, not relevant to this incident.",
+        evidence={"template_ids": [template_id]},
+        confidence="medium",
+    )
+
+    assert box.db.notes()[-1].evidence[NOTE_ROLE] == ROLE_ACCOUNTING
+
+
+def test_note_bringing_new_evidence_after_a_nudge_is_still_a_finding(box: ToolBox) -> None:
+    """The control for the test above: without it, everything after a nudge reads as accounting.
+
+    The nudge fires only once the model has offered a conclusion, so every note that follows is
+    post-nudge. Timing therefore cannot be the signal -- a run that answers the nudge and *then*
+    finds something real would have the real finding demoted. The citations separate the two.
+    """
+    nudged = dominant_template_id(box.db)
+    box.nudged_templates = {nudged}
+    other = next(
+        int(t["template_id"])
+        for t in box.db.top_templates(limit=10, order_by="anomaly_score")
+        if int(t["template_id"]) != nudged
+    )
+
+    call(
+        box,
+        "write_note",
+        note="A separate failure the nudge did not ask about.",
+        evidence={"template_ids": [nudged, other]},
+        confidence="high",
+    )
+
+    assert box.db.notes()[-1].evidence[NOTE_ROLE] == ROLE_FINDING
+
+
+def test_the_model_cannot_set_a_note_role(box: ToolBox) -> None:
+    """A role the model can claim is a role it learns to claim."""
+    template_id = dominant_template_id(box.db)
+
+    call(
+        box,
+        "write_note",
+        note="Claiming to be something other than a finding.",
+        evidence={"template_ids": [template_id], NOTE_ROLE: "conclusion"},
+        confidence="high",
+    )
+
+    assert box.db.notes()[-1].evidence[NOTE_ROLE] == ROLE_FINDING
 
 
 def test_evidence_citing_nothing_is_refused_and_writes_no_note(box: ToolBox) -> None:

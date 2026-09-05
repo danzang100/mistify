@@ -455,6 +455,7 @@ class InvestigationLoop:
             return False
         unexplained, _ = unexplained_signal_templates(self.db, self._signal_template_ids())
         if unexplained:
+            self.toolbox.nudged_templates.update(int(i) for i in unexplained)
             question = (
                 f"Before you finish: template(s) {', '.join(str(i) for i in unexplained)} were "
                 "ranked as signal, were active during the incident window, and no note you have "
@@ -466,6 +467,7 @@ class InvestigationLoop:
             unopened = self._unopened_digest_templates()
             if not unopened:
                 return False
+            self.toolbox.nudged_templates.update(int(i) for i in unopened)
             result.digest_nudges += 1
             question = (
                 "Before you finish: you were shown the "

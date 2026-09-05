@@ -14,6 +14,10 @@ from typing import Any
 from dateutil import parser as date_parser
 
 __all__ = [
+    "NOTE_ROLE",
+    "ROLE_ACCOUNTING",
+    "ROLE_FINDING",
+    "ROLE_RANK",
     "SEVERITIES",
     "SYNTHESIS_MARKER",
     "LogRecord",
@@ -223,6 +227,24 @@ class TemplateSummary:
 #: the writer made the report import from the agent, which is the wrong direction -- rendering
 #: should depend on the data model, never on whichever stage happened to produce the row.
 SYNTHESIS_MARKER = "synthesis"
+
+#: Evidence key naming a note's job. Set by the loop from its own state, never by the model --
+#: a role the model could claim is a role it would learn to claim.
+NOTE_ROLE = "role"
+
+#: A note that explains templates the coverage nudge pointed at, rather than one that found
+#: something. The distinction is not editorial: the nudge asks "cite these or say why they do
+#: not matter", so a reasoned dismissal is the correct answer to it and is still not the most
+#: significant thing the investigation established.
+ROLE_ACCOUNTING = "accounting"
+
+#: The default. Anything written because the investigation found it.
+ROLE_FINDING = "finding"
+
+#: How roles order when a report asks what leads. Deliberately shallow: only the two roles the
+#: loop can actually observe are defined, because a rank for a role nothing sets is a branch no
+#: measurement covers.
+ROLE_RANK = {ROLE_ACCOUNTING: 0, ROLE_FINDING: 1}
 
 
 @dataclass(slots=True)

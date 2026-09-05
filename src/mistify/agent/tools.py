@@ -28,7 +28,14 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
-from mistify.common.models import SEVERITIES, NoiseThresholds, parse_timestamp
+from mistify.common.models import (
+    NOTE_ROLE,
+    ROLE_ACCOUNTING,
+    ROLE_FINDING,
+    SEVERITIES,
+    NoiseThresholds,
+    parse_timestamp,
+)
 from mistify.llm.base import ToolCall, ToolResult, ToolSpec
 from mistify.scratchpad.db import ReadOnlyViolation, ScratchpadDB
 
@@ -146,6 +153,15 @@ class ToolBox:
         #: cite events 1 and 2, the first two lines of the file, for a claim about a service
         #: that appears in neither. The ids exist, so the report's existence check passed it.
         self._seen_events: set[int] = set()
+        #: Templates a coverage nudge has named, accumulated across nudges. A note whose
+        #: citations fall entirely inside this set is answering the question rather than
+        #: reporting a discovery, and is recorded as such -- see `NOTE_ROLE`.
+        #:
+        #: Subset rather than "written after a nudge": the nudge fires when the model has
+        #: already offered a conclusion, so *everything* after it is post-nudge, and a run that
+        #: goes on to find something genuinely new would have that finding demoted. The
+        #: citations say which of the two happened; the timing does not.
+        self.nudged_templates: set[int] = set()
         #: Templates this investigation has actually pulled lines from, as opposed to having
         #: been listed in the digest. The digest names forty; measured across fifteen runs the
         #: loop opened a median of four of them, and every ground-truth marker it failed to
@@ -670,6 +686,14 @@ class ToolBox:
                 is_error=True,
             )
 
+        # Stamped here, from the loop's own record of what it asked about, rather than taken
+        # from the model: a role the model can set is a role it will learn to set.
+        evidence[NOTE_ROLE] = (
+            ROLE_ACCOUNTING
+            if template_ids and self.nudged_templates.issuperset(template_ids)
+            else ROLE_FINDING
+        )
+
         try:
             note_id = self.db.write_note(self.step, note, evidence, confidence)
         except (ValueError, TypeError, sqlite3.Error) as exc:
@@ -828,6 +852,9 @@ def _evidence_arg(args: dict[str, Any]) -> dict[str, Any]:
         raise _ArgumentError(f"evidence must be an object, got {type(raw).__name__}. {shape}")
 
     evidence = dict(raw)
+    # The role is the loop's to assign. Dropped rather than rejected: a model that guesses the
+    # key should not have its note refused over a field it was never told about.
+    evidence.pop(NOTE_ROLE, None)
     template_ids = _id_list(evidence.get("template_ids"), "evidence.template_ids")
     event_ids = _id_list(evidence.get("log_event_ids"), "evidence.log_event_ids")
     if not template_ids and not event_ids:

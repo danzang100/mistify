@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 
 from mistify.agent.skeleton import INVESTIGATOR_NAME, run_skeleton_investigation
-from mistify.eval.fixtures import PLANTED_API_KEY, PLANTED_EMAILS, ROOT_CAUSE_MARKER
+from mistify.common.models import NOTE_ROLE, ROLE_ACCOUNTING, ROLE_FINDING
+from mistify.eval.fixtures import (
+    PLANTED_API_KEY,
+    PLANTED_EMAILS,
+    RED_HERRING_MARKER,
+    ROOT_CAUSE_MARKER,
+)
+from mistify.findings import rank_notes
 from mistify.metrics import (
     ANOMALY_NEEDLE_POSITION,
     INGEST_PARSE_ERRORS,
@@ -564,3 +571,84 @@ def test_the_machinery_is_below_the_incident(loaded_db: ScratchpadDB) -> None:
     assert report.index("## Findings") < report.index("# Appendix")
     assert report.index("# Appendix") < report.index("## Token usage")
     assert report.index("# Appendix") < report.index("## Investigation trail")
+
+
+def _template_for(db: ScratchpadDB, marker: str) -> int:
+    """The template whose pattern carries `marker`. The fixture plants exactly one."""
+    rows = db.run_readonly_sql(
+        "SELECT template_id, pattern FROM templates ORDER BY template_id", max_rows=5000
+    )
+    matched = [int(r["template_id"]) for r in rows if marker in str(r["pattern"])]
+    assert matched, f"no template carries {marker!r}"
+    return matched[0]
+
+
+def _note(step: int, template_ids: list[int], role: str, confidence: str = "high") -> dict:
+    return {
+        "note": f"note at step {step}",
+        "step": step,
+        "confidence": confidence,
+        "evidence": {"template_ids": template_ids, NOTE_ROLE: role},
+    }
+
+
+def test_a_note_answering_a_nudge_does_not_lead_over_a_finding(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """The customer-log shape, in miniature.
+
+    On a 568 MB production log the run's third note dismissed three templates scoring 0.885
+    with two occurrences each, and led the report -- above the note naming a root cause that
+    occurred 889 times and scored 0.798. Ranking a nudge answer by the scores of the templates
+    the nudge named asks the ranking to grade its own homework.
+    """
+    herring = _template_for(loaded_db, RED_HERRING_MARKER)
+    root = _template_for(loaded_db, ROOT_CAUSE_MARKER)
+    scores = {herring: 0.99, root: 0.10}
+
+    finding = _note(step=5, template_ids=[root], role=ROLE_FINDING)
+    accounting = _note(step=9, template_ids=[herring], role=ROLE_ACCOUNTING)
+
+    ranked = rank_notes([accounting, finding], scores)
+
+    assert ranked[0] is finding
+    assert ranked[-1] is accounting
+
+
+def test_the_loudest_template_still_does_not_carry_the_report(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """The control that killed every volume-weighted alternative.
+
+    The herring fires 350 times to the root cause's 40, so ranking findings by how many events
+    they cite -- or by score times volume, or by score damped with volume -- leads with the
+    herring. Both notes here are findings, so the role term is constant and cannot help: this
+    is the case that has to be won on the anomaly score alone, and it is why the role term was
+    added *beside* that score rather than in place of it.
+    """
+    herring = _template_for(loaded_db, RED_HERRING_MARKER)
+    root = _template_for(loaded_db, ROOT_CAUSE_MARKER)
+    scores = {
+        int(r["template_id"]): float(r["anomaly_score"])
+        for r in loaded_db.run_readonly_sql(
+            "SELECT template_id, anomaly_score FROM templates", max_rows=5000
+        )
+    }
+    assert scores[root] > scores[herring], "fixture no longer discriminates"
+
+    loud = _note(step=5, template_ids=[herring], role=ROLE_FINDING)
+    quiet = _note(step=7, template_ids=[root], role=ROLE_FINDING)
+
+    assert rank_notes([loud, quiet], scores)[0] is quiet
+
+
+def test_notes_without_a_role_rank_exactly_as_they_did(loaded_db: ScratchpadDB) -> None:
+    """Every note written before the role existed. The default must not reorder them."""
+    herring = _template_for(loaded_db, RED_HERRING_MARKER)
+    root = _template_for(loaded_db, ROOT_CAUSE_MARKER)
+    scores = {herring: 0.20, root: 0.90}
+
+    low = {"note": "a", "step": 1, "confidence": "high", "evidence": {"template_ids": [herring]}}
+    high = {"note": "b", "step": 2, "confidence": "high", "evidence": {"template_ids": [root]}}
+
+    assert rank_notes([low, high], scores)[0] is high

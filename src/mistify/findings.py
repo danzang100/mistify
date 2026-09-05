@@ -10,18 +10,33 @@ Both callers now ask here. The report renders what this returns; the eval scores
 returns; neither depends on the other, and the ranking cannot drift between what a reader sees
 and what a score claims about it.
 
-The ordering itself is deliberately model-free. It keys on the anomaly score of the templates
-each note cites, which no model touched, so two runs that reason differently but reach the same
-templates present their findings in the same order. Measured across three runs of one incident,
-note *position* meant nothing: the first note was an early narrow hypothesis twice, and the last
-was a deliberate aside once.
+The ordering itself is deliberately model-free. It keys on what the loop asked for and on the
+anomaly score of the templates each note cites, neither of which a model touched, so two runs
+that reason differently but reach the same templates present their findings in the same order.
+Measured across three runs of one incident, note *position* meant nothing: the first note was
+an early narrow hypothesis twice, and the last was a deliberate aside once.
+
+Score alone was not enough. A note answering the coverage nudge cites the templates the nudge
+named, so ranking it by their scores asks the ranking to grade its own homework: on a 568 MB
+production log that put a note dismissing three two-occurrence templates above the note naming
+the actual root cause. Every attempt to fix that by re-weighting the score instead -- by
+evidence volume, by score times volume, by score damped with volume -- moved the leading finding
+onto the planted red herring in `pool-exhaustion`, which fires 350 times to the root cause's 40.
+The role term works precisely because it is orthogonal to the score: where no nudge fired it is
+constant, and the ordering is exactly what it always was.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from mistify.common.models import SYNTHESIS_MARKER, parse_timestamp
+from mistify.common.models import (
+    NOTE_ROLE,
+    ROLE_FINDING,
+    ROLE_RANK,
+    SYNTHESIS_MARKER,
+    parse_timestamp,
+)
 
 __all__ = [
     "CHRONIC_SHARE",
@@ -51,9 +66,15 @@ def rank_notes(notes: list[dict[str, Any]], scores: dict[int, float]) -> list[di
     the other.
     """
 
-    def key(note: dict[str, Any]) -> tuple[int, float, int, int]:
+    def key(note: dict[str, Any]) -> tuple[int, int, float, int, int]:
         cited = [int(i) for i in note["evidence"].get("template_ids", [])]
         return (
+            # What the note is for, before how anomalous what it cites happens to be. A note
+            # answering the coverage nudge explains templates the ranking raised; ranking it by
+            # those same templates' scores is circular, and on a real 568 MB log it put the
+            # note *dismissing* three two-occurrence templates (score 0.885) above the note
+            # naming a root cause with 889 occurrences (0.798).
+            ROLE_RANK.get(str(note["evidence"].get(NOTE_ROLE, ROLE_FINDING)), 1),
             # A synthesis note *is* the conclusion, written from the whole scratchpad after the
             # search finished. It leads by construction rather than by out-scoring the notes it
             # was written from.
@@ -82,6 +103,10 @@ def describe_issues(
                 "template_ids": cited,
                 "top_score": max((scores.get(i, 0.0) for i in cited), default=0.0),
                 "synthesis": bool(note["evidence"].get(SYNTHESIS_MARKER)),
+                # Rendered rather than merely ranked on: a reader who sees a dismissal last
+                # should be able to tell it was answering a question, not trailing in a
+                # competition it was never entered into.
+                "role": str(note["evidence"].get(NOTE_ROLE, ROLE_FINDING)),
                 # Only when every template it rests on is chronic. One acute template among them
                 # means the note is about the event, whatever else it mentions.
                 "chronic": bool(cited) and all(i in chronic for i in cited),
