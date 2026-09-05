@@ -596,6 +596,58 @@ cheap levers around it are now exhausted: fewer clusters is banked (header maski
 1,485), memoisation is rejected, depth is already optimal, and parallelism is ruled out by the
 incremental tree. What is left is a faster templater, which is a different project.
 
+**Root cause found, and it is not that Drain3 is slow.** Templating on Thunderbird is far
+more expensive than on a real 569 MB customer log at the same event count and a similar cluster
+count. Measured structurally, which needs no clock:
+
+| | Thunderbird | customer log |
+|---|---|---|
+| clusters | 786 | 654 |
+| leaves | **32** | **279** |
+| clusters per leaf, mean | 24.6 | 2.3 |
+| clusters per leaf, p95 | 102 | 9 |
+| clusters scanned by the average line | **89.7** | **7.4** |
+| five fattest leaves | 68% of all clusters | 17% |
+
+The average Thunderbird line scans **12.1x more clusters** at its leaf. Drain routes on token
+count first and the first token second, and Thunderbird has no diversity in either:
+
+| | distinct first tokens | distinct token counts |
+|---|---|---|
+| Thunderbird | **1** (`-`, on 100% of lines) | 28 |
+| customer log | 145 (`<TS>` on 97%) | 174 |
+
+786 clusters squeeze into 32 leaves. The customer log's first token is near-constant too, so
+its advantage is line-length diversity rather than prefix diversity -- 174 token counts against
+28. This is a degenerate routing case on one corpus, not a templater that is too slow.
+
+**Consequence for the plan.** The decision rule fixed before measuring was: a templating gap
+driven by fat leaves means an in-place fix, not a rewrite. It is fat leaves. **No rewrite, and
+no compiled inner loop.**
+
+**Candidate fix, deliberately not implemented yet.** Tree depth controls how many tokens
+participate in routing, and depth 12 gave 8.26x on Thunderbird -- consistent with splitting the
+fat leaves -- while costing grouping accuracy on Loghub. One global constant cannot serve both,
+which is exactly the problem `sim_th` calibration already solves by choosing per file from a
+sample with an over-merge guard. Extending that calibration to depth reuses the machinery.
+
+Blocked on one unexplained result: depth 12 produced **fewer** clusters on Thunderbird, 769
+against 1,488, where deeper routing should produce more. Until that inverts back or is
+explained, this would be building on a result nobody understands.
+
+**Wall-clock on this machine cannot support a stage attribution.** The Thunderbird pass reported
+templating at 868.0s inside a full ingest of 459.4s -- a negative remainder, so the pass
+contradicts itself. Five anomalous readings in one day, including the same parse measuring 41.9s
+and 18.2s. Cause identified rather than guessed: the working tree is inside OneDrive, and
+`OneDrive.Sync.Service.exe`, `MsMpEng.exe` and `SearchIndexer.exe` all watch the directory the
+ingest writes its multi-gigabyte scratchpads into. Anything timing-based here needs the corpora
+and scratchpads moved to a path none of those three watch, and repeats reported as a minimum
+rather than a single pass. Every structural finding above is a deterministic count and needs
+none of that.
+
+The customer log's own pass was at least internally consistent -- parse 7%, redact 24%,
+template 16%, rest 53% -- and is recorded as an indication rather than a measurement.
+
 **Superseded recommendation.** The depth sweep, now that memoisation is out: it is the one remaining
 candidate that does not change what the templater produces, so it stays checkable against the
 existing Loghub grouping-accuracy and LogDx digest-recall numbers. Header masking has already
