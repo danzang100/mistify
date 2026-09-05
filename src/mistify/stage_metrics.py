@@ -34,6 +34,8 @@ from mistify.metrics import (
     INGEST_FORMAT,
     INGEST_LINES_READ,
     INGEST_PARSE_ERRORS,
+    INGEST_TIMESTAMP_SHAPE,
+    INGEST_TIMESTAMP_YEAR_INFERRED,
     INGEST_UNMAPPED_SEVERITY,
     INGEST_UNPARSEABLE_TIMESTAMP,
     REDACTED_BY_ENTITY,
@@ -114,6 +116,9 @@ def ingest_metrics(
         (INGEST_UNMAPPED_SEVERITY, stats.unmapped_severity),
         (INGEST_UNPARSEABLE_TIMESTAMP, stats.unparseable_timestamp),
     ]
+    if stats.timestamp_shape is not None:
+        entries.append((INGEST_TIMESTAMP_SHAPE, stats.timestamp_shape))
+        entries.append((INGEST_TIMESTAMP_YEAR_INFERRED, stats.timestamp_year_inferred))
     if fallback_reason is not None:
         # The *reader* that degraded, not the adapter's display name. `INGEST_FALLBACK` fires
         # the report's strongest warning by exact match on `raw_lines`, and a directory reports

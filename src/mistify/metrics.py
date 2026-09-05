@@ -121,6 +121,21 @@ INGEST_UNMAPPED_SEVERITY = Metric(
 )
 INGEST_UNPARSEABLE_TIMESTAMP = Metric("ingest", "unparseable_timestamp", "int")
 
+#: Which timestamp shape a fallback read the file with -- `iso8601`, `epoch`, `syslog` -- or
+#: absent when timestamps were not read from the text at all.
+INGEST_TIMESTAMP_SHAPE = Metric("ingest", "timestamp_shape", "str")
+
+#: Load-bearing: true when the adopted shape carries no year and the year came from the clock
+#: at ingest. Every interval in the report is then sound and every absolute date is not, which
+#: a reader cannot infer from the dates themselves -- they look ordinary.
+INGEST_TIMESTAMP_YEAR_INFERRED = Metric(
+    "ingest",
+    "timestamp_year_inferred",
+    "bool",
+    load_bearing=True,
+    trigger_values=frozenset({"True"}),
+)
+
 #: Set when no adapter recognised the file and it was read line by line instead. Load-bearing:
 #: a raw-line read has no real timestamps and no parsed severity, so the incident window and
 #: half the anomaly score describe the file's line order rather than the incident. A report
@@ -430,6 +445,8 @@ ALL_METRICS: tuple[Metric, ...] = (
     INGEST_EVENTS_LOADED,
     INGEST_PARSE_ERRORS,
     INGEST_UNMAPPED_SEVERITY,
+    INGEST_TIMESTAMP_SHAPE,
+    INGEST_TIMESTAMP_YEAR_INFERRED,
     INGEST_UNPARSEABLE_TIMESTAMP,
     INGEST_FALLBACK,
     INGEST_FALLBACK_REASON,

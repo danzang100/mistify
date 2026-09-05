@@ -36,6 +36,8 @@ EXPECTED_METRIC_KEYS = {
     ("ingest", "parse_errors"),
     ("ingest", "unmapped_severity"),
     ("ingest", "unparseable_timestamp"),
+    ("ingest", "timestamp_shape"),
+    ("ingest", "timestamp_year_inferred"),
     ("ingest", "fallback"),
     ("ingest", "fallback_reason"),
     ("redaction", "mode"),

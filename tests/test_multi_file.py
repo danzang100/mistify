@@ -336,7 +336,12 @@ def test_the_warning_says_how_much_of_the_source_was_degraded(
     with ScratchpadDB(result.scratchpad_path) as db:
         text = generate_report(db)
 
-    assert "events were read this way and have no parsed timestamp" in text
+    # The syslog files in this tree carry readable timestamps, so the fallback reads them and
+    # the warning must say so rather than claiming the window is meaningless. What is still
+    # degraded is the *structure* -- no parsed fields, severity guessed from the text.
+    assert "read one line at a time" in text
+    assert "Timestamps were read from each line as `syslog`" in text
+    assert "carries no year" in text
     assert "There are no parsed timestamps" not in text
 
 

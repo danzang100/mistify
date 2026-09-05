@@ -38,6 +38,8 @@ from mistify.metrics import (
     INGEST_FALLBACK,
     INGEST_FALLBACK_REASON,
     INGEST_PARSE_ERRORS,
+    INGEST_TIMESTAMP_SHAPE,
+    INGEST_TIMESTAMP_YEAR_INFERRED,
     INGEST_UNMAPPED_SEVERITY,
     INGEST_UNPARSEABLE_TIMESTAMP,
     INVESTIGATE_BUDGET_LIMITED,
@@ -342,12 +344,30 @@ def _health_warnings(view: MetricView) -> list[str]:
         # of making the warning ignorable.
         ordinal = view.number(INGEST_UNPARSEABLE_TIMESTAMP)
         loaded = view.number(INGEST_EVENTS_LOADED)
+        shape = view.text(INGEST_TIMESTAMP_SHAPE)
         if ordinal is not None and loaded is not None and 0 < ordinal < loaded:
             scope = (
                 f"{int(ordinal)} of {int(loaded)} events were read this way and have no parsed "
                 "timestamp. The incident window spans those events and the properly timestamped "
                 "ones together, so it is not a duration"
             )
+        elif shape:
+            # Reading one line at a time no longer implies having no timestamps: the fallback
+            # reads them out of the line text where the text carries them. Saying otherwise
+            # would understate the report in the one direction nobody checks -- a reader who
+            # believes the window is meaningless will not use it even when it is.
+            if view.triggers(INGEST_TIMESTAMP_YEAR_INFERRED):
+                scope = (
+                    f"Timestamps were read from each line as `{shape}`, which carries no year, "
+                    "so the year is the one at ingest rather than the log's. Durations and "
+                    "ordering are sound; absolute dates are not, and a log crossing 31 December "
+                    "will appear to run backwards"
+                )
+            else:
+                scope = (
+                    f"Timestamps were read from each line as `{shape}`, so the incident window "
+                    "and the burstiness term are real"
+                )
         else:
             scope = (
                 "There are no parsed timestamps: the incident window and the burstiness term "

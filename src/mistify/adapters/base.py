@@ -29,6 +29,13 @@ class AdapterStats:
     parse_errors: int = 0
     unmapped_severity: int = 0
     unparseable_timestamp: int = 0
+    #: Which timestamp shape the adapter read the file with, when it chose one from the text.
+    #: None means timestamps were not read from the lines. Recorded because "there are
+    #: timestamps" and "they are trustworthy as absolute dates" are different claims.
+    timestamp_shape: str | None = None
+    #: True when the adopted shape carries no year, so the year came from the clock at ingest
+    #: rather than from the log. Intervals are sound; absolute dates are not.
+    timestamp_year_inferred: bool = False
     error_samples: list[str] = field(default_factory=list)
 
     def record_error(self, detail: str, keep: int = 5) -> None:

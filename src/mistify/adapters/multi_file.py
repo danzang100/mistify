@@ -195,6 +195,16 @@ class MultiFileAdapter(LogAdapter):
         self.stats.parse_errors += stats.parse_errors
         self.stats.unmapped_severity += stats.unmapped_severity
         self.stats.unparseable_timestamp += stats.unparseable_timestamp
+        # Two files read one line at a time can adopt different timestamp shapes, and their
+        # timestamps are then not comparable with each other. Reporting either one alone would
+        # describe the directory by whichever file happened to be read last, so a disagreement
+        # is named rather than resolved.
+        if stats.timestamp_shape is not None:
+            if self.stats.timestamp_shape is None:
+                self.stats.timestamp_shape = stats.timestamp_shape
+            elif self.stats.timestamp_shape != stats.timestamp_shape:
+                self.stats.timestamp_shape = "mixed"
+            self.stats.timestamp_year_inferred |= stats.timestamp_year_inferred
         for sample in stats.error_samples:
             if len(self.stats.error_samples) < _MAX_SKIP_SAMPLES * 2:
                 self.stats.error_samples.append(sample)
