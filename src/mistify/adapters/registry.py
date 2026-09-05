@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from mistify.adapters.base import LogAdapter
+from mistify.adapters.elastic import ElasticAdapter
 from mistify.adapters.json_lines import JsonLinesAdapter
 from mistify.adapters.loki import LokiAdapter
 from mistify.adapters.otlp import OtlpAdapter
@@ -25,12 +26,15 @@ class UnknownAdapterError(ValueError):
     """`adapters.registered` names a format nothing implements."""
 
 
-#: Elastic is still outstanding: its export shape is a convention rather than a specification,
-#: and the build plan is explicit that a hand-authored fixture for it gets the `_source` nesting
-#: subtly wrong, which is the whole reason the adapter exists. It needs its own stack, which
-#: `grafana/otel-lgtm` is not. OTLP is a specification and could be written without one; Loki
-#: was written against captures taken from a real collector and a real Loki, per testing §6.
+#: Elastic reads two shapes whose *envelope* is specified -- a `_search` response and an NDJSON
+#: index dump -- while what sits inside `_source` is convention, which is the part the build
+#: plan warned a hand-authored fixture gets subtly wrong. `tests/fixtures/capture_elastic.py`
+#: is how that stops being a guess; until it has been run against a real stack the field
+#: mapping is a considered assumption and the adapter's docstring says so. OTLP is a
+#: specification and could be written without a stack; Loki was written against captures taken
+#: from a real collector and a real Loki, per testing §6.
 ADAPTERS: dict[str, type[LogAdapter]] = {
+    ElasticAdapter.format_name: ElasticAdapter,
     JsonLinesAdapter.format_name: JsonLinesAdapter,
     LokiAdapter.format_name: LokiAdapter,
     OtlpAdapter.format_name: OtlpAdapter,
