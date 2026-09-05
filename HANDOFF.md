@@ -1,7 +1,13 @@
 # Handoff — Phase 4 and the scale work
 
-Branch `phase4-adapters-and-scale`, nine commits ahead of `master`. **883 tests, 90% coverage,
-ruff and mypy clean.** Nothing pushed; no remote is configured.
+Branch `phase4-adapters-and-scale`, twenty-one commits ahead of `master`. **929 tests, 91%
+coverage, ruff and mypy clean.** Nothing pushed; no remote is configured.
+
+Sections 1-3 are the state as of 4 September and are still accurate. **Section 4 is what
+changed in the two days after**, and it revises several things sections 1-3 imply: the digest
+the investigation starts from was blind and now is not, a run that concludes nothing no longer
+scores as though it did, and the loop has now converged twice on a 568 MB customer log that
+nobody here wrote.
 
 This document is the session's working memory: what landed, what the numbers actually are, what
 was tried and rejected, and what is worth doing next. `README.md` describes the project;
@@ -199,9 +205,11 @@ that never ran past 8; and a 3× ingest "speedup" that was cold-versus-warm page
 
 ---
 
-## 4. What to do next
+## 4. What changed after this handoff was written
 
-Ordered by value per unit of effort.
+Two days of work, 4-5 September, all on this branch. Each subsection carries the measurement
+that justified it; the commit messages carry the rest. Read this before section 5, because
+several things section 5 used to recommend are now done.
 
 ### Done since: the digest was re-ranked
 
@@ -354,6 +362,48 @@ their first tool call go from **15/42 to 0/27**, the recorded `jest-nextjs` from
 and every run that actually concluded is unchanged. Issue 11's other half — a judge question
 asking whether a finding asserts that something is wrong — is still open.
 
+## 5. What to do next
+
+Ordered by value per unit of effort, revised by what the last two days measured.
+
+### The report leads with the wrong finding
+
+`findings.rank_notes` orders findings by the anomaly score of the templates each note cites.
+On the customer log that puts the note *dismissing* templates 410, 413 and 426 first — they
+score 0.885, being the ranking's own signal set — and the SolrCore root cause second, because
+template 1962 scores low. The document's own prose says 'most significant first ... computed,
+not chosen by a model', which is what makes it misleading rather than merely wrong. A report
+inherits the ranking's degeneracy at the top of the page. Free to prototype against the two
+recorded runs.
+
+### Run the critique enough to know anything about it
+
+**Five objections exist across every scratchpad on disk.** Three conceded, two of those
+touching the leading finding. Every LogDx sweep lost its critique to the 20-per-day cap on
+`gemini-3.5-flash`, so the least-exercised component in the system is the one that checks the
+others. Any work on amendment — having the critique fix what it catches rather than only
+recording it — needs more than five data points behind it. The design constraints, if it
+happens: amend by superseding, never rewrite; conceded objections only; one round, no
+recursion; the amendment gets verified like any other claim.
+
+### Rarity, the last degenerate term
+
+53-99% of templates in every case occur exactly once, so rarity hands three-quarters of every
+file the same value. Dropping it when the modal count dominates is the same shape as
+`severity_source` and is free to measure. Replacing it with token IDF was tried and is worse
+at every depth.
+
+### Timestamps, for capability rather than accuracy
+
+`parse_timestamp` already handles every shape in play — this app's `2026-05-04 17:05:37`,
+Actions' ISO-with-Z, Hadoop's comma-milliseconds, syslog. Only BGL's dotted form fails. The
+capability exists and nothing calls it: `raw_lines` never tries, and the bootstrapper's schema
+cannot express filler between the timestamp and the severity, so it scores 0% on this format
+and correctly refuses. Measured: real wall-clock buckets change marker recall by nothing
+(@5 19→18, @10 30→29, @40 41→42). The case for fixing it is `get_slice(start_ts, end_ts)`,
+an incident window that is not 1970, and 'when did this start' — which is the question the
+customer-log run could not ask.
+
 ### Cheap and well understood
 
 - **Elastic adapter.** The last format. Needs `elasticsearch:8` plus Filebeat for authentic ECS
@@ -388,7 +438,24 @@ confident-and-wrong).
 
 ---
 
-## 5. Operational notes
+## 6. Operational notes
+
+- **`gemini-3.5-flash` allows 20 requests per day** on the free tier
+  (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`). Every critique in the 4 September
+  sweeps died on it. `min_interval_seconds` does nothing about a daily cap; plan a batch
+  around it or run `--no-adversarial`.
+- **`gemini-3.5-flash-lite` returned 503 for about an hour** on 4 September — capacity, not
+  quota, and it answers nothing including a one-token ping. Wait it out.
+- **Throughput does not transfer between corpora.** The 3,363 rec/s in section 2 is a BGL
+  figure; a 568 MB Java application log ingested at **26,600 rec/s**, 2.19M events in 82
+  seconds with `redaction.workers: 8`.
+- **`investigate` refuses a scratchpad that already holds notes.** Pass `--resume` (keep them
+  and tell the investigator) or `--restart` (clear notes, queries and critique).
+- **Budget 30, not 20**, on a large real log: the two runs that converged used 26 of 30. The
+  shipped `pipeline.max_agent_tool_calls` is still 20.
+- **Never `git add -A` in this repo.** Logs handed over for analysis live in `test-logs/`,
+  which is now in `.gitignore` — 582 MB of somebody's production data was committed once and
+  had to be reset out before it went anywhere.
 
 - **`min_interval_seconds: 4.0`** in the shipped config is exactly 15 req/min, the free-tier
   ceiling, with no headroom. **Use 5.5 for a batch** — that is what made a five-case run clean.
