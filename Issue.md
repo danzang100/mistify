@@ -648,6 +648,59 @@ none of that.
 The customer log's own pass was at least internally consistent -- parse 7%, redact 24%,
 template 16%, rest 53% -- and is recorded as an indication rather than a measurement.
 
+**Why depth 12 produced fewer clusters — answered, and it is not the child cap.** The
+suspicion was Drain's `max_children` limit of 100 funnelling excess tokens into a shared `<*>`
+child. Measured: **zero** nodes at the cap on either corpus. The mechanism is
+`parametrize_numeric_tokens`, which turns any digit-bearing token into `<*>` for routing. Deeper
+routing uses more token positions, so numeric-heavy lines funnel down shared wildcard paths and
+merge at the leaf. Thunderbird lines are dense with numbers, which is why it inverts there and
+why Loghub grouping accuracy falls for the same reason.
+
+| | clusters | leaves | scanned/line | `<*>` edges | at 100-child cap |
+|---|---|---|---|---|---|
+| Thunderbird depth 4 | 786 | 32 | 89.7 | 0 | 0 |
+| Thunderbird depth 12 | 756 | 644 | **7.5** | 231 | 0 |
+| customer depth 4 | 654 | 279 | 7.4 | 8 | 1 |
+| customer depth 12 | 1,257 | 1,099 | 2.6 | 676 | 1 |
+
+Depth 12 takes Thunderbird's scan from 89.7 to 7.5, matching the customer log. That is the 8.26x.
+The inversion is also much smaller at 300k lines (786 to 756, -4%) than at 500k (1,488 to 769,
+-48%), so it grows with data and is not a fixed property.
+
+**Stripping a constant leading prefix was tried and is a regression.** Thunderbird's first token
+is `-` on 100% of lines, so the obvious idea is to drop leading tokens that carry no routing
+information, the way the timestamp shape is already dropped. Measured on 300k lines, dropping
+the 3 leading positions that are constant across 95% of a sample:
+
+| | clusters | leaves | scanned/line |
+|---|---|---|---|
+| Thunderbird, as shipped | 786 | 32 | 89.7 |
+| Thunderbird, strip 3 | **1,547** | 32 | **303.1** |
+| customer, as shipped | 654 | 279 | 7.4 |
+| customer, strip 3 | 694 | 250 | 11.7 |
+
+Worse on both. **Leaves stayed at 32**, which is the number that explains it: the constant prefix
+was never gating leaf count. Leaf count comes from token-count diversity — 28 distinct counts on
+Thunderbird against 174 on the customer log — and removing the same three tokens from every line
+shifts every count equally and adds no diversity at all.
+
+Clusters then doubled because Drain's similarity is matching positions over total positions.
+Always-matching constant tokens pad that ratio: a line with two differences goes from 11/13 =
+0.85 to 8/10 = 0.80 once three constants are removed, dropping under `sim_th` more often and
+splitting. **A constant prefix helps clustering, and no special handling is wanted.**
+
+**The timing instability is not attributable to OneDrive on the evidence available.** Parse-only
+repeated five times, 300k records, inside the synced tree and outside it: spread 1.29x against
+1.07x, with the plain path's minimum actually higher. No meaningful difference. That test only
+exercises reads for two seconds, where the anomalies were on multi-minute runs writing gigabytes,
+so the write-path hypothesis is untested rather than refuted.
+
+The useful part is that short repeats are stable at all — 1.07x to 1.29x — where single long
+passes swung two- to fourfold. That points at a time-correlated perturbation rather than a
+location-correlated one, and it makes the mitigation the same either way: **measure in short
+repeats and report the minimum**, never a single long pass. Minimum is the right estimator
+because transient load can only add time.
+
 **Superseded recommendation.** The depth sweep, now that memoisation is out: it is the one remaining
 candidate that does not change what the templater produces, so it stays checkable against the
 existing Loghub grouping-accuracy and LogDx digest-recall numbers. Header masking has already
