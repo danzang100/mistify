@@ -560,7 +560,43 @@ spend the time again.
     rejected: a tree learned on 100k BGL lines matched only 57.5% of the next 200k, so 42% of
     lines would go untemplated.
 
-**Recommended fix.** The depth sweep, now that memoisation is out: it is the one remaining
+**The depth sweep is done, and the answer is that depth 4 already wins.** Swept on 500k
+Thunderbird lines and scored against Loghub-2k's annotation, which is the only thing that can
+say whether a faster setting is still clustering correctly:
+
+| depth | mean grouping accuracy | Thunderbird lines/s | Thunderbird clusters |
+|---|---|---|---|
+| **4** | **0.910** | 11,918 | 1,488 |
+| 8 | 0.859 | 12,427 | 1,488 |
+| 12 | 0.885 | 98,464 | 769 |
+| 16 | 0.885 | 97,867 | 804 |
+
+Depth 12 is 8.26x faster and must not be taken. Every deeper setting clusters worse than 4, and
+the direction check says why the speed is not real: on Loghub, deeper produces *more* templates
+(OpenSSH 23 -> 36) exactly as a more specific tree should, while on Thunderbird depth 12
+produced *half*. A setting that inverts the expected direction on one corpus and loses accuracy
+on another is a pathology, not a win.
+
+**The remaining costs outside Drain3 are about 2% combined**, measured rather than assumed, and
+neither is recommended:
+
+*   `LogRecord.isoformat()` is computed twice per event -- once in `pipeline.ingest` for the
+    templater's `ts`, once again in `bulk_insert_events`. 2.31 us a call, so 4.6s of pure waste
+    on a 2M ingest, 1.0%. Removing it means either a third element in the batch tuple (nine
+    test call sites) or a cache on `LogRecord` that `dataclasses.replace` could later carry
+    stale. Both are more risk than 1% buys.
+*   `mask_header_timestamps` tries all four timestamp shapes per line where `raw_lines` has
+    already adopted exactly one and recorded it as `ingest.timestamp_shape`. One pattern
+    instead of four is 3.05 us -> 1.17 us a line, 3.7s on a 2M ingest, 0.8%. It needs the
+    adopted shape threaded from the adapter through the pipeline into the templater.
+
+Both are recorded rather than done because templating costs **180 us a line** and these are one
+and two. The bottleneck is inside Drain3's own `add_log_message`, which is pure Python, and the
+cheap levers around it are now exhausted: fewer clusters is banked (header masking, 2,001 ->
+1,485), memoisation is rejected, depth is already optimal, and parallelism is ruled out by the
+incremental tree. What is left is a faster templater, which is a different project.
+
+**Superseded recommendation.** The depth sweep, now that memoisation is out: it is the one remaining
 candidate that does not change what the templater produces, so it stays checkable against the
 existing Loghub grouping-accuracy and LogDx digest-recall numbers. Header masking has already
 taken Thunderbird from 2,001 templates to 1,485, and anything further that lowers cluster count
