@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import re
 import zlib
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -25,10 +26,11 @@ from drain3.file_persistence import FilePersistence
 from drain3.masking import MaskingInstruction
 from drain3.template_miner_config import TemplateMinerConfig
 
+from mistify.bootstrap.schema import TIMESTAMP_PATTERNS
 from mistify.common.models import TemplateResult, TemplateSummary, severity_rank
 from mistify.redaction.patterns import placeholder_pattern
 
-__all__ = ["DrainTemplater", "read_snapshot"]
+__all__ = ["HEADER_CHARS", "DrainTemplater", "mask_header_timestamps", "read_snapshot"]
 
 #: A timestamp the log transport stamped on the front of every line, as distinct from one the
 #: application wrote. GitHub Actions prefixes every line of every job with an ISO-8601 instant,
@@ -53,6 +55,51 @@ __all__ = ["DrainTemplater", "read_snapshot"]
 #: is not this shape and is left to `parametrize_numeric_tokens`, which is what the Loghub
 #: numbers below were measured against.
 _TRANSPORT_TIMESTAMP = r"^\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s*"
+
+#: How far into a line the transport header is taken to reach, for a file nothing could parse.
+#:
+#: `_TRANSPORT_TIMESTAMP` above is anchored because a timestamp in the middle of a line is the
+#: application's own. That reasoning holds for a *parsed* format, where the message is already
+#: the message. It does not hold for a file read one line at a time, where the message is the
+#: whole line -- header included -- and a syslog-style header puts a host between two of its
+#: timestamps, so nothing anchored reaches the second one.
+#:
+#: A bounded window is the compromise, and it is measured rather than assumed. On 100,000
+#: Thunderbird lines, clustered through this templater:
+#:
+#:     as shipped   856 clusters   6.8s
+#:     header 48    626            6.5
+#:     header 64    601            5.4
+#:     header 80    601            5.2
+#:     whole line   595            5.5
+#:
+#: 64 recovers 98% of what masking the whole line would, without the risk that makes whole-line
+#: masking unacceptable: the `epoch` shape is ten digits and matches any long identifier a line
+#: happens to carry. Fewer clusters is also *faster* -- 20% here -- because the cost of matching
+#: a line grows with how many clusters share its prefix, which is the deceleration a large
+#: ingest runs into.
+HEADER_CHARS = 64
+
+#: Every timestamp shape, applied only inside that window. Reused from the bootstrapper's table
+#: rather than restated, so a shape learned in one place is known in both.
+_HEADER_TIMESTAMPS = tuple(
+    re.compile(TIMESTAMP_PATTERNS[name])
+    for name in ("iso8601", "syslog", "clf", "epoch")
+    if name in TIMESTAMP_PATTERNS
+)
+
+
+def mask_header_timestamps(message: str, width: int = HEADER_CHARS) -> str:
+    """Replace timestamp shapes in the first `width` characters with a constant token.
+
+    Only the head is touched: past it, a timestamp is something the application wrote and part
+    of what it said. Nothing about the stored record changes -- this runs between the scratchpad
+    and Drain3, so `message` still equals `raw` and still costs nothing to store.
+    """
+    head, tail = message[:width], message[width:]
+    for pattern in _HEADER_TIMESTAMPS:
+        head = pattern.sub("<TS>", head)
+    return head + tail
 
 
 def read_snapshot(path: str | Path) -> str:
@@ -103,7 +150,14 @@ class DrainTemplater:
         depth: int = 4,
         max_clusters: int = 2000,
         snapshot_path: Path | None = None,
+        mask_header: bool = False,
     ) -> None:
+        #: Whether to mask timestamps out of the head of each message before clustering.
+        #: Off by default: a parsed format's message is already the message, and masking a
+        #: window of it would remove timestamps the application itself wrote. The pipeline
+        #: turns it on for a source read one line at a time, where the header was never
+        #: separated out and is the reason the line is unique.
+        self.mask_header = mask_header
         config = TemplateMinerConfig()
         config.drain_sim_th = sim_th
         config.drain_depth = depth
@@ -217,7 +271,9 @@ class DrainTemplater:
         list that every caller then dropped on the floor. `TemplateResult.params` is still a
         real field and still tested; it is now computed when somebody asks for it.
         """
-        result = self._miner.add_log_message(message)
+        result = self._miner.add_log_message(
+            mask_header_timestamps(message) if self.mask_header else message
+        )
         template_id = int(result["cluster_id"])
         pattern = str(result["template_mined"])
 

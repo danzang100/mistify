@@ -410,3 +410,66 @@ def test_reduction_factor_is_lines_per_template(
     view = MetricView(loaded_db.metrics("templating"))
     assert ingested.reduction_factor == pytest.approx(expected)
     assert view.number(TEMPLATING_REDUCTION_FACTOR) == pytest.approx(expected, abs=0.01)
+
+
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def test_a_fallback_read_masks_its_transport_header(
+    tmp_path: Path, config: MistifyConfig
+) -> None:
+    """End to end, not through the flag: twelve headers over one sentence is one template.
+
+    The month is what makes this discriminating -- Drain3 already generalises tokens carrying
+    digits, so a header differing only in numbers would collapse without any masking and the
+    test would assert nothing.
+    """
+    source = tmp_path / "syslog.log"
+    source.write_text(
+        "\n".join(
+            f"{m} 10 00:05:01 src@host in.tftpd: tftp client does not accept options"
+            for m in _MONTHS
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = ingest(source, config, incident_id="masked")
+
+    assert result.format_name == "raw_lines"
+    assert result.unique_templates == 1
+
+
+def test_a_parsed_format_keeps_the_timestamps_in_its_message(
+    tmp_path: Path, config: MistifyConfig
+) -> None:
+    """The control. A parsed message is already the message, and a time inside it is content.
+
+    Twelve JSON records whose *message* names a different month must stay twelve things, not
+    be collapsed by a mask that has no business running here.
+    """
+    source = tmp_path / "app.jsonl"
+    source.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "timestamp": "2026-08-30T14:00:02Z",
+                    "level": "INFO",
+                    "service": "billing",
+                    # The month leads the message on purpose. Drain3 buckets on the first
+                    # tokens, so a varying leading token is what splits clusters -- put it
+                    # later and these merge on similarity whether or not anything is masked,
+                    # and the test proves nothing either way.
+                    "message": f"{m} 10 00:05:01 reconciliation cycle completed",
+                }
+            )
+            for m in _MONTHS
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = ingest(source, config, incident_id="parsed")
+
+    assert result.format_name == "json_lines"
+    assert result.unique_templates > 1

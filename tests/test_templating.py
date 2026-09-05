@@ -8,7 +8,12 @@ from pathlib import Path
 from pytest import approx
 
 from mistify.redaction.redactor import Redactor
-from mistify.templating.drain_wrapper import DrainTemplater, read_snapshot
+from mistify.templating.drain_wrapper import (
+    HEADER_CHARS,
+    DrainTemplater,
+    mask_header_timestamps,
+    read_snapshot,
+)
 
 
 def test_near_duplicates_collapse_into_one_template() -> None:
@@ -208,3 +213,59 @@ def test_a_snapshot_is_written_atomically(tmp_path: Path) -> None:
     # The temporary file is renamed, not left behind.
     assert not (tmp_path / "drain3.json.tmp").exists()
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+# --------------------------------------------------------- the transport header
+
+
+#: The same sentence under twelve syslog headers. The month is the point: `parametrize_numeric
+#: _tokens` already generalises anything carrying a digit, so a header that differed only in
+#: numbers would collapse on its own and prove nothing. `Nov` and `Dec` are alphabetic, so the
+#: templater keeps them and the line fragments once per month -- which is exactly what a
+#: transport header does to a real file.
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_SYSLOG_LINE = "{month} 10 00:05:01 src@aadmin1 in.tftpd: tftp client does not accept options"
+
+
+def test_header_masking_collapses_lines_that_differ_only_in_their_header() -> None:
+    """A file nothing parsed still has its transport header in the message."""
+    masked = DrainTemplater(sim_th=0.4, mask_header=True)
+    for month in _MONTHS:
+        masked.process(_SYSLOG_LINE.format(month=month))
+
+    assert masked.unique_templates == 1
+
+
+def test_without_header_masking_the_same_lines_fragment() -> None:
+    """The control. Without it the test above would pass on any templater at all."""
+    plain = DrainTemplater(sim_th=0.4, mask_header=False)
+    for month in _MONTHS:
+        plain.process(_SYSLOG_LINE.format(month=month))
+
+    assert plain.unique_templates > 1
+
+
+def test_a_timestamp_past_the_header_window_is_left_alone() -> None:
+    """Past the window a timestamp is something the application wrote and part of what it said.
+
+    Masking it would merge two genuinely different sentences, which is the failure the narrow
+    anchored mask above this one exists to avoid.
+    """
+    padding = "x" * HEADER_CHARS
+    text = f"{padding} deploy started at 2026-08-30T14:00:02Z"
+
+    assert mask_header_timestamps(text).endswith("2026-08-30T14:00:02Z")
+
+
+def test_the_header_window_is_where_masking_happens() -> None:
+    """The other half of the pair: inside the window, it goes."""
+    assert "<TS>" in mask_header_timestamps("2026-08-30T14:00:02Z service started")
+
+
+def test_masking_does_not_merge_genuinely_different_messages() -> None:
+    """Fewer templates is only an improvement while distinct conditions stay distinct."""
+    templater = DrainTemplater(sim_th=0.4, mask_header=True)
+    templater.process("Nov 10 00:05:01 host disk array controller failed")
+    templater.process("Nov 10 00:05:02 host kernel page allocation failure")
+
+    assert templater.unique_templates == 2

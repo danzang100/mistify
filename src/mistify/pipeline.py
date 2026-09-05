@@ -364,11 +364,20 @@ def ingest(
     if uncompressible:
         max_clusters = config.drain3.uncompressible_max_clusters
 
+    # A file nothing could parse has its transport header still in the message, because there
+    # was no parse to separate them. That header is unique per line and is what Drain3 splits
+    # on, so a source read this way is masked in the head before clustering -- and a parsed one
+    # is not, since its message is already the message.
+    #
+    # Read from `component_formats` rather than `format_name`: a directory reports a composite
+    # name, and one read half in raw lines needs this for the half that was.
+    reads_raw_lines = "raw_lines" in adapter.component_formats
     templater = DrainTemplater(
         sim_th=sim_th,
         depth=config.drain3.depth,
         max_clusters=max_clusters,
         snapshot_path=config.snapshot_path(incident_id),
+        mask_header=reads_raw_lines,
     )
 
     scratchpad_path = config.scratchpad_path(incident_id)
