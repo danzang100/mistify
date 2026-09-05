@@ -95,7 +95,7 @@ def _like_escape(text: str) -> str:
 class ScratchpadDB:
     """Working memory for one incident."""
 
-    def __init__(self, path: str | Path, store_raw: bool = True, cache_mb: int = 2):
+    def __init__(self, path: str | Path, store_raw: bool = True):
         #: Whether the verbatim source line is kept beside the parsed message. Off trades the
         #: audit trail for roughly 40% of the file -- see `ScratchpadConfig.store_raw`. Held
         #: here rather than passed per call so no write path can disagree with another.
@@ -111,12 +111,23 @@ class ScratchpadDB:
         # Nothing about the data changes; only how it is packed.
         self._conn.execute("PRAGMA page_size=16384")
         self._conn.execute("PRAGMA journal_mode=WAL")
-        # SQLite's default is 2 MB, which at the 16 KB page above is 125 pages. An ingest
-        # writes into four B-trees at once, and once the interior pages of those no longer fit
-        # in cache every insert becomes a random read and a random write. That is a cost that
-        # grows with the table rather than with the batch, which is what a fixed batch size
-        # cannot bound -- and it is the shape of the slowdown a large ingest hits.
-        self._conn.execute(f"PRAGMA cache_size=-{max(cache_mb, 1) * 1024}")
+        # No `cache_size` here, and that is a measured decision rather than an oversight.
+        # SQLite's 2 MB default is 125 pages at the 16 KB page above, while an ingest maintains
+        # four B-trees on a table growing into the gigabytes -- which looks exactly like the
+        # cause of the slowdown a large ingest hits. It is not. Measured on Thunderbird at
+        # 2 MB, 64 MB and 256 MB:
+        #
+        #       lines   cache      lines/s
+        #     500,000     2 MB       7,444
+        #     500,000    64 MB       7,059
+        #     500,000   256 MB       7,510
+        #   2,000,000     2 MB       4,347
+        #   2,000,000    64 MB       4,294
+        #   2,000,000   256 MB       4,350
+        #
+        # Within noise at both sizes, and the gap does not widen with scale -- which it would
+        # have to if cache were the constraint. The slowdown between 500k and 2M is real and
+        # is somewhere else; see Issue 16.
         self._readonly: sqlite3.Connection | None = None
         self.apply_migrations()
 

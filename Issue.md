@@ -26,6 +26,7 @@ or one of the design documents, the fix column says which document to amend.
 | 10. The investigator under-cites what it reasons over | ~~Medium~~ | **Fixed** — the check moved earlier, not a better prompt |
 | 14. Burstiness and rarity are degenerate on ordinal timestamps | Medium | next |
 | 15. The accounting role is decided by citations alone | Medium | next |
+| 16. Templating is the ingest bottleneck and its share grows | High | next — scale |
 
 ---
 
@@ -492,3 +493,57 @@ naming the real cause.
 
 **Target phase.** Next, alongside the plausible-but-wrong set, whose seeded conclusions can
 produce both shapes deliberately rather than waiting for a model to produce them by chance.
+
+## 16 — Templating is the ingest bottleneck, and its share grows with scale
+
+**Problem.** Ingest throughput decays badly: 7,444 lines/s at 500k lines, 4,347 at 2M, and
+about 2,100 by 7.5M on the same corpus. Measured with the database removed entirely, Drain3
+alone accounts for it:
+
+| lines | end-to-end lines/s | templating alone | templating share | µs/line | clusters |
+|---|---|---|---|---|---|
+| 500,000 | 7,444 | 11,615 | 64% | 86.1 | 1,488 |
+| 2,000,000 | 4,347 | 5,553 | **78%** | 180.1 | 2,208 |
+
+Templating decays **2.09×** where the whole pipeline decays 1.71×, so it is not merely the
+largest component — it is the one getting worse, and every other optimisation is working on a
+shrinking share. Note also that per-line cost more than doubled while the cluster count grew
+only 1.48×, so the cost is not simply proportional to clusters.
+
+**What it is not.** The obvious suspect was SQLite's page cache: 2 MB is 125 pages at this
+project's 16 KB page size, against four B-trees on a table growing into the gigabytes. Measured
+at 2, 64 and 256 MB:
+
+| lines | 2 MB | 64 MB | 256 MB |
+|---|---|---|---|
+| 500,000 | 7,444 | 7,059 | 7,510 |
+| 2,000,000 | 4,347 | 4,294 | 4,350 |
+
+Within noise, and the gap does not widen with scale — which it must if cache were the
+constraint. A 128× increase buys nothing. The knob was removed rather than shipped; the numbers
+are in a comment at the PRAGMA site so the next person with this very reasonable idea does not
+spend the time again.
+
+**Candidate fixes, with what is already measured about each.**
+
+*   **Memoise the masked message.** Drain3 re-decides lines it has already seen: **36.0% of
+    500k and 38.1% of 2M masked messages are repeats**. A hash-keyed cache from masked message
+    to template id would skip those calls outright, for an upper bound of ~38% off templating
+    and ~30% off a 2M ingest. Cheapest of these and the answer is exact rather than
+    approximate, since an identical message must yield an identical template.
+*   **Fewer clusters.** Already banked: header masking took Thunderbird from 2,001 templates to
+    1,485 and cut clustering time ~20% at 100k. More of the same helps directly.
+*   **Drain tree depth.** A 4→12 sweep was measured once on BGL at 601→671 lines/s and shelved
+    as marginal. That was a different regime -- a corpus with 320 templates, not thousands --
+    and depth is what bounds how many clusters share a leaf, which is the cost that is growing.
+    Worth re-measuring here before anything more elaborate.
+*   **Parallel templating** is not on this list. Two-phase learn-then-match was measured and
+    rejected: a tree learned on 100k BGL lines matched only 57.5% of the next 200k, so 42% of
+    lines would go untemplated.
+
+**Recommended fix.** Memoisation first, because it is exact, bounded and measurable; then the
+depth sweep in this regime. Neither touches what the templater produces, so both are checkable
+against the existing Loghub grouping accuracy and LogDx digest-recall numbers.
+
+**Target phase.** Next, ahead of any further storage work: at 2M lines the whole storage layer
+is 22% of ingest and falling, and the safe storage wins left are worth about 3%.
