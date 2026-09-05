@@ -27,6 +27,7 @@ or one of the design documents, the fix column says which document to amend.
 | 14. Burstiness and rarity are degenerate on ordinal timestamps | Medium | next |
 | 15. The accounting role is decided by citations alone | Medium | next |
 | 16. Templating is the ingest bottleneck and its share grows | High | next — scale |
+| 17. Threshold calibration adds almost nothing over a constant | High | 5 — scorecard |
 
 ---
 
@@ -715,3 +716,48 @@ a count in a report quietly wrong.
 
 **Target phase.** Next, ahead of any further storage work: at 2M lines the whole storage layer
 is 22% of ingest and falling, and the safe storage wins left are worth about 3%.
+
+## 17 — Threshold calibration adds almost nothing over a fixed constant
+
+**Problem.** Grouping accuracy across all fifteen Loghub-2k systems, scored three ways:
+
+| | mean grouping accuracy |
+|---|---|
+| calibrated, as the pipeline ships | **0.745** |
+| fixed `sim_th=0.4` | 0.740 |
+| best threshold per system | **0.842** |
+
+Calibration is worth **0.005**. Nearly a tenth of accuracy is available and not taken. Per
+system, given a candidate list of 0.2 through 0.7:
+
+| system | picked | GA there | best | GA there | lost |
+|---|---|---|---|---|---|
+| Proxifier | 0.4 | 0.025 | 0.7 | 0.526 | 0.501 |
+| Windows | 0.4 | 0.571 | 0.7 | 0.996 | 0.425 |
+| OpenSSH | 0.5 | 0.718 | 0.6 | 0.925 | 0.207 |
+| HealthApp | 0.5 | 0.576 | 0.2 | 0.780 | 0.204 |
+| Mac | 0.4 | 0.715 | 0.6 | 0.782 | 0.067 |
+
+**Why.** `calibrate_sim_th` chooses the candidate with the best compression ratio inside a
+target band, rejecting any that trips the over-merge guard. Compression is not accuracy, and
+`calibrate_sim_th`'s own docstring says so -- "compression is a proxy that breaks in exactly the
+case that matters". The measurement above is that case, fifteen times.
+
+A second and compounding problem: the shipped `calibration_candidates` is `[0.3, 0.4, 0.5]`, so
+the pipeline cannot reach 0.6 or 0.7 at all, and three systems peak there. But widening the list
+is not the fix on its own -- the numbers above *were* produced with 0.2 through 0.7 available,
+and the calibrator still picked 0.4 for Windows over a 0.7 that scores 0.996.
+
+**What this means for the scorecard.** The handoff reports 0.910, measured on four systems --
+Apache, BGL, Hadoop, OpenSSH -- chosen as a spread of log families. Eleven more are now scored
+and the four were the favourable ones. **0.745 is the honest figure for what ships**, and the
+gap to 0.842 is a defect rather than a limit.
+
+**Recommended fix.** Calibration needs an objective correlated with correctness rather than with
+compression. Nothing at run time has ground truth, so the candidate is the over-merge guard
+itself, used as the objective rather than as a veto: pick the *loosest* threshold that does not
+merge distinct conditions, instead of the one that compresses most inside a band. That is
+measurable against exactly this table, free, and needs no model.
+
+**Target phase.** 5. This is a scorecard row that currently reports a number the product does
+not achieve, and a fix worth 0.097 of the metric the whole templating stage exists to serve.
