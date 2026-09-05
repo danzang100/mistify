@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -602,6 +603,133 @@ def eval_templating_command(
         click.echo(
             "Loghub-2k, github.com/logpai/loghub. Cite the LogPub paper if you publish these."
         )
+
+
+@cli.command(name="eval-ranking")
+@click.option(
+    "--scratchpads",
+    default=".cache",
+    type=click.Path(exists=True, path_type=Path),
+    help="Directory searched recursively for recorded scratchpads.",
+)
+@click.option(
+    "--marker",
+    "markers",
+    multiple=True,
+    help=(
+        "Ground-truth marker for scratchpads that are not LogDx cases. Repeatable. LogDx runs "
+        "resolve their own markers from the case's ground_truth.json and ignore this."
+    ),
+)
+@click.option("--out", default=None, type=click.Path(path_type=Path), help="Where to write JSON.")
+def eval_ranking_command(scratchpads: Path, markers: tuple[str, ...], out: Path | None) -> None:
+    """Re-rank every recorded investigation, and say which candidate key leads correctly.
+
+    No model is called and nothing is ingested; this reads runs that already happened. It
+    answers one question: after a change to `findings.rank_notes`, did any case swap?
+
+    The aggregate is not the measurement. Three keys have already tied the shipped one at
+    19/21 while fixing and breaking different cases, so read the per-run column -- and read it
+    alongside the herring control in the test suite, which is what rejected all three.
+    """
+    from mistify.eval.logdx import load_logdx_case
+    from mistify.eval.ranking import CANDIDATES, rank_report
+
+    case_dirs = {
+        d.name: d
+        for d in Path(".cache/logdx").glob("**/")
+        if (d / "ground_truth.json").exists()
+    }
+
+    def logdx_markers(stem: str) -> tuple[tuple[str, ...], str] | None:
+        _, _, rest = stem.partition("-logdx-")
+        if not rest:
+            return None
+        parts = rest.split("-")
+        # The case id ends in a number and so does the run suffix, so the split cannot be made
+        # by pattern: the longest prefix naming a real case directory is the case.
+        for cut in range(len(parts), 0, -1):
+            hit = case_dirs.get("-".join(parts[:cut]))
+            if hit is not None:
+                return load_logdx_case(hit).markers, f"logdx:{hit.name}"
+        return None
+
+    cases = []
+    for path in sorted(scratchpads.glob("**/*.sqlite")):
+        resolved = logdx_markers(path.stem)
+        if resolved is not None:
+            case_markers, origin = resolved
+        elif markers:
+            case_markers, origin = markers, "--marker"
+        else:
+            continue
+        if case_markers:
+            cases.append((path, case_markers, origin))
+
+    results = rank_report(cases)
+    if not results:
+        raise click.ClickException(
+            f"no scratchpad under {scratchpads} had two or more notes and resolvable markers. "
+            "Pass --marker for runs that are not LogDx cases."
+        )
+
+    scorable = [r for r in results if r.scorable]
+    click.echo(
+        f"{len(results)} run(s) with an ordering to get wrong; {len(scorable)} scorable "
+        f"(some note cites a marker template)\n"
+    )
+    width = max(len(name) for name in CANDIDATES)
+    for name in CANDIDATES:
+        hits = sum(1 for r in scorable if r.leads_correctly(name))
+        click.echo(f"  {name:<{width}}  {hits:>2}/{len(scorable)}")
+
+    header = f"\n{'run':<46} {'notes':>5} {'roles':<22} " + " ".join(
+        f"{n[:13]:>13}" for n in CANDIDATES
+    )
+    click.echo(header)
+    click.echo("-" * len(header))
+    for result in results:
+        roles = ",".join(f"{k}={v}" for k, v in sorted(result.roles.items()))
+        cells = " ".join(
+            f"{('-' if not result.scorable else ('Y' if result.leads_correctly(n) else 'n')):>13}"
+            for n in CANDIDATES
+        )
+        name = f"{result.path.parent.name}/{result.path.stem}"
+        click.echo(f"{name[:46]:<46} {result.note_count:>5} {roles[:22]:<22} {cells}")
+
+    unscorable = [r for r in results if not r.scorable]
+    if unscorable:
+        click.echo(
+            f"\n{len(unscorable)} unscorable -- no note cites a marker template, so no "
+            "ordering can rescue them:"
+        )
+        for result in unscorable:
+            click.echo(f"  {result.path}")
+
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(
+            json.dumps(
+                [
+                    {
+                        "path": str(r.path),
+                        "origin": r.origin,
+                        "notes": r.note_count,
+                        "scorable": r.scorable,
+                        "correct_note_ids": list(r.correct_note_ids),
+                        "roles": r.roles,
+                        "leaders": r.leaders,
+                        "leads_correctly": {n: r.leads_correctly(n) for n in CANDIDATES}
+                        if r.scorable
+                        else {},
+                    }
+                    for r in results
+                ],
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        click.echo(f"\nwrote {out}")
 
 
 #: What a resumed investigation is told before it starts. Without it the earlier notes are
