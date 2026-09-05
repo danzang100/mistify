@@ -732,6 +732,162 @@ def eval_ranking_command(scratchpads: Path, markers: tuple[str, ...], out: Path 
         click.echo(f"\nwrote {out}")
 
 
+@cli.command(name="eval-seeded")
+@click.option(
+    "--scratchpads",
+    default=".cache",
+    type=click.Path(exists=True, path_type=Path),
+    help="Directory searched recursively for ingested scratchpads to plant conclusions on.",
+)
+@click.option(
+    "--case",
+    "case_names",
+    multiple=True,
+    help="Seeded conclusion to plant. Repeatable. Defaults to every one.",
+)
+@click.option("--limit", default=0, help="Stop after this many scratchpads. 0 means all.")
+@click.option("--out", default=None, type=click.Path(path_type=Path), help="Where to write JSON.")
+def eval_seeded_command(
+    scratchpads: Path, case_names: tuple[str, ...], limit: int, out: Path | None
+) -> None:
+    """Plant deliberately wrong conclusions and see which the free checks catch.
+
+    No model is called. Every conclusion is derived from the log it is planted on -- its chronic
+    templates, its signal set, its volume distribution -- so the same defects are planted on any
+    corpus without a line of corpus-specific code, and a log that cannot support a defect is
+    skipped rather than faked.
+
+    Catch rate is reported next to false-flip rate because neither means anything alone: a check
+    that objects to everything catches every defect.
+    """
+    from mistify.eval.seeded import (
+        DEFECT_CHECKS,
+        GENERATORS,
+        CorpusResult,
+        SeededScore,
+        generate,
+        score_conclusion,
+    )
+
+    sources = sorted(scratchpads.glob("**/*.sqlite"))
+    if limit:
+        sources = sources[:limit]
+    if not sources:
+        raise click.ClickException(f"no scratchpad found under {scratchpads}")
+
+    results: list[CorpusResult] = []
+    for source in sources:
+        try:
+            with ScratchpadDB(source) as probe:
+                if not probe.event_count():
+                    continue
+                conclusions = generate(probe, case_names)
+        except Exception as exc:  # a corrupt or partial scratchpad is data, not a crash
+            click.echo(f"  {source}: skipped ({exc})")
+            continue
+        if not conclusions:
+            continue
+        scores = tuple(score_conclusion(source, c) for c in conclusions)
+        results.append(CorpusResult(source=source, scores=scores))
+
+    if not results:
+        raise click.ClickException("no scratchpad could support any seeded conclusion")
+
+    by_case: dict[str, list[SeededScore]] = {}
+    for result in results:
+        for score in result.scores:
+            by_case.setdefault(score.conclusion.name, []).append(score)
+
+    planted_total = sum(len(r.scores) for r in results)
+    click.echo(f"{len(results)} log(s), {planted_total} seeded conclusion(s)\n")
+    width = max(len(n) for n in GENERATORS)
+    click.echo(
+        f"{'case':<{width}} {'label':<8} {'planted':>7} {'objected':>9} {'by own':>9}  "
+        f"{'its check':<20} every check that fired"
+    )
+    click.echo("-" * (width + 90))
+    for name in GENERATORS:
+        planted_here = by_case.get(name, [])
+        if not planted_here:
+            click.echo(
+                f"{name:<{width}} {'-':<8} {0:>7} {'-':>9} {'-':>9}  (no log supported it)"
+            )
+            continue
+        label = planted_here[0].conclusion.label
+        objected = sum(1 for s in planted_here if s.objected)
+        by_own = sum(1 for s in planted_here if s.caught)
+        wanted = DEFECT_CHECKS.get(planted_here[0].conclusion.defect, "-")
+        fired = sorted({c for s in planted_here for c in s.checks_fired})
+        own = f"{by_own:>9}" if label == "unsound" else f"{'-':>9}"
+        click.echo(
+            f"{name:<{width}} {label:<8} {len(planted_here):>7} {objected:>9} {own}  "
+            f"{wanted:<20} {', '.join(fired) or '-'}"
+        )
+
+    unsound = [s for r in results for s in r.unsound]
+    sound = [s for r in results for s in r.sound]
+    caught = sum(1 for s in unsound if s.caught)
+    objected_any = sum(1 for s in unsound if s.objected)
+    flipped = sum(1 for s in sound if s.false_flip)
+    click.echo(
+        f"\ncatch rate (its own check)  {caught}/{len(unsound)}"
+        f"\ncatch rate (any check)      {objected_any}/{len(unsound)}"
+        f"\nfalse-flip rate             {flipped}/{len(sound)}"
+    )
+    if objected_any > caught:
+        click.echo(
+            f"  {objected_any - caught} unsound conclusion(s) drew an objection from a check "
+            "not built for their defect. Read the own-check row, not that one."
+        )
+
+    flip_checks: dict[str, int] = {}
+    for score in sound:
+        for check in score.checks_fired:
+            flip_checks[check] = flip_checks.get(check, 0) + 1
+    if flip_checks:
+        click.echo("\nfalse flips, by the check that fired:")
+        for check, count in sorted(flip_checks.items(), key=lambda kv: -kv[1]):
+            click.echo(f"  {check:<22} {count}")
+
+    missed = sorted({s.conclusion.defect for s in unsound if not s.caught})
+    if missed:
+        click.echo(
+            "\ndefects their own check missed at least once -- where a critique budget goes:"
+            "\n  " + "\n  ".join(missed)
+        )
+
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(
+            json.dumps(
+                [
+                    {
+                        "source": str(r.source),
+                        "conclusions": [
+                            {
+                                "name": s.conclusion.name,
+                                "label": s.conclusion.label,
+                                "defect": s.conclusion.defect,
+                                "rationale": s.conclusion.rationale,
+                                "caught": s.caught,
+                                "false_flip": s.false_flip,
+                                "checks_fired": list(s.checks_fired),
+                                "objections": [
+                                    {"check": o.check, "detail": o.detail} for o in s.objections
+                                ],
+                            }
+                            for s in r.scores
+                        ],
+                    }
+                    for r in results
+                ],
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        click.echo(f"\nwrote {out}")
+
+
 #: What a resumed investigation is told before it starts. Without it the earlier notes are
 #: invisible unless the model happens to call `read_notes`, and it can spend its budget
 #: rediscovering what is already written down -- or contradict it without noticing.
