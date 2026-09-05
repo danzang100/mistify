@@ -526,11 +526,30 @@ spend the time again.
 
 **Candidate fixes, with what is already measured about each.**
 
-*   **Memoise the masked message.** Drain3 re-decides lines it has already seen: **36.0% of
-    500k and 38.1% of 2M masked messages are repeats**. A hash-keyed cache from masked message
-    to template id would skip those calls outright, for an upper bound of ~38% off templating
-    and ~30% off a 2M ingest. Cheapest of these and the answer is exact rather than
-    approximate, since an identical message must yield an identical template.
+*   **Memoise the masked message — measured and rejected.** 36.0% of 500k and 38.1% of 2M
+    masked messages are exact repeats, so a cache from masked message to template id looked
+    like ~38% off templating for nothing. It is not exact, it is not fast, and it is not cheap:
+
+    *   **It changes the answer on 6.46% of lines.** A prototype's template assignments were
+        compared line for line against an uncached run over 200,000 lines and differed on
+        12,913 of them.
+    *   **Only a twentieth of that is Drain3's own instability.** Clustered with no cache at
+        all, 250 of 66,849 distinct masked messages (0.37%) are assigned more than one cluster
+        id over a run, covering 644 lines (0.32%). The other 6.1% is caused *by* the cache:
+        withholding a repeat from `add_log_message` changes how the tree evolves, so later
+        and entirely different messages cluster differently. The optimisation is not
+        transparent, it participates in the result.
+    *   **The speedup is 1.08x, not 1.38x.** At 2M lines with the per-template statistics still
+        maintained, 322.4s became 298.8s. The hit rate is an upper bound on calls skipped, not
+        on time saved: hashing a 150-byte string and probing a dict is paid on every line,
+        including the 62% that miss.
+    *   **The cache costs 96 MB at 500k lines and 377 MB at 2M**, one entry per distinct
+        message, extrapolating to roughly 3 GB at 16.6M. Against a 2.5 GB corpus that is worse
+        than the storage this project has spent days shaving.
+
+    Recorded rather than deleted because the reasoning that "an identical message must yield an
+    identical template" is wrong in a way nobody would expect, and the next person will have
+    the same idea.
 *   **Fewer clusters.** Already banked: header masking took Thunderbird from 2,001 templates to
     1,485 and cut clustering time ~20% at 100k. More of the same helps directly.
 *   **Drain tree depth.** A 4→12 sweep was measured once on BGL at 601→671 lines/s and shelved
@@ -541,9 +560,17 @@ spend the time again.
     rejected: a tree learned on 100k BGL lines matched only 57.5% of the next 200k, so 42% of
     lines would go untemplated.
 
-**Recommended fix.** Memoisation first, because it is exact, bounded and measurable; then the
-depth sweep in this regime. Neither touches what the templater produces, so both are checkable
-against the existing Loghub grouping accuracy and LogDx digest-recall numbers.
+**Recommended fix.** The depth sweep, now that memoisation is out: it is the one remaining
+candidate that does not change what the templater produces, so it stays checkable against the
+existing Loghub grouping-accuracy and LogDx digest-recall numbers. Header masking has already
+taken Thunderbird from 2,001 templates to 1,485, and anything further that lowers cluster count
+lowers matching cost directly.
+
+**A separate finding, worth its own look.** 0.37% of distinct messages are assigned more than
+one cluster over a run with no cache involved. That fragments a template's statistics across
+two ids — the same condition counted twice, with two anomaly scores — and it is a property of
+the templater rather than of anything downstream. Small, but it is the sort of thing that makes
+a count in a report quietly wrong.
 
 **Target phase.** Next, ahead of any further storage work: at 2M lines the whole storage layer
 is 22% of ingest and falling, and the safe storage wins left are worth about 3%.
