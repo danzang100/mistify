@@ -321,6 +321,12 @@ INVESTIGATE_DIGEST_NUDGES = Metric("investigate", "digest_nudges", "int")
 #: from the other two: those answer a conclusion, this one answers the absence of one.
 INVESTIGATE_SILENT_NUDGES = Metric("investigate", "silent_nudges", "int")
 
+#: Which templates the nudges named, comma-separated. The set a note's citations are tested
+#: against to decide whether it is a finding or an answer, so without it a recorded run cannot
+#: be re-scored: the note carries its role but nothing says what the role was judged on. Every
+#: run before this metric existed is exactly that unanswerable, which is how it came to exist.
+INVESTIGATE_NUDGED_TEMPLATES = Metric("investigate", "nudged_templates", "str")
+
 #: Size of the system prompt, digest included. The prompt is re-sent on every step, so this
 #: is the multiplier on a run's whole input cost -- and it is set by the corpus, not by
 #: config. One real incident reached 208,843 characters before this had a name.
@@ -480,6 +486,7 @@ ALL_METRICS: tuple[Metric, ...] = (
     INVESTIGATE_HISTORY_COMPACTIONS,
     INVESTIGATE_COVERAGE_NUDGES,
     INVESTIGATE_DIGEST_NUDGES,
+    INVESTIGATE_NUDGED_TEMPLATES,
     INVESTIGATE_SILENT_NUDGES,
     INVESTIGATE_DIGEST_CHARS,
     SYNTHESIS_PROVIDER,

@@ -42,6 +42,7 @@ from mistify.metrics import (
     INVESTIGATE_INVESTIGATOR,
     INVESTIGATE_MODEL,
     INVESTIGATE_NOTES_WRITTEN,
+    INVESTIGATE_NUDGED_TEMPLATES,
     INVESTIGATE_OUTCOME,
     INVESTIGATE_OUTPUT_TOKENS,
     INVESTIGATE_PROVIDER,
@@ -603,6 +604,10 @@ class InvestigationLoop:
                 (INVESTIGATE_COVERAGE_NUDGES, result.coverage_nudges),
                 (INVESTIGATE_DIGEST_NUDGES, result.digest_nudges),
                 (INVESTIGATE_SILENT_NUDGES, result.silent_nudges),
+                (
+                    INVESTIGATE_NUDGED_TEMPLATES,
+                    ",".join(str(i) for i in sorted(self.toolbox.nudged_templates)),
+                ),
                 (
                     INVESTIGATE_OUTCOME,
                     "budget_limited"

@@ -25,6 +25,7 @@ or one of the design documents, the fix column says which document to amend.
 | 11. The quiet-hour bar cannot tell right from wrong | High | next — vacuity gated, judge question outstanding |
 | 10. The investigator under-cites what it reasons over | ~~Medium~~ | **Fixed** — the check moved earlier, not a better prompt |
 | 14. Burstiness and rarity are degenerate on ordinal timestamps | Medium | next |
+| 15. The accounting role is decided by citations alone | Medium | next |
 
 ---
 
@@ -453,3 +454,41 @@ population.
 **Where.** `mistify/scratchpad/anomaly.py::_burstiness_component` and `_rarity_component`;
 `severity_source` is the shape the decision should take. Related: Issue 2 (scores are global)
 and Issue 8 (no duration term), both of which also live in the same function.
+
+## 15 — The accounting role is decided by citations alone
+
+**Problem.** `ToolBox._write_note` tags a note `accounting` when its cited templates fall
+entirely inside the set a coverage nudge named. That is the only structural signal available:
+timing cannot work, because the nudge fires once a conclusion has been offered, so every note
+after it is post-nudge and a run that answers the nudge and *then* finds something real would
+have the real finding demoted.
+
+The rule is exact when it fires and silent when it does not. Measured on three runs:
+
+| run | nudged | note answering it | tagged |
+|---|---|---|---|
+| sample incident | `{7}` | cites 7 and 9 — establishes the precursor | `finding`, correctly |
+| quiet-hour | `{1,3,4}` | dismisses 1, 3, 4 and re-cites 5, 6 from its own earlier note | `finding`, **arguably wrong** |
+| customer-log slice | `{4,14,35,45,47}` | dismisses exactly those | `accounting`, correctly |
+
+The middle row is the gap. The note is a dismissal, but it re-states the two templates its own
+previous note rested on, so it leaves the nudged set and reads as a finding. The system prompt
+actively causes this: *"Cite every template your note names, not only the one the claim is
+chiefly about"*, because a template discussed in prose but missing from citations is reported as
+unaccounted for. So the two rules pull against each other and this will recur.
+
+**Why it is not fixed now.** The obvious widening — accounting when the note introduces nothing
+outside *nudged ∪ already-cited* — was checked against the same three runs and mis-tags the
+sample incident's second note, which cites one nudged template plus one the run had already
+cited and is a genuine finding about the precursor. Strict has a false negative, wide has a
+false positive, and at n=3 there is nothing to choose between them. Trading one error for the
+other without measuring is the mistake this project has already made once with the ranking keys.
+
+**Recommended fix.** Gather cases first. `investigate.nudged_templates` now records what each
+nudge asked about, so any run from here on is re-scorable against a candidate rule without
+being re-run. Revisit once a handful of runs on logs with degenerate rankings exist — that is
+the only shape where the tag does any work, since a fixture whose ranking works has the nudge
+naming the real cause.
+
+**Target phase.** Next, alongside the plausible-but-wrong set, whose seeded conclusions can
+produce both shapes deliberately rather than waiting for a model to produce them by chance.
