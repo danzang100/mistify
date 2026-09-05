@@ -384,7 +384,11 @@ def ingest(
     if scratchpad_path.exists():
         scratchpad_path.unlink()
 
-    with ScratchpadDB(scratchpad_path, store_raw=config.scratchpad.store_raw) as db:
+    with ScratchpadDB(
+        scratchpad_path,
+        store_raw=config.scratchpad.store_raw,
+        cache_mb=config.scratchpad.cache_mb,
+    ) as db:
         db.create_incident(
             incident_id,
             source=str(source_path),

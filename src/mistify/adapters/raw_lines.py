@@ -31,7 +31,12 @@ from pathlib import Path
 from mistify.adapters.base import LogAdapter
 from mistify.adapters.source import open_text
 from mistify.bootstrap.schema import TIMESTAMP_PATTERNS
-from mistify.common.models import LogRecord, normalize_severity, parse_timestamp
+from mistify.common.models import (
+    UNKNOWN_SOURCE,
+    LogRecord,
+    normalize_severity,
+    parse_timestamp,
+)
 
 __all__ = ["RawLinesAdapter"]
 
@@ -200,7 +205,7 @@ class RawLinesAdapter(LogAdapter):
                 self.stats.records_emitted += 1
                 yield LogRecord(
                     ts=ts,
-                    source="unknown",
+                    source=UNKNOWN_SOURCE,
                     severity=severity,
                     raw=raw,
                     # `line_number` is the source line this came from, and the scratchpad

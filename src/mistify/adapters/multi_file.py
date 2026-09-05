@@ -37,7 +37,7 @@ from pathlib import Path
 
 from mistify.adapters.base import LogAdapter
 from mistify.adapters.source import BinarySourceError, compression_of, open_text
-from mistify.common.models import LogRecord
+from mistify.common.models import UNKNOWN_SOURCE, LogRecord
 
 __all__ = ["MultiFileAdapter", "log_files"]
 
@@ -148,7 +148,7 @@ class MultiFileAdapter(LogAdapter):
                 # The filename is the best available name for an emitter nothing else named.
                 # In the layout this exists to read -- one file per service -- it is usually
                 # the right one, and it is never allowed to override a name the data gave.
-                source_name = record.source if record.source != "unknown" else self._stem(path)
+                source_name = record.source if record.source != UNKNOWN_SOURCE else self._stem(path)
                 yield replace(record, fields=fields, source=source_name)
             self._absorb(adapter)
 

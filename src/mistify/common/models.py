@@ -20,6 +20,7 @@ __all__ = [
     "ROLE_RANK",
     "SEVERITIES",
     "SYNTHESIS_MARKER",
+    "UNKNOWN_SOURCE",
     "LogRecord",
     "NoiseThresholds",
     "ScratchpadNote",
@@ -29,6 +30,11 @@ __all__ = [
     "parse_timestamp",
     "severity_rank",
 ]
+
+#: What an adapter reports when the format names no emitter. Defined here rather than spelled
+#: out at each adapter, because the scratchpad stores it as NULL and reads it back with
+#: COALESCE -- so the writer's spelling and the reader's default must be one string, not two.
+UNKNOWN_SOURCE = "unknown"
 
 SEVERITIES: tuple[str, ...] = ("TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL")
 

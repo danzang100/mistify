@@ -18,6 +18,7 @@ from typing import Any
 
 from mistify.common.models import (
     SEVERITIES,
+    UNKNOWN_SOURCE,
     LogRecord,
     NoiseThresholds,
     ScratchpadNote,
@@ -94,7 +95,7 @@ def _like_escape(text: str) -> str:
 class ScratchpadDB:
     """Working memory for one incident."""
 
-    def __init__(self, path: str | Path, store_raw: bool = True):
+    def __init__(self, path: str | Path, store_raw: bool = True, cache_mb: int = 2):
         #: Whether the verbatim source line is kept beside the parsed message. Off trades the
         #: audit trail for roughly 40% of the file -- see `ScratchpadConfig.store_raw`. Held
         #: here rather than passed per call so no write path can disagree with another.
@@ -110,6 +111,12 @@ class ScratchpadDB:
         # Nothing about the data changes; only how it is packed.
         self._conn.execute("PRAGMA page_size=16384")
         self._conn.execute("PRAGMA journal_mode=WAL")
+        # SQLite's default is 2 MB, which at the 16 KB page above is 125 pages. An ingest
+        # writes into four B-trees at once, and once the interior pages of those no longer fit
+        # in cache every insert becomes a random read and a random write. That is a cost that
+        # grows with the table rather than with the batch, which is what a fixed batch size
+        # cannot bound -- and it is the shape of the slowdown a large ingest hits.
+        self._conn.execute(f"PRAGMA cache_size=-{max(cache_mb, 1) * 1024}")
         self._readonly: sqlite3.Connection | None = None
         self.apply_migrations()
 
@@ -195,7 +202,12 @@ class ScratchpadDB:
         payload = [
             (
                 record.isoformat(),
-                record.source,
+                # `unknown` is what an adapter reports when the format names no emitter, and on
+                # a raw-lines read that is every single row -- seven bytes of the same word,
+                # once per event, plus its length header. Stored as NULL and read back with
+                # COALESCE, the same trade already made between `raw` and `message`. Measured on
+                # 500,000 Thunderbird events: 7.6 bytes an event, 2.6% of the scratchpad.
+                None if record.source == UNKNOWN_SOURCE else record.source,
                 record.severity,
                 template_id,
                 # The two text columns are deduplicated against each other in whichever
@@ -546,13 +558,13 @@ class ScratchpadDB:
         bad = list(SEVERITIES[SEVERITIES.index(wanted) :]) if wanted in SEVERITIES else []
         placeholders = ",".join("?" for _ in bad) or "NULL"
         rows = self._conn.execute(
-            f"""SELECT source,
+            f"""SELECT COALESCE(source, '{UNKNOWN_SOURCE}') AS source,
                        COUNT(*) AS events,
                        SUM(CASE WHEN severity IN ({placeholders}) THEN 1 ELSE 0 END) AS bad_events,
                        MIN(CASE WHEN severity IN ({placeholders}) THEN ts END) AS first_bad,
                        MAX(CASE WHEN severity IN ({placeholders}) THEN ts END) AS last_bad
                 FROM log_events
-                GROUP BY source
+                GROUP BY COALESCE(source, '{UNKNOWN_SOURCE}')
                 ORDER BY bad_events DESC, events DESC""",
             bad * 3,
         )
@@ -768,7 +780,8 @@ class ScratchpadDB:
             start_ts, end_ts, source, severity, template_id, noise, trace_id
         )
         rows = self._conn.execute(
-            "SELECT id, ts, source, severity, template_id, trace_id,"
+            "SELECT id, ts, COALESCE(source, '" + UNKNOWN_SOURCE + "') AS source,"
+            " severity, template_id, trace_id,"
             # NULL on either column means "the other one holds it" -- see the note in
             # `bulk_insert_events`. Every reader gets text and none needs to know which
             # column it landed in, or whether this run kept the verbatim line at all.
@@ -843,7 +856,8 @@ class ScratchpadDB:
             return []
         placeholders = ", ".join("?" for _ in ids)
         rows = self._conn.execute(
-            "SELECT id, ts, source, severity, template_id, trace_id,"
+            "SELECT id, ts, COALESCE(source, '" + UNKNOWN_SOURCE + "') AS source,"
+            " severity, template_id, trace_id,"
             # NULL on either column means "the other one holds it" -- see the note in
             # `bulk_insert_events`. Every reader gets text and none needs to know which
             # column it landed in, or whether this run kept the verbatim line at all.

@@ -302,6 +302,18 @@ class ScratchpadConfig(_Strict):
     #: the ability to show the byte-exact line as the file wrote it.
     store_raw: bool = True
 
+    #: Megabytes of SQLite page cache for the scratchpad connection.
+    #:
+    #: SQLite defaults to 2 MB, which at this project's 16 KB page size is 125 pages. An ingest
+    #: maintains four B-trees on `log_events` as it writes, and once their interior pages stop
+    #: fitting in cache each insert becomes a random read and a random write. That cost grows
+    #: with the table, not with the batch, so `EVENT_BATCH_SIZE` cannot bound it.
+    #:
+    #: Traded against memory, and the memory was measured: a 2.5 GB ingest peaked at 290 MB
+    #: across the whole process tree, so there is room. Raise it for a large ingest; the run
+    #: records nothing about it because it changes speed and not results.
+    cache_mb: int = 64
+
 
 class LLMConfig(_Strict):
     """Which model runs what, and through which provider.
