@@ -148,6 +148,29 @@ def _severity_component(max_severity_rank: int) -> float:
     return _SEVERITY_WEIGHT[SEVERITIES[rank]]
 
 
+#: Nats of surprise at which burstiness reaches half its range. Bounds the component into
+#: [0, 1) without the saturation the previous ratio form had. Nothing downstream reads the
+#: absolute value -- the score is a ranking and every consumer sorts -- so this sets how
+#: sharply burstiness competes with severity and rarity rather than any threshold.
+#:
+#: Swept against three constraints at once, because two of them are corpora and the third is a
+#: property this component already had and must keep:
+#:
+#:     scale   LogDx recall@40   customer root cause   a repeat still beats a one-off
+#:         5             69.2%           57 of 2,769   yes
+#:        10             69.2%           11            yes
+#:        20             66.2%            7            yes
+#:        35             67.7%            8            **no**
+#:        50             67.7%            7            **no**
+#:
+#: Past 20 the component is flattened enough at small counts that rarity decides again, and a
+#: banner firing once outranks a failure repeating four times -- the exact regression
+#: `test_a_repeated_error_outranks_a_one_off_that_reads_the_same` exists to catch. 10 takes the
+#: best recall of the three that survive; 20 buys four ranks on a single marker of one log and
+#: costs three points across sixty-five markers of twenty.
+BURSTINESS_SCALE = 10.0
+
+
 def _burstiness_component(max_per_bucket: int, total: int, total_buckets: int) -> float:
     """How peaked a template is against spreading evenly across the whole incident.
 
@@ -178,10 +201,28 @@ def _burstiness_component(max_per_bucket: int, total: int, total_buckets: int) -
     mean_per_bucket = total / total_buckets
     if mean_per_bucket <= 0:
         return 0.0
-    ratio = max_per_bucket / mean_per_bucket
-    if ratio <= 1.0:
+    if max_per_bucket <= mean_per_bucket:
         return 0.0
-    return 1.0 - (1.0 / ratio)
+
+    # How unlikely the peak bucket is *given the count*, rather than how many times it exceeds
+    # a uniform mean. The ratio form saturated: `1 - 1/ratio` is already 0.95 at a ratio of 20,
+    # and two occurrences landing in one bucket of 1,440 gives a ratio of 1,440. Measured on a
+    # 2.19M-event production log, a two-occurrence template scored 1.00 and the 889-occurrence
+    # root cause scored 0.99 -- the term separated nothing, which left a three-term score being
+    # decided by one term.
+    #
+    # Under a uniform spread the count in one bucket is Poisson with mean `total/total_buckets`,
+    # so the log-probability of seeing the observed peak is the natural measure of surprise.
+    # Two events in one minute of a day is unremarkable; hundreds concentrated is not, and the
+    # difference is now visible: that root cause moves from rank 203 of 2,769 to 11, and
+    # ground-truth marker recall over twenty LogDx-CI cases goes from 61.5% to 69.2%.
+    log_probability = (
+        max_per_bucket * math.log(mean_per_bucket)
+        - mean_per_bucket
+        - math.lgamma(max_per_bucket + 1)
+    )
+    surprise = max(0.0, -log_probability)
+    return surprise / (surprise + BURSTINESS_SCALE)
 
 
 def _rarity_component(count: int, max_count: int) -> float:
