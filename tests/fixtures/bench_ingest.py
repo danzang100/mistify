@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -45,12 +46,15 @@ from pathlib import Path
 #: this; the per-process peaks are the OS's own and are exact whatever this is set to.
 SAMPLE_SECONDS = 2.0
 
+#: `{self}` is this script's own pid, excluded because it is a Python process too and would
+#: otherwise add its ~30 MB to every reading of the run it is measuring.
 _PS_SNAPSHOT = (
-    "$p = @(Get-Process python3.12,python,pythonw -ErrorAction SilentlyContinue); "
-    "if ($p.Count -eq 0) { '0,0,0' } else { "
+    "$p = @(Get-Process python3.12,python,pythonw -ErrorAction SilentlyContinue | "
+    "Where-Object {{ $_.Id -ne {self} }}); "
+    "if ($p.Count -eq 0) {{ '0,0,0' }} else {{ "
     "$c = ($p | Measure-Object WorkingSet64 -Sum).Sum; "
     "$s = ($p | Measure-Object PeakWorkingSet64 -Sum).Sum; "
-    "\"$($p.Count),$c,$s\" }"
+    "\"$($p.Count),$c,$s\" }}"
 )
 
 
@@ -70,7 +74,13 @@ class MemorySampler:
             return None
         try:
             done = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_SNAPSHOT],
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    _PS_SNAPSHOT.format(self=os.getpid()),
+                ],
                 capture_output=True,
                 text=True,
                 timeout=30,

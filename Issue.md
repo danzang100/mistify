@@ -717,47 +717,65 @@ a count in a report quietly wrong.
 **Target phase.** Next, ahead of any further storage work: at 2M lines the whole storage layer
 is 22% of ingest and falling, and the safe storage wins left are worth about 3%.
 
-## 17 — Threshold calibration adds almost nothing over a fixed constant
+## 17 — Grouping accuracy is 0.745, and threshold selection is near its ceiling
 
-**Problem.** Grouping accuracy across all fifteen Loghub-2k systems, scored three ways:
+**What was measured.** Grouping accuracy across all fifteen Loghub-2k systems, not the four the
+handoff reports:
 
 | | mean grouping accuracy |
 |---|---|
 | calibrated, as the pipeline ships | **0.745** |
 | fixed `sim_th=0.4` | 0.740 |
-| best threshold per system | **0.842** |
+| best threshold per system, chosen with the answer key | 0.842 |
 
-Calibration is worth **0.005**. Nearly a tenth of accuracy is available and not taken. Per
-system, given a candidate list of 0.2 through 0.7:
+The handoff's **0.910 is optimistic**: Apache, BGL, Hadoop and OpenSSH were picked as a spread
+of log families and turn out to be the favourable ones. Proxifier scores 0.025, OpenStack 0.309,
+Windows 0.571, HealthApp 0.576. **0.745 is the honest scorecard figure.**
 
-| system | picked | GA there | best | GA there | lost |
-|---|---|---|---|---|---|
-| Proxifier | 0.4 | 0.025 | 0.7 | 0.526 | 0.501 |
-| Windows | 0.4 | 0.571 | 0.7 | 0.996 | 0.425 |
-| OpenSSH | 0.5 | 0.718 | 0.6 | 0.925 | 0.207 |
-| HealthApp | 0.5 | 0.576 | 0.2 | 0.780 | 0.204 |
-| Mac | 0.4 | 0.715 | 0.6 | 0.782 | 0.067 |
+**The 0.097 gap is not recoverable, and the first version of this issue was wrong to claim it
+was.** Seven selection rules were built and scored against a grid of every system at every
+threshold. Each rule sees only what the pipeline sees at run time -- template count, compression
+ratio, over-merge risk -- and never the accuracy it is scored on:
 
-**Why.** `calibrate_sim_th` chooses the candidate with the best compression ratio inside a
-target band, rejecting any that trips the over-merge guard. Compression is not accuracy, and
-`calibrate_sim_th`'s own docstring says so -- "compression is a proxy that breaks in exactly the
-case that matters". The measurement above is that case, fifteen times.
+| rule | mean GA | vs shipped |
+|---|---|---|
+| plateau end | 0.755 | +0.010 |
+| **current: fewest templates among safe** | **0.745** | — |
+| fixed 0.4 | 0.740 | -0.005 |
+| fixed 0.6 | 0.697 | -0.048 |
+| knee of the count curve | 0.684 | -0.061 |
+| strictest safe threshold | 0.473 | -0.273 |
 
-A second and compounding problem: the shipped `calibration_candidates` is `[0.3, 0.4, 0.5]`, so
-the pipeline cannot reach 0.6 or 0.7 at all, and three systems peak there. But widening the list
-is not the fix on its own -- the numbers above *were* produced with 0.2 through 0.7 available,
-and the calibrator still picked 0.4 for Windows over a 0.7 that scores 0.996.
+`strictest safe` is what the previous version of this issue recommended -- "the loosest threshold
+that does not merge distinct conditions". It is the **worst** of the seven, 0.273 below what
+ships, taking HDFS to 0.00 and Spark to 0.08.
 
-**What this means for the scorecard.** The handoff reports 0.910, measured on four systems --
-Apache, BGL, Hadoop, OpenSSH -- chosen as a spread of log families. Eleven more are now scored
-and the four were the favourable ones. **0.745 is the honest figure for what ships**, and the
-gap to 0.842 is a defect rather than a limit.
+**Why no rule can close it.** The best threshold per system does not follow from anything
+visible at run time:
 
-**Recommended fix.** Calibration needs an objective correlated with correctness rather than with
-compression. Nothing at run time has ground truth, so the candidate is the over-merge guard
-itself, used as the objective rather than as a veto: pick the *loosest* threshold that does not
-merge distinct conditions, instead of the one that compresses most inside a band. That is
-measurable against exactly this table, free, and needs no model.
+    0.2  Apache, HDFS, Spark, Hadoop, HealthApp
+    0.3  Thunderbird
+    0.4  BGL, Linux
+    0.6  OpenSSH, HPC, Mac, OpenStack, Zookeeper
+    0.7  Windows, Proxifier
 
-**Target phase.** 5. This is a scorecard row that currently reports a number the product does
-not achieve, and a fix worth 0.097 of the metric the whole templating stage exists to serve.
+Template counts sit on a plateau and then cliff -- HDFS is `[17, 17, 17, 17, 406, 700, 1185]`
+across 0.2 to 0.8 -- and the best threshold is sometimes mid-plateau and sometimes at its edge.
+No monotone function of count, ratio or wildcard density separates those two groups. The 0.842
+is only visible because the annotation is in hand, and the pipeline never has it.
+
+So the shipped rule is within 0.010 of the best rule that could be constructed over the
+available signals. **This is a ceiling, not a defect**, and the value of the measurement is that
+it stops someone spending days on "better calibration" believing a tenth of accuracy is sitting
+there.
+
+**The one angle left untested.** Calibration runs before records carry severity, so its
+over-merge guard uses wildcard density as a structural stand-in. The real severity-span check,
+`find_over_merged`, only works post-load. A calibrate, load, check, re-cluster loop could use it
+-- at the price of a second templating pass, on the stage already measured at 78% of ingest.
+Worth pricing before attempting, and worth nothing at all unless severity is informative, which
+on a raw-lines read it frequently is not: Thunderbird reports 99.6% unmapped severity.
+
+**Target phase.** 5, as a scorecard row that reports 0.745 with the per-system table beside it.
+Proxifier at 0.025 and OpenStack at 0.309 are worth naming individually: a mean hides that two
+log families are essentially not clustered at all.

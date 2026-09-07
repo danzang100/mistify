@@ -1,13 +1,15 @@
 # Handoff — Phase 4 and the scale work
 
-Branch `phase4-adapters-and-scale`, twenty-one commits ahead of `master`. **929 tests, 91%
-coverage, ruff and mypy clean.** Nothing pushed; no remote is configured.
+Branch `phase4-adapters-and-scale`, thirty-nine commits ahead of `master`. **997 tests, ruff
+and mypy clean.** Nothing pushed; no remote is configured.
 
-Sections 1-3 are the state as of 4 September and are still accurate. **Section 4 is what
-changed in the two days after**, and it revises several things sections 1-3 imply: the digest
-the investigation starts from was blind and now is not, a run that concludes nothing no longer
-scores as though it did, and the loop has now converged twice on a 568 MB customer log that
-nobody here wrote.
+The sections are in the order they were written, and each later one revises the ones before it.
+Sections 1-3 are the state as of 4 September. **Section 4** is the two days after: the digest
+was blind and now is not, silence no longer scores, and the loop converged twice on a 568 MB
+customer log nobody here wrote. **Section 5 is 5-6 September** and revises more of the same --
+in particular, **section 2's grouping accuracy of 0.910 is optimistic**, measured on four of
+fifteen Loghub systems which turn out to be the favourable ones; the figure over all fifteen is
+**0.745**.
 
 This document is the session's working memory: what landed, what the numbers actually are, what
 was tried and rejected, and what is worth doing next. `README.md` describes the project;
@@ -362,7 +364,161 @@ their first tool call go from **15/42 to 0/27**, the recorded `jest-nextjs` from
 and every run that actually concluded is unchanged. Issue 11's other half — a judge question
 asking whether a finding asserts that something is wrong — is still open.
 
-## 5. What to do next
+## 5. What changed on 5-6 September
+
+Everything here was measured; commit messages carry the numbers and `Issue.md` 15-17 carry the
+ones that became deferred problems. Read this before section 6, because several things it
+recommends are now either done or measured and rejected.
+
+### The report no longer leads with a dismissal
+
+`findings.rank_notes` ordered findings by the peak anomaly score of the templates a note cites,
+so on the customer log the note *dismissing* three two-occurrence templates (0.885 each) led the
+report and the SolrCore root cause (889 occurrences, 0.798) came second.
+
+Twenty-one recorded investigations were re-ranked under four candidate keys. Weighting by
+evidence volume ties the shipped key at 19/21 — it fixes two cases and breaks two others — and
+every volume-weighted key then leads with the planted herring in `pool-exhaustion`, which fires
+350 times to the root cause's 40. The fix is a term *orthogonal* to the score: a note is tagged
+`accounting` when its citations fall entirely inside the templates a coverage nudge named, and
+those rank below findings. Where no nudge fired the ordering is unchanged.
+
+`mistify eval-ranking` keeps the instrument, so the next change to the ordering is answered with
+a table rather than an argument.
+
+### Elastic, and which half of it is still a guess
+
+The `_search` response and the NDJSON dump envelope are normative, and both are read and tested.
+What sits inside `_source` is convention — nested versus dotted, `log.level` versus `level`,
+whether `message` is the whole line — and every lookup tries both spellings, but **the mapping
+has not been checked against a capture**. `tests/fixtures/capture_elastic.py` ships real lines
+through a real Filebeat into a real Elasticsearch; it has not been run, because the Docker daemon
+was not up. Two defects found by testing: bare ECS documents scored 0.0 and were being lost to
+`json_lines` at 1.0, and one corrupt line made a whole dump unreadable.
+
+### raw_lines reads the timestamp that is on the line
+
+It stamped `1970-01-01T00:00:0N` per line and stored `{"line_number": N}` beside it. A shape is
+now adopted from a 400-line sample and applied to the whole file; where none reaches 90% the
+ordinals are unchanged. The preference order is **not** the bootstrapper's, because year-bearing
+shapes must win: Thunderbird matches `syslog` and `epoch` at 100% each and they disagree by 21
+years. `ingest.timestamp_year_inferred` is load-bearing, and the report says when durations are
+sound but absolute dates are not. Measured on 500k Thunderbird lines: 6.7% smaller, templates
+identical, and a real 41-hour window in place of a row count.
+
+### The transport header is masked before clustering
+
+`CONTEXT.md` says the source line and the text the templater clusters on "are different things
+and are never conflated", and `raw_lines` conflated them. Masking timestamps in the first 64
+characters — in the templater, not the adapter, because doing it at the adapter breaks the
+`message`-equals-`raw` dedup and costs 147 bytes an event — took Thunderbird from 2,001
+templates to 1,485 with storage unchanged, and LogDx digest recall from 18/22 to 19/22 on dev.
+
+This also dissolved a false alarm: `score_dataset` clusters Loghub's `Content` column, which has
+the header already stripped, so the apparent over-splitting against 1,241 annotated templates was
+partly two different strings being compared.
+
+### Conclusions that are wrong on purpose
+
+`mistify eval-seeded` plants five defects and two sound controls derived from each log's own
+statistics — chronic templates, signal set, volume distribution — so the same cases land on any
+corpus, and a log that cannot support a defect yields nothing rather than a faked case. Across 94
+scratchpads and 562 conclusions: **catch 388/401 by the check built for each defect, false flips
+0/161**.
+
+Both numbers needed correcting on the way. Catch read 99% until each defect was required to be
+found by *its own* check rather than by one over-broad one, and `signal-ignored` was itself
+broken — it compared against the acute subset, so it sat silent on 20 of the conclusions it
+exists for. All 18 false flips came from logs where the check had nothing to separate; guarding
+each check by what the log can distinguish took them to zero, at a cost of 13 catches, every one
+of them on a log that had previously false-flipped.
+
+### Storage, and what is not worth taking
+
+`source` is stored NULL when unknown and read back with COALESCE, about 2.7%.
+`tests/test_storage_invariants.py` holds all seven ingestion paths — json_lines, otlp, loki,
+elastic, raw_lines, a directory, the bootstrapper — to the same round-trip checks. The directory
+case is the one that would have broken, since `MultiFileAdapter` deliberately replaces `unknown`
+with the filename.
+
+**The timestamp is deliberately not shortened.** Trimming a whole-second stamp to `...:01Z`
+saves seven bytes in the table and in both indexes carrying it, about 7%, and breaks ordering:
+`ts` is TEXT and `.` sorts before `Z`, so `14:38:00.442Z` would compare as earlier than
+`14:38:00Z`. A test now asserts 27 characters on every format.
+
+Index cost measured at 500k events, net of the 12.4 B/event a VACUUM alone reclaims: the two
+ts-bearing indexes are 26.3% of the scratchpad, the partial trace index costs nothing, and the
+table itself is 65.8%.
+
+### Latency: what was tried, and the one thing that is true
+
+Ingest decays with scale — 7,900 lines/s at 500k, 4,347 at 2M, about 2,100 by 7.5M. Templating
+is 78% of a 2M-line ingest and rising. Rejected, each with numbers in `Issue.md` 16:
+
+| tried | result |
+|---|---|
+| SQLite page cache at 2 / 64 / 256 MB | within noise at both scales, and the gap does not widen — cache is not the constraint |
+| memoising masked message to template id | changes 6.46% of assignments; only 0.37% is Drain3's own instability, the rest is caused by the cache |
+| tree depth 8 / 12 / 16 | depth 4 already best on grouping accuracy; depth 12's 8.26x comes with a degenerate clustering |
+| stripping a constant line prefix | regression on both corpora — leaves stayed at 32, and constant tokens pad Drain's similarity ratio |
+| extra delimiters | recovers context inside templates but is 2.1x worse on scan depth for the customer log |
+
+**"Replace the templater" is closed.** Thunderbird is slow because 786 clusters share **32
+leaves** where the customer log's 654 share 279 — the average line scans 89.7 clusters against
+7.4. Its first token is `-` on 100% of lines and it has 28 distinct token counts against 174.
+That is degenerate routing on one corpus, not a slow templater.
+
+**Wall-clock on this machine is not trustworthy**: one pass reported templating at 868.0s inside
+a 459.4s full ingest. Measure in short repeats and quote the minimum. Structural counts —
+clusters, leaves, scanned-per-line — need no clock, and every conclusion above rests on those.
+
+### The scorecard's first rows, and a correction to this document
+
+| row | number |
+|---|---|
+| grouping accuracy, 15 Loghub systems, as shipped | **0.745** |
+| best threshold per system, chosen with the answer key | 0.842 |
+| digest marker recall, 20 LogDx cases | 39/65 — dev 15/18, holdout 9/19, v2 15/28 |
+| baselines on LogDx dev | naive 38/69, templated 38/69 |
+| seeded conclusions | catch 388/401, false flips 0/161 |
+
+**Section 2's 0.910 is optimistic.** It was measured on Apache, BGL, Hadoop and OpenSSH, picked
+as a spread of log families; the other eleven are worse, and Proxifier scores 0.025. Calibration
+is worth 0.005 over a fixed constant and sits within 0.010 of the best rule constructible from
+run-time signals, so `Issue.md` 17 records it as a ceiling rather than a defect — the first draft
+of that issue claimed the opposite and was wrong.
+
+Digest recall is 83% on the split the ranking was tuned against and about 51% on the two it was
+not, which is the shape of an overfit and belongs on the scorecard as such.
+
+### The largest free win found, and not taken
+
+The rarity term rewards rare templates, and evidence is usually common. Measured on two corpora
+of opposite shape:
+
+| weighting | LogDx recall@40 | customer-log root cause rank |
+|---|---|---|
+| shipped `5/3/2` | 61.5% | 203 of 2,769 |
+| rarity removed | 61.5% | 199 |
+| **rarity negated `5/3/-2`** | **72.3%** | **8** |
+| severity alone | 63.1% | 511 |
+
+The digest shows forty, so the shipped ranking puts that root cause outside it — the failure
+recorded in section 4, now with a cause. Ranking rare-first scores 1.5% against random's 26.2%,
+so the term is worse than chance, and severity alone beats the full three-term score.
+
+`severity_informative` is wrong in the same family: it tests whether severity *parses*, not
+whether it *varies*, so a log that is 78% ERROR with 1.0% unmapped passes and half the weight
+goes on a constant.
+
+Raising `DIGEST_LIMIT` from 40 to 200 is the other lever — recall 61.5% to 92.3%, for 7,152 to
+18,160 characters re-sent every step. Note that *visible* recall plateaus near 60% at any depth,
+because the marker often sits in the part templating wildcards away and the model must open the
+template to read it.
+
+**Nothing in this section is implemented.** It is measurement only.
+
+## 6. What to do next
 
 Ordered by value per unit of effort, revised by what the last two days measured.
 
@@ -438,7 +594,7 @@ confident-and-wrong).
 
 ---
 
-## 6. Operational notes
+## 7. Operational notes
 
 - **`gemini-3.5-flash` allows 20 requests per day** on the free tier
   (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`). Every critique in the 4 September
