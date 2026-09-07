@@ -179,3 +179,70 @@ def test_every_candidate_ranks_the_same_notes(tmp_path: Path) -> None:
     for name, order in CANDIDATES.items():
         ranked = order(notes, stats)
         assert sorted(n["id"] for n in ranked) == [1, 2, 3], name
+
+
+def _cli_ranking(tmp_path: Path, *args: str) -> str:
+    """`eval-ranking` over one tagged non-LogDx scratchpad, which needs `--marker` to score."""
+    from click.testing import CliRunner
+
+    from mistify.cli import cli
+
+    pads = tmp_path / "pads"
+    pads.mkdir()
+    _scratchpad(
+        pads / "incident_solr-like.sqlite",
+        [_note(1, [1], ROLE_FINDING), _note(2, [2], ROLE_ACCOUNTING)],
+    )
+    result = CliRunner().invoke(cli, ["eval-ranking", "--scratchpads", str(pads), *args])
+    return result.output
+
+
+def test_a_scratchpad_skipped_for_want_of_a_marker_is_counted_not_dropped(
+    tmp_path: Path,
+) -> None:
+    """The silent skip reported a clean sweep for a key whose deciding term never ran.
+
+    Every run carrying an `accounting` role is a non-LogDx one, so dropping them without a
+    word is how the instrument came to grade the role term on a corpus that has none of it.
+    """
+    output = _cli_ranking(tmp_path)
+
+    assert "1 scratchpad(s) skipped for want of a marker" in output
+
+
+def test_the_warnings_are_absent_once_the_marker_resolves_the_run(tmp_path: Path) -> None:
+    """The control for the test above.
+
+    Same scratchpad, now scorable and carrying the tag. If the warnings appeared here too they
+    would be unconditional text and the test above would be asserting nothing.
+    """
+    output = _cli_ranking(tmp_path, "--marker", ROOT)
+
+    assert "skipped for want of a marker" not in output
+    assert "did not exercise the role term" not in output
+    assert f"{ROLE_ACCOUNTING}=1" in output
+
+
+def test_a_table_with_no_accounting_note_says_the_role_term_never_ran(tmp_path: Path) -> None:
+    """Scorable, and decided entirely by score: the aggregate says nothing about the tag.
+
+    Paired with `test_the_warnings_are_absent_once_the_marker_resolves_the_run`, which is the
+    same command over a run that does carry the tag and must not warn.
+    """
+    from click.testing import CliRunner
+
+    from mistify.cli import cli
+
+    pads = tmp_path / "untagged"
+    pads.mkdir()
+    _scratchpad(
+        pads / "incident_untagged.sqlite",
+        [_note(1, [1], ROLE_FINDING), _note(2, [2], ROLE_FINDING)],
+    )
+    output = (
+        CliRunner()
+        .invoke(cli, ["eval-ranking", "--scratchpads", str(pads), "--marker", ROOT])
+        .output
+    )
+
+    assert "did not exercise the role term" in output

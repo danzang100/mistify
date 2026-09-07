@@ -632,13 +632,12 @@ def eval_ranking_command(scratchpads: Path, markers: tuple[str, ...], out: Path 
     19/21 while fixing and breaking different cases, so read the per-run column -- and read it
     alongside the herring control in the test suite, which is what rejected all three.
     """
+    from mistify.common.models import ROLE_ACCOUNTING
     from mistify.eval.logdx import load_logdx_case
     from mistify.eval.ranking import CANDIDATES, rank_report
 
     case_dirs = {
-        d.name: d
-        for d in Path(".cache/logdx").glob("**/")
-        if (d / "ground_truth.json").exists()
+        d.name: d for d in Path(".cache/logdx").glob("**/") if (d / "ground_truth.json").exists()
     }
 
     def logdx_markers(stem: str) -> tuple[tuple[str, ...], str] | None:
@@ -655,6 +654,7 @@ def eval_ranking_command(scratchpads: Path, markers: tuple[str, ...], out: Path 
         return None
 
     cases = []
+    unmarked = []
     for path in sorted(scratchpads.glob("**/*.sqlite")):
         resolved = logdx_markers(path.stem)
         if resolved is not None:
@@ -662,6 +662,10 @@ def eval_ranking_command(scratchpads: Path, markers: tuple[str, ...], out: Path 
         elif markers:
             case_markers, origin = markers, "--marker"
         else:
+            # Not a LogDx case and no --marker to resolve it by. Counted rather than dropped:
+            # the runs carrying an `accounting` role are exactly the non-LogDx ones, so a
+            # silent skip here reports a clean sweep for a key whose deciding term never ran.
+            unmarked.append(path)
             continue
         if case_markers:
             cases.append((path, case_markers, origin))
@@ -669,7 +673,8 @@ def eval_ranking_command(scratchpads: Path, markers: tuple[str, ...], out: Path 
     results = rank_report(cases)
     if not results:
         raise click.ClickException(
-            f"no scratchpad under {scratchpads} had two or more notes and resolvable markers. "
+            f"no scratchpad under {scratchpads} had two or more notes and resolvable markers, "
+            f"and {len(unmarked)} scratchpad(s) skipped for want of a marker. "
             "Pass --marker for runs that are not LogDx cases."
         )
 
@@ -696,6 +701,21 @@ def eval_ranking_command(scratchpads: Path, markers: tuple[str, ...], out: Path 
         )
         name = f"{result.path.parent.name}/{result.path.stem}"
         click.echo(f"{name[:46]:<46} {result.note_count:>5} {roles[:22]:<22} {cells}")
+
+    if not any(ROLE_ACCOUNTING in r.roles for r in scorable):
+        click.echo(
+            "\nNo scorable run carries an `accounting` note, so this table did not exercise "
+            "the role term at all -- every key above was decided by score alone."
+        )
+    if unmarked:
+        click.echo(
+            f"\n{len(unmarked)} scratchpad(s) skipped for want of a marker; pass --marker to "
+            "score them:"
+        )
+        for path in unmarked[:10]:
+            click.echo(f"  {path}")
+        if len(unmarked) > 10:
+            click.echo(f"  ... and {len(unmarked) - 10} more")
 
     unscorable = [r for r in results if not r.scorable]
     if unscorable:
@@ -809,9 +829,7 @@ def eval_seeded_command(
     for name in GENERATORS:
         planted_here = by_case.get(name, [])
         if not planted_here:
-            click.echo(
-                f"{name:<{width}} {'-':<8} {0:>7} {'-':>9} {'-':>9}  (no log supported it)"
-            )
+            click.echo(f"{name:<{width}} {'-':<8} {0:>7} {'-':>9} {'-':>9}  (no log supported it)")
             continue
         label = planted_here[0].conclusion.label
         objected = sum(1 for s in planted_here if s.objected)

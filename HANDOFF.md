@@ -522,15 +522,20 @@ template to read it.
 
 Ordered by value per unit of effort, revised by what the last two days measured.
 
-### The report leads with the wrong finding
+### ~~The report leads with the wrong finding~~ — done, see section 5
 
-`findings.rank_notes` orders findings by the anomaly score of the templates each note cites.
-On the customer log that puts the note *dismissing* templates 410, 413 and 426 first — they
-score 0.885, being the ranking's own signal set — and the SolrCore root cause second, because
-template 1962 scores low. The document's own prose says 'most significant first ... computed,
-not chosen by a model', which is what makes it misleading rather than merely wrong. A report
-inherits the ranking's degeneracy at the top of the page. Free to prototype against the two
-recorded runs.
+Fixed by the `accounting` role term. This entry was written before section 5 and is kept only
+so the ordering of the two is legible; the numbers are there, not here.
+
+`mistify eval-ranking` reproduces the 19/21 with **both** markers supplied:
+
+```bash
+uv run mistify eval-ranking --scratchpads .cache --marker "is not available due to init failure" --marker "Database connection pool exhausted"
+```
+
+Without them the command scores 16 runs, reports `current 15/16`, and touches no `accounting`
+note at all — every run carrying the tag is a non-LogDx one. It now says so rather than
+printing a clean sweep for a key whose deciding term never ran.
 
 ### Run the critique enough to know anything about it
 
