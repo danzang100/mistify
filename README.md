@@ -45,58 +45,85 @@ git clone https://github.com/danzang100/mistify && cd mistify && uv sync
 
 ## Use
 
+### First run, no account needed
+
 Generate the sample incident (deterministic, ~4,900 lines with a planted root cause and a
-deliberate red herring), then run the pipeline over it:
+deliberate red herring), then run the whole pipeline over it with the deterministic
+investigator, which calls no model:
 
 ```bash
 uv run python tests/fixtures/synthetic_incident.py examples/sample_incident.jsonl
 ```
 
 ```bash
+uv run mistify run --source examples/sample_incident.jsonl --incident-id demo --investigator skeleton
+```
+
+Three lines of output and a report at `reports/demo.md` whose first section names the pool
+exhaustion. That is the whole pipeline - ingest, redaction, templating, scoring, report - with
+nothing intelligent in the middle. Everything except the model-driven investigation runs this
+way, and so does the entire test suite.
+
+### The real thing: a model-driven investigation
+
+`investigate` and `run` default to `--investigator loop`, which drives a model and needs a
+credential. The default provider is Gemini, and a free AI Studio key is enough. Put it in a
+`.env` file at the repo root, which the CLI loads on startup, or export it:
+
+```bash
+echo "GEMINI_API_KEY=your-key" > .env
+```
+
+```bash
 uv run mistify run --source examples/sample_incident.jsonl --incident-id demo
 ```
 
-The report lands in `reports/demo.md`. Against your own logs:
+Then against your own logs - a file or a directory, see *What you can point it at*:
 
 ```bash
-uv run mistify run --source path/to/incident.jsonl
+uv run mistify run --source path/to/incident-logs/
 ```
 
-### Investigate
-
-`investigate` and `run` default to `--investigator loop`, which drives a model and needs a
-credential. The default provider is Gemini: set `GEMINI_API_KEY`, either in the environment or
-in a `.env` file at the repo root, which the CLI loads on startup. A free AI Studio key is
-enough.
+Without a key, the run ingests and then stops with an error that names the variable and points
+back at `--investigator skeleton`.
 
 The shipped models are the cheap tiers - `gemini-3.5-flash-lite` for the loop and
 `gemini-3.5-flash` for the adversarial pass. They must differ: a critique that shares the
-reasoning model shares its blind spots, so config rejects a run where they match. The loop is roughly fifteen calls to the critique's one, so the critique is the cheap
-place to spend more.
+reasoning model shares its blind spots, so config rejects a run where they match. The loop is
+roughly fifteen calls to the critique's one, so the critique is the cheap place to spend more.
+`--no-adversarial` skips the critique when you want one model call instead of three.
 
-Free-tier quotas are per-minute. The adapter retries throttling with backoff; if that is not
-enough, set `llm.min_interval_seconds` to space calls out. A run over the sample incident costs
-roughly 48k tokens end to end (see *What a run costs*).
+Free-tier quotas are per-minute, and `gemini-3.5-flash` also has a small per-day cap. The
+adapter retries throttling with backoff; if that is not enough, set `llm.min_interval_seconds`
+to space calls out. A run over the sample incident costs roughly 48k tokens end to end (see
+*What a run costs*).
 
 Gemini is the only real provider that ships. The seam it sits behind (`src/mistify/llm/`) took
 a second adapter once and would take another; an Anthropic implementation lived there and was
 removed when no credential for it existed.
 
+### The three steps, separately
+
+`run` is shorthand for:
+
 ```bash
-uv run mistify run --source examples/sample_incident.jsonl --investigator skeleton
+uv run mistify ingest --source path/to/incident-logs/ --incident-id my-incident
 ```
 
-`--investigator skeleton` uses the deterministic heuristic instead and calls no model, which
-is how to exercise the whole pipeline without an account. `--no-adversarial` skips the
-critique when you want one model call instead of three.
-
-That is shorthand for the three-step pipeline:
+```bash
+uv run mistify investigate --incident-id my-incident
+```
 
 ```bash
-uv run mistify ingest --source path/to/incident.jsonl --incident-id my-incident
-uv run mistify investigate --incident-id my-incident
 uv run mistify report --incident-id my-incident
 ```
+
+Ingest is the expensive step on a large log and needs no model, so do it once. `investigate`
+refuses a scratchpad that already holds notes from an earlier run, because two investigations
+silently sharing one set of findings is worse than either alone; pass `--resume` to continue
+from those notes (the investigator is told they exist) or `--restart` to delete the previous
+investigation - notes, queries and critique - and begin again. `report` re-renders from the
+scratchpad at any time, in any format, without re-running anything.
 
 The investigator has five tools: `query_templates` and `get_slice` to read the scratchpad,
 `run_sql` for a read-only aggregate over it, `read_notes` to read back its own findings, and
@@ -134,7 +161,7 @@ Responder-facing, in order:
 Then an appendix: run signals, token usage, the investigation trail, and pipeline
 configuration. It is there so a conclusion can be checked, not because a responder needs it.
 
-### Formats
+### Report formats
 
 `report.format` in config, or `--format` on the command, takes `markdown`, `html` or `pdf`:
 
@@ -241,7 +268,7 @@ reported `parse_errors: 0`, and produced a report. In a directory, one unreadabl
 skipped and counted rather than failing the ingest; a directory with nothing readable in it is
 refused outright.
 
-### Formats
+### Input formats
 
 | Format | Recognised from | Written against |
 |---|---|---|
