@@ -69,6 +69,13 @@ from typing import Any
 OUT_DIR = Path(".cache/fixtures/elastic")
 INDEX = "mistify-capture"
 
+#: The filebeat container this script starts and stops. Named so a run interrupted half
+#: way through leaves something a later run can remove, not a stray beat still shipping.
+CONTAINER = "mistify-filebeat-capture"
+
+#: How long to wait for filebeat to get every line into the index, in seconds.
+SHIP_TIMEOUT = 180
+
 #: How long to wait for Elasticsearch to answer before giving up, in seconds.
 STARTUP_TIMEOUT = 120
 
@@ -190,21 +197,74 @@ def index_via_filebeat(base: str, lines: list[str]) -> None:
         "setup.template.enabled: false\n",
         encoding="utf-8",
     )
-    command = [
-        "docker", "run", "--rm",
-        "-v", f"{staging.resolve()}:/staging:ro",
-        "-v", f"{config.resolve()}:/usr/share/filebeat/filebeat.yml:ro",
-        "--add-host", "host.docker.internal:host-gateway",
-        "docker.elastic.co/beats/filebeat:8.15.0",
-        "filebeat", "-e", "--once", "--strict.perms=false",
-    ]
-    completed = subprocess.run(command, capture_output=True, text=True, timeout=300)
-    if completed.returncode != 0:
-        raise SystemExit(
-            f"filebeat exited {completed.returncode}\n{completed.stderr[-2000:]}"
+    # Not `--once`. The `filestream` input scans for its files on an interval, and `--once`
+    # tears the beat down before the first scan completes: filebeat exits 0, having reported
+    # `harvester.started: 0` and `output.events.total: 0`, and the failure surfaced two calls
+    # later as a 404 from `_refresh` on an index nothing had created. Detached, polled until
+    # the documents are queryable, then stopped.
+    #
+    # The deprecated `log` input does honour `--once`, and using it would be the smaller
+    # change. It is the wrong one: `input.type` lands in `_source`, so a capture taken that
+    # way would record a convention nobody deploys any more.
+    subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True, text=True)
+    started = subprocess.run(
+        [
+            "docker", "run", "-d", "--name", CONTAINER,
+            "-v", f"{staging.resolve()}:/staging:ro",
+            "-v", f"{config.resolve()}:/usr/share/filebeat/filebeat.yml:ro",
+            "--add-host", "host.docker.internal:host-gateway",
+            "docker.elastic.co/beats/filebeat:8.15.0",
+            "filebeat", "-e", "--strict.perms=false",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if started.returncode != 0:
+        raise SystemExit(f"filebeat would not start\n{started.stderr[-2000:]}")
+
+    try:
+        indexed = _wait_for_documents(base, len(lines))
+    finally:
+        logs = subprocess.run(
+            ["docker", "logs", "--tail", "40", CONTAINER], capture_output=True, text=True
         )
-    # `--once` returns before the output flush has necessarily been acknowledged.
-    _request(f"{base}/{INDEX}/_refresh", method="POST", body=b"")
+        subprocess.run(["docker", "rm", "-f", CONTAINER], capture_output=True, text=True)
+
+    if indexed == 0:
+        raise SystemExit(
+            "filebeat shipped nothing. Its last output:\n"
+            + (logs.stdout or logs.stderr)[-2000:]
+        )
+    if indexed < len(lines):
+        print(
+            f"warning: {indexed} of {len(lines)} lines indexed; capturing what arrived",
+            file=sys.stderr,
+        )
+
+
+def _wait_for_documents(base: str, expected: int) -> int:
+    """Documents in the index once the count stops rising, or `SHIP_TIMEOUT` has passed.
+
+    Polled on the count rather than slept through, and the plateau matters as much as the
+    target: a shipper that drops some lines would otherwise hold this open for the whole
+    timeout and then report a number the caller cannot tell apart from a slow flush.
+    """
+    deadline = time.monotonic() + SHIP_TIMEOUT
+    count = 0
+    stable = 0
+    while time.monotonic() < deadline:
+        time.sleep(2)
+        with contextlib.suppress(urllib.error.HTTPError, urllib.error.URLError, OSError):
+            _request(f"{base}/{INDEX}/_refresh", method="POST", body=b"")
+            now = int(_request(f"{base}/{INDEX}/_count").get("count", 0))
+            if now >= expected:
+                return now
+            stable = stable + 1 if now == count and now > 0 else 0
+            count = now
+            if stable >= 3:
+                return count
+    return count
 
 
 def capture(base: str, limit: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
