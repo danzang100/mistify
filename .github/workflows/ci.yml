@@ -1,9 +1,18 @@
 name: CI
 
+# Documentation-only changes skip the run: nothing here reads the README, and a two-runner
+# sweep for a prose edit is six runner-minutes for no information. If CI ever becomes a
+# required check, a docs-only PR then needs a trivial always-pass workflow on these same paths.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - LICENSE
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - LICENSE
 
 jobs:
   check:
@@ -14,9 +23,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
           enable-cache: true
