@@ -1,7 +1,7 @@
 """Hash-and-replace redaction engine.
 
 Runs immediately after adapter `parse()` and before every other stage -- templating, the
-Drain3 snapshot, the scratchpad, and any model call (decisions G1 and G2). Placing it here
+Drain3 snapshot, the scratchpad, and any model call. Placing it here
 rather than after templating is what makes the "nothing unredacted reaches a model or lands
 on disk" guarantee true for the unknown-format path as well as the registered-adapter path.
 

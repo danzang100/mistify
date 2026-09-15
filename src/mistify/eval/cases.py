@@ -50,7 +50,7 @@ class EvalCase:
     expects_incident: bool = True
 
     #: Markers whose template a finding must cite. The claim has to be traceable to rows, so
-    #: naming the thing in prose is not enough -- see issue 10.
+    #: naming the thing in prose is not enough: a mention is not a citation.
     must_cite: tuple[str, ...] = ()
 
     #: Markers that must not carry the conclusion. Citing one is allowed when the finding marks

@@ -202,7 +202,7 @@ def test_attribute_value_variants_are_decoded(tmp_path: Path) -> None:
 
 
 def test_the_trace_id_survives_into_fields(tmp_path: Path) -> None:
-    """OTLP carries a first-class trace id, which is the correlation axis issue 4 wants and
+    """OTLP carries a first-class trace id, the one-request-across-services correlation axis
     the JSON fixture only has by convention."""
     record = {"timeUnixNano": NANOS, "body": {"stringValue": "x"}, "traceId": "abc123"}
 

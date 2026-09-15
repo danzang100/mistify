@@ -12,7 +12,7 @@ The vault lives in its own SQLite file and must never become a table in the inci
 scratchpad. The investigator's `run_readonly_sql` channel executes model-authored SQL against
 whatever database it is pointed at, and its authorizer allows reads of *any* table in that
 database -- a `vault` table sitting there would be one `SELECT` away from handing the model
-every value redaction just removed, defeating decisions G1 and G2 entirely. Keeping the
+every value redaction just removed, defeating the whole point of redacting first. Keeping the
 mapping in a separate file is a real boundary rather than a naming convention: the same
 authorizer denies `ATTACH`, so a query on the scratchpad connection cannot reach across to
 the vault file even if it knows the path.

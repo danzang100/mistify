@@ -1,4 +1,4 @@
-"""End-to-end ingestion, and the stage-ordering guarantees from decisions G1 and G2."""
+"""End-to-end ingestion, and the guarantees that come from redacting before templating."""
 
 from __future__ import annotations
 

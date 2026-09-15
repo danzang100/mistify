@@ -30,8 +30,17 @@ with no account anywhere, and so does the entire test suite.
 
 ## Install
 
+Python 3.12 or later. As a tool, from anywhere:
+
 ```bash
-uv sync
+uv tool install git+https://github.com/danzang100/mistify
+```
+
+That puts `mistify` on your PATH; drop the `uv run` prefix from every command below. Or as a
+checkout, which is what the sample-incident commands and the eval harness assume:
+
+```bash
+git clone https://github.com/danzang100/mistify && cd mistify && uv sync
 ```
 
 ## Use

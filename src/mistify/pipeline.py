@@ -4,10 +4,10 @@ Stage order is the load-bearing detail here:
 
     parse -> REDACT -> template -> scratchpad
 
-Redaction sits immediately after `parse()` rather than after templating (decisions G1 and
-G2). That ordering is what makes the guarantee hold on every path -- including the
-unknown-format path, where the bootstrapper sends sample lines to a model before templating
-has happened at all, and including the Drain3 snapshot, which is a durable on-disk artifact.
+Redaction sits immediately after `parse()` rather than after templating. That ordering is
+what makes the guarantee hold on every path -- including the unknown-format path, where the
+bootstrapper sends sample lines to a model before templating has happened at all, and
+including the Drain3 snapshot, which is a durable on-disk artifact.
 """
 
 from __future__ import annotations
