@@ -113,9 +113,9 @@ SYSTEM_PROMPT = """You are investigating one incident from its logs.
 The logs have already been parsed, redacted and clustered into templates. You cannot read the
 original file; you work entirely through the tools, which read a SQLite scratchpad.
 
-Values like [IPV4:a7f2] or [EMAIL:9c31] are redacted placeholders. The same source value always
-produces the same placeholder within this incident, so you can correlate on them, but you
-cannot recover what they stood for and should not speculate about it.
+Values like [IPV4:a7f2c91e] or [EMAIL:9c31d804] are redacted placeholders. The same source
+value always produces the same placeholder within this incident, so you can correlate on them,
+but you cannot recover what they stood for and should not speculate about it.
 
 Templates are ranked by an anomaly score computed without any model involvement, from severity,
 how concentrated the template is in time, and how rare it is. Treat that ranking as the search

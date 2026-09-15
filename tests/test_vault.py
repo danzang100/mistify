@@ -380,6 +380,61 @@ def test_reveal_with_the_vault_disabled_explains_the_one_way_hash(
     assert "re-ingest" in result.output
 
 
+def test_the_vault_flag_keeps_a_vault_the_config_did_not_ask_for(
+    runner: CliRunner, write_config: Callable[..., Path], incident_file: Path
+) -> None:
+    """`--vault` on ingest is the config key, decided at the one moment it can be, and
+    `reveal` finds the result without the config being edited to match."""
+    config_path = write_config(vault=False)
+    ingested = runner.invoke(
+        cli,
+        [
+            "ingest",
+            "--source",
+            str(incident_file),
+            "--incident-id",
+            INCIDENT,
+            "--vault",
+            "--config",
+            str(config_path),
+        ],
+    )
+    assert ingested.exit_code == 0, ingested.output
+
+    revealed = runner.invoke(
+        cli, ["reveal", "--incident-id", INCIDENT, "--all", "--config", str(config_path)]
+    )
+    assert revealed.exit_code == 0, revealed.output
+    entities = {line.split("	")[0] for line in revealed.output.splitlines() if "	" in line}
+    assert entities >= {"email", "ipv4"}
+
+
+def test_without_the_flag_no_vault_is_kept(
+    runner: CliRunner, write_config: Callable[..., Path], incident_file: Path
+) -> None:
+    """The control for the test above: same config, same file, no flag, nothing to reveal."""
+    config_path = write_config(vault=False)
+    ingested = runner.invoke(
+        cli,
+        [
+            "ingest",
+            "--source",
+            str(incident_file),
+            "--incident-id",
+            INCIDENT,
+            "--config",
+            str(config_path),
+        ],
+    )
+    assert ingested.exit_code == 0, ingested.output
+    revealed = runner.invoke(
+        cli, ["reveal", "--incident-id", INCIDENT, "--all", "--config", str(config_path)]
+    )
+    assert revealed.exit_code != 0
+    assert "redaction.vault is disabled" in revealed.output
+    assert "--vault" in revealed.output
+
+
 def test_reveal_without_an_ingested_vault_fails_clearly(
     runner: CliRunner, write_config: Callable[..., Path]
 ) -> None:

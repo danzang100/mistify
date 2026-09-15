@@ -109,7 +109,7 @@ def _redactor(case: EntityCase, mode: str = "strict") -> Redactor:
 
 
 def _tokens(text: str, entity: str) -> list[str]:
-    return re.findall(rf"\[{entity.upper()}:[0-9a-f]{{4}}\]", text)
+    return re.findall(rf"\[{entity.upper()}:[0-9a-f]{{8}}\]", text)
 
 
 def _by_entity(case: EntityCase) -> str:
@@ -139,7 +139,7 @@ def test_placeholder_has_the_documented_shape(case: EntityCase) -> None:
     out = _redactor(case).redact(case.sample)
     emitted = _BRACKETED.findall(out)
     assert len(emitted) == 1
-    assert re.fullmatch(r"\[[A-Z0-9_]+:[0-9a-f]{4}\]", emitted[0])
+    assert re.fullmatch(r"\[[A-Z0-9_]+:[0-9a-f]{8}\]", emitted[0])
     assert re.fullmatch(placeholder_pattern(), emitted[0])
 
 
@@ -258,6 +258,34 @@ def test_salt_changes_the_token() -> None:
     plain = Redactor().redact("10.42.7.19")
     salted = Redactor(salt="pepper").redact("10.42.7.19")
     assert plain != salted
+
+
+def _distinct_tokens(count: int, hash_length: int) -> int:
+    """Distinct placeholders for `count` distinct addresses at a given digest width."""
+    redactor = Redactor(entities=["ipv4"])
+    monkey = redactor._token.__globals__  # the module namespace, to vary _HASH_LENGTH
+    previous = monkey["_HASH_LENGTH"]
+    monkey["_HASH_LENGTH"] = hash_length
+    try:
+        addresses = (f"10.{n >> 16 & 255}.{n >> 8 & 255}.{n & 255}" for n in range(count))
+        return len({redactor.redact(address) for address in addresses})
+    finally:
+        monkey["_HASH_LENGTH"] = previous
+
+
+def test_five_thousand_addresses_get_five_thousand_placeholders() -> None:
+    """Two different clients must not become one client.
+
+    Deterministic, not probabilistic: the hash is fixed and so are the inputs. Five thousand
+    distinct addresses is an ordinary afternoon for a public service's access log, and every
+    collision is a pair of clients the investigator would follow as one.
+    """
+    assert _distinct_tokens(5000, 8) == 5000
+
+
+def test_four_hex_characters_would_have_merged_clients() -> None:
+    """The control: the test above can fail, and at the old width it did, by a wide margin."""
+    assert _distinct_tokens(5000, 4) < 5000 - 100
 
 
 @pytest.mark.parametrize(

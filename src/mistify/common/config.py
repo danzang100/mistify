@@ -237,13 +237,20 @@ class AnomalyConfig(_Strict):
 
 
 class RedactionConfig(_Strict):
-    mode: Literal["strict", "permissive", "off"] = "strict"
+    #: `strict` redacts; `off` does not. There is no third setting: a `permissive` value
+    #: used to be accepted and behaved exactly like `strict`, which is a promise of a
+    #: distinction that did not exist.
+    mode: Literal["strict", "off"] = "strict"
     #: `credit_card` is out of scope for v1 and `phone` is available but off by default --
     #: both shapes collide with numeric identifiers and neither carries a checksum to tell
     #: the difference. See `redaction/patterns.py`.
     entities: list[str] = Field(default_factory=lambda: list(DEFAULT_ENTITIES))
-    #: Mixed into the entity hash so redaction tokens are not reversible via a rainbow table
-    #: of common values. Correlation is preserved within a run regardless.
+    #: Mixed into the placeholder hash. Empty, the default, means a random salt is drawn per
+    #: incident at ingest and kept nowhere, so a placeholder in one report cannot be checked
+    #: against a guessed value -- "is 10.0.0.1 in this incident?" -- by anyone who knows the
+    #: scheme. Set a fixed value only when placeholders
+    #: must agree across incidents, and treat it as a secret when you do. Correlation within
+    #: an incident holds either way.
     salt: str = ""
 
     #: Keep a local mapping from placeholder back to original value, so an operator can
@@ -423,8 +430,18 @@ class MistifyConfig(_Strict):
         return Path(self.scratchpad.path.format(incident_id=incident_id))
 
     def vault_path(self, incident_id: str) -> Path | None:
+        """Where a vault would be written for this incident, or None when none is kept."""
         if not self.redaction.vault:
             return None
+        return self.vault_file(incident_id)
+
+    def vault_file(self, incident_id: str) -> Path:
+        """Where a vault for this incident lives if one exists, whatever the switch says.
+
+        `reveal` looks here rather than at `vault_path`: an incident ingested with `--vault`
+        has a vault whether or not the config file the operator passes today agrees, and
+        refusing to read one that is sitting on disk would be a rule with no beneficiary.
+        """
         return Path(self.redaction.vault_path.format(incident_id=incident_id))
 
     def snapshot_path(self, incident_id: str) -> Path | None:

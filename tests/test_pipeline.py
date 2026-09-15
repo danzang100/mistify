@@ -255,6 +255,66 @@ def test_redaction_off_leaves_values_intact(
     assert rows[0]["n"] > 0
 
 
+def _placeholder_for(scratchpad: Path, value_prefix: str = "[IPV4:") -> set[str]:
+    """Every placeholder of one entity that the scratchpad holds."""
+    import re
+
+    with ScratchpadDB(scratchpad) as db:
+        rows = db.run_readonly_sql(
+            f"SELECT DISTINCT raw FROM log_events WHERE raw LIKE '%{value_prefix}%'"
+        )
+    found: set[str] = set()
+    for row in rows:
+        found.update(re.findall(r"\[IPV4:[0-9a-f]+\]", row["raw"]))
+    return found
+
+
+def test_an_empty_salt_means_a_fresh_one_per_incident(
+    incident_file: Path, make_config: Callable[..., MistifyConfig]
+) -> None:
+    """The same addresses in two incidents must not share placeholders.
+
+    Otherwise a placeholder is a pure function of the value, and anyone holding a report can
+    confirm a guessed address by hashing it -- the scheme is public and the salt was empty.
+    """
+    config = make_config(redaction={"salt": ""})
+    first = ingest(incident_file, config, incident_id="salt-a")
+    second = ingest(incident_file, config, incident_id="salt-b")
+    tokens_a = _placeholder_for(first.scratchpad_path)
+    tokens_b = _placeholder_for(second.scratchpad_path)
+    assert tokens_a and tokens_b
+    assert tokens_a.isdisjoint(tokens_b)
+
+
+def test_a_configured_salt_is_used_as_given(
+    incident_file: Path, make_config: Callable[..., MistifyConfig]
+) -> None:
+    """The control: with a fixed salt, placeholders agree across incidents, as promised."""
+    config = make_config(redaction={"salt": "pepper"})
+    first = ingest(incident_file, config, incident_id="fixed-a")
+    second = ingest(incident_file, config, incident_id="fixed-b")
+    assert _placeholder_for(first.scratchpad_path) == _placeholder_for(second.scratchpad_path)
+
+
+def test_the_salt_is_not_kept_in_the_scratchpad(
+    incident_file: Path, make_config: Callable[..., MistifyConfig]
+) -> None:
+    """The investigator's SQL channel reads every table here, and a note can quote a row
+    into the report. A salt that lands anywhere the model can reach is a salt in the report."""
+    import re
+
+    result = ingest(incident_file, make_config(redaction={"salt": ""}), incident_id="plain")
+    with ScratchpadDB(result.scratchpad_path) as db:
+        # Asked the way the model would ask: through the read-only channel.
+        (schema,) = db.run_readonly_sql(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'incidents'"
+        )
+        (row,) = db.run_readonly_sql("SELECT * FROM incidents")
+    assert "salt" not in schema["sql"].lower(), schema["sql"]
+    # The drawn salt is 32 hex characters; nothing of that shape may be in the row.
+    assert not any(re.fullmatch(r"[0-9a-f]{32}", str(value)) for value in row.values()), row
+
+
 def test_reingesting_replaces_the_scratchpad(incident_file: Path, config: MistifyConfig) -> None:
     first = ingest(incident_file, config, incident_id="repeat")
     second = ingest(incident_file, config, incident_id="repeat")

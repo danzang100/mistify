@@ -13,6 +13,7 @@ including the Drain3 snapshot, which is a durable on-disk artifact.
 from __future__ import annotations
 
 import re
+import secrets
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -316,10 +317,16 @@ def ingest(
             vault_path.unlink()
         vault = RedactionVault(vault_path)
 
+    # An empty configured salt means one drawn here, per incident. With no salt at all a
+    # placeholder is a pure function of the value, so anyone holding a report could confirm a
+    # guessed address by hashing it. The drawn salt is kept nowhere: not in the scratchpad,
+    # which the investigator's SQL channel can read and a note could quote into the report,
+    # and not in the vault, which reveals by token and never needs it.
+    salt = config.redaction.salt or secrets.token_hex(16)
     redactor = Redactor(
         mode=config.redaction.mode,
         entities=config.redaction.entities,
-        salt=config.redaction.salt,
+        salt=salt,
         vault=vault,
     )
     # Calibration reads a sample through the same parse-then-redact path the real load

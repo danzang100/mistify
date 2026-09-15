@@ -288,15 +288,16 @@ on. The ranking is the search order.</p>
 </table>
 
 {% if redaction_on %}
-<p class="note">Values like <code>[IPV4:a7f2]</code> are redacted placeholders. The same source
+<p class="note">Values like <code>[IPV4:a7f2c91e]</code> are redacted placeholders. The same source
 value always produces the same placeholder within this incident, so they can be correlated
 across lines - but the hash is one-way.
 {% if vault_kept %}
 This run kept a reversible vault:
-<code>mistify reveal --incident-id {{ incident.incident_id }} --token "[IPV4:a7f2]"</code>
+<code>mistify reveal --incident-id {{ incident.incident_id }} --token "[IPV4:a7f2c91e]"</code>
 resolves one back to the original.
 {% else %}
-This run kept no vault, so the originals cannot be recovered from it.
+This run kept no vault, so the originals cannot be recovered from it. Re-ingest with
+<code>--vault</code> if an investigation needs the real values.
 {% endif %}
 </p>
 {% endif %}

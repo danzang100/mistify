@@ -34,6 +34,28 @@ _config_option = click.option(
     help="Path to config.yaml. Defaults to ./config.yaml, then built-in defaults.",
 )
 
+_vault_option = click.option(
+    "--vault",
+    is_flag=True,
+    help="Keep a reversible placeholder-to-value mapping for `mistify reveal`. Plaintext on "
+    "disk, in its own file; the same as redaction.vault: true in config.",
+)
+
+
+def _with_vault(config: MistifyConfig, vault: bool) -> MistifyConfig:
+    """The config with the vault switched on when the flag asks for it.
+
+    A flag, not only a config key, because the choice has to be made before `ingest` and
+    cannot be revisited afterwards -- the mapping is captured as redaction happens. Finding
+    that out from a `reveal` that fails is the wrong moment; a flag on the command that
+    decides it is the right one.
+    """
+    if not vault:
+        return config
+    return config.model_copy(
+        update={"redaction": config.redaction.model_copy(update={"vault": True})}
+    )
+
 
 @click.group()
 @click.version_option(__version__, prog_name="mistify")
@@ -48,12 +70,17 @@ def cli() -> None:
 @click.option("--source", required=True, type=click.Path(exists=True, path_type=Path))
 @click.option("--incident-id", default=None, help="Defaults to a date-and-slug from --source.")
 @click.option("--format", "format_name", default="auto", help="Adapter to force, or 'auto'.")
+@_vault_option
 @_config_option
 def ingest_command(
-    source: Path, incident_id: str | None, format_name: str, config_path: Path | None
+    source: Path,
+    incident_id: str | None,
+    format_name: str,
+    vault: bool,
+    config_path: Path | None,
 ) -> None:
     """Parse, redact, template and load a log source into a scratchpad."""
-    config = load_config(config_path)
+    config = _with_vault(load_config(config_path), vault)
     try:
         result = ingest(source, config, incident_id=incident_id, format_name=format_name)
     except (UnknownFormatError, BinarySourceError) as exc:
@@ -190,14 +217,14 @@ def report_command(incident_id: str, report_format: str | None, config_path: Pat
 _VAULT_DISABLED = (
     "redaction.vault is disabled for this incident, so no mapping was kept. "
     "Placeholders are truncated hashes and the hash is one-way -- the original values "
-    "cannot be recovered after the fact. Enable redaction.vault in config.yaml and "
-    "re-ingest before you need to reveal anything."
+    "cannot be recovered after the fact. To reveal anything, re-ingest with --vault (or "
+    "redaction.vault: true in config.yaml)."
 )
 
 
 @cli.command(name="reveal")
 @click.option("--incident-id", required=True)
-@click.option("--token", default=None, help='One placeholder, e.g. "[EMAIL:a7f2]".')
+@click.option("--token", default=None, help='One placeholder, e.g. "[EMAIL:a7f2c91e]".')
 @click.option("--all", "reveal_all", is_flag=True, help="Dump every mapping, tab-separated.")
 @_config_option
 def reveal_command(
@@ -212,15 +239,17 @@ def reveal_command(
         raise click.ClickException("pass exactly one of --token or --all.")
 
     config = load_config(config_path)
-    path = config.vault_path(incident_id)
-    if path is None:
+    # The file decides, not the switch: a vault written under `--vault` exists whether or not
+    # today's config says so. The switch only chooses which explanation a missing file gets.
+    path = config.vault_file(incident_id)
+    if not path.exists() and not config.redaction.vault:
         raise click.ClickException(_VAULT_DISABLED)
     if not path.exists():
         raise click.ClickException(
             f"no vault for incident {incident_id!r} at {path}. "
-            "It is written during ingest, only when redaction.vault is enabled -- "
+            "It is written during ingest, only with --vault or redaction.vault: true -- "
             "the mapping cannot be reconstructed afterwards, because the placeholder hash "
-            "is one-way. Enable it and re-ingest."
+            "is one-way. Re-ingest with the vault on."
         )
 
     with RedactionVault(path) as vault:
@@ -256,6 +285,7 @@ def _warn_unredacted() -> None:
 @click.option("--format", "format_name", default="auto")
 @_investigator_option
 @click.option("--no-adversarial", is_flag=True, help="Skip the adversarial check.")
+@_vault_option
 @_config_option
 def run_command(
     source: Path,
@@ -263,10 +293,11 @@ def run_command(
     format_name: str,
     investigator: str,
     no_adversarial: bool,
+    vault: bool,
     config_path: Path | None,
 ) -> None:
     """Ingest, investigate and report in one pass."""
-    config = load_config(config_path)
+    config = _with_vault(load_config(config_path), vault)
     incident_id = incident_id or derive_incident_id(source)
     try:
         result = ingest(source, config, incident_id=incident_id, format_name=format_name)

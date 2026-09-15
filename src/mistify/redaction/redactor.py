@@ -28,7 +28,12 @@ from mistify.redaction.vault import RedactionVault
 
 __all__ = ["Redactor"]
 
-_HASH_LENGTH = 4
+#: Hex characters in a placeholder. Eight is 32 bits per entity. Four was 16, which sounds
+#: like a lot until the birthday bound is worked out: a one-in-two chance of two *different*
+#: values sharing a placeholder by ~300 distinct values, and on a log with 5,000 distinct
+#: client addresses roughly 190 merged pairs -- clients the investigator would follow as one.
+#: At eight, 5,000 values collide with probability ~0.3%.
+_HASH_LENGTH = 8
 
 
 class Redactor:
@@ -41,7 +46,7 @@ class Redactor:
         salt: str = "",
         vault: RedactionVault | None = None,
     ):
-        if mode not in {"strict", "permissive", "off"}:
+        if mode not in {"strict", "off"}:
             raise ValueError(f"unknown redaction mode: {mode!r}")
         self.mode = mode
         self.salt = salt

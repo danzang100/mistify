@@ -1,9 +1,9 @@
 """Opt-in reversible mapping from redaction placeholder back to the original value.
 
-Redaction is one-way by construction: `[EMAIL:a7f2]` is a truncated blake2s digest of the
+Redaction is one-way by construction: `[EMAIL:a7f2c91e]` is a truncated blake2s digest of the
 value, so nothing can reconstruct the address after the fact. That is the right default, but
 it leaves the operator unable to act on their own incident -- "which account is
-`[EMAIL:a7f2]`?" is the question that turns a finding into a remediation. The vault answers
+`[EMAIL:a7f2c91e]`?" is the question that turns a finding into a remediation. The vault answers
 it by recording the mapping *as the redaction happens*, which is the only moment both halves
 exist. It is off by default (`redaction.vault`), because a plaintext mapping on disk gives
 back some of what redaction bought.
@@ -18,9 +18,9 @@ authorizer denies `ATTACH`, so a query on the scratchpad connection cannot reach
 the vault file even if it knows the path.
 
 Token collisions are possible and deliberately not resolved here. The placeholder carries
-four hex characters, so two distinct values can share a token; when that happens the log
-itself has already conflated them, and the vault reports the first value recorded under that
-token rather than inventing a distinction the redacted log does not have.
+eight hex characters, so two distinct values sharing a token is rare but not impossible; when
+it happens the redacted log has already conflated them, and the vault reports the first value
+recorded under that token rather than inventing a distinction the redacted log does not have.
 """
 
 from __future__ import annotations

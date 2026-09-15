@@ -86,6 +86,13 @@ def test_invalid_redaction_mode_is_rejected() -> None:
         MistifyConfig.model_validate({"redaction": {"mode": "sometimes"}})
 
 
+def test_permissive_is_not_a_redaction_mode() -> None:
+    """It was accepted once and behaved exactly like `strict`: a setting with no effect."""
+    with pytest.raises(ValidationError):
+        MistifyConfig.model_validate({"redaction": {"mode": "permissive"}})
+    assert MistifyConfig.model_validate({"redaction": {"mode": "off"}}).redaction.mode == "off"
+
+
 def test_loop_and_adversarial_models_differ_by_default() -> None:
     """A shared model gives the reasoner and its checker one blind spot."""
     llm = MistifyConfig().llm

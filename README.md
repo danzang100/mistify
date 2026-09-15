@@ -288,6 +288,46 @@ beat it. Ranked by number alone a Loki export routes to the generic reader, `lab
 become two opaque fields, and every record is quietly wrong. `registry.detection_matrix()`
 prints the whole grid, which is how a near-miss becomes visible before it becomes a bad parse.
 
+### Redaction
+
+Redaction runs on every record immediately after parsing, before templating, before anything
+is written to the scratchpad, and before any model call. The model, the on-disk Drain3
+snapshot and the report only ever see the redacted text. By default five entities are
+replaced: `api_key` (values following `api_key`, `token`, `bearer`, `secret` and the like),
+`email`, `ipv4`, `ipv6` and `ssn`. `phone` is available and off, because it collides with
+numeric identifiers; credit cards are not detected at all, because a 13-16 digit pattern
+shreds epoch timestamps and trace ids. `redaction.entities` in `config.yaml` is the list.
+
+A value becomes a placeholder such as `[EMAIL:a7f2c91e]`. The same value always produces the same
+placeholder within an incident, so a client or a host can still be followed across lines and
+services; the hash is one-way, so the placeholder cannot be turned back into the value. The
+report's footer records the redaction mode the incident was ingested under, and
+`redaction.mode: off` disables the stage for logs that never leave the machine.
+
+**The vault** is the way back. Pass `--vault` to `ingest` or `run` (or set `redaction.vault:
+true`) and the mapping from placeholder to original is captured as redaction happens, in its
+own SQLite file next to the scratchpad and never inside it: the investigator's read-only SQL
+channel cannot reach it. Then:
+
+```bash
+uv run mistify reveal --incident-id demo --token "[EMAIL:a7f2c91e]"
+```
+
+```bash
+uv run mistify reveal --incident-id demo --all
+```
+
+`--all` dumps every mapping tab-separated, with a warning on stderr so a redirected dump stays
+machine-readable. It is off by default because the vault is plaintext on disk - a compact index
+of exactly the values redaction removed - and it cannot be reconstructed after the fact, so an
+investigation that will need real values has to decide that before `ingest`. The report says
+which it was.
+
+Placeholders are salted: with `redaction.salt` left empty, a random salt is drawn per incident
+and kept nowhere, so a placeholder in a report cannot be checked against a guessed value by
+anyone who knows the scheme. Set a fixed salt only if placeholders must agree across
+incidents.
+
 ### Unknown formats
 
 A file no adapter recognises is read anyway. With `bootstrap.enabled`, the pipeline tries to
