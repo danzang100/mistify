@@ -67,7 +67,7 @@ def test_planted_root_cause_survives_templating(loaded_db: ScratchpadDB) -> None
     assert any(ROOT_CAUSE_MARKER in p for p in patterns)
 
 
-# --------------------------------------------------------------- decision G1
+# --------------------------------------------------------------- redaction before templating
 
 
 @pytest.mark.parametrize("secret", [*PLANTED_EMAILS, *PLANTED_IPS, PLANTED_API_KEY])
@@ -109,7 +109,7 @@ def test_correlation_survives_redaction(loaded_db: ScratchpadDB) -> None:
     assert 0 < len(tokens) <= len(PLANTED_IPS)
 
 
-# --------------------------------------------------------------- decision G2
+# --------------------------------------------------------------- the snapshot holds no secrets
 
 
 @pytest.mark.parametrize("secret", [*PLANTED_EMAILS, *PLANTED_IPS, PLANTED_API_KEY])
@@ -124,7 +124,7 @@ def test_no_planted_secret_reaches_the_drain3_snapshot(
     assert secret not in read_snapshot(snapshot)
 
 
-# --------------------------------------------------------------- decision G7
+# --------------------------------------------------------------- per-stage health metrics
 
 
 def test_every_stage_reports_health_metrics(loaded_db: ScratchpadDB) -> None:
@@ -263,7 +263,7 @@ def test_reingesting_replaces_the_scratchpad(incident_file: Path, config: Mistif
         assert db.event_count() == second.events_loaded
 
 
-# --------------------------------------------------------------- decision G6
+# --------------------------------------------------------------- ingestion creates the incident
 
 
 def test_derive_incident_id_is_dated_and_slugged() -> None:

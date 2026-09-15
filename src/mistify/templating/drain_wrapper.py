@@ -1,9 +1,9 @@
 """Drain3 configuration, persistence glue, and per-incident template statistics.
 
-Templating runs on already-redacted text (decision G1). Two consequences worth stating:
+Templating runs on already-redacted text. Two consequences worth stating:
 
 1.  The persisted Drain3 tree cannot contain secrets, which closes the leak in the original
-    ordering where a durable on-disk snapshot held unredacted tokens (decision G2).
+    ordering where a durable on-disk snapshot held unredacted tokens.
 2.  Redaction placeholders are masked back out before clustering. Without that mask each
     distinct source value would produce a distinct placeholder hash, and a template that
     should read "Connection to <REDACTED> failed" would fragment into one cluster per
@@ -249,8 +249,8 @@ class DrainTemplater:
 
         The headline health metric for this stage. Near 1.0 means no compression was
         achieved (under-clustering); a very low ratio paired with a wide severity mix inside
-        one template suggests distinct conditions were merged (over-clustering). Phase 2 adds
-        the calibration pass that acts on this number.
+        one template suggests distinct conditions were merged (over-clustering). The
+        calibration pass is what acts on this number.
         """
         if self._total_messages == 0:
             return 0.0
@@ -334,7 +334,7 @@ class DrainTemplater:
             # How much less the agent reads: lines per template.
             "reduction_factor": self._total_messages / max(1, len(self._patterns)),
             # Share of the file taken by the single noisiest template. A dominant template
-            # crowds agent attention even after compression (architecture §6.4).
+            # crowds agent attention even after compression.
             "largest_template_share": (
                 max(self._counts.values()) / self._total_messages if self._counts else 0.0
             ),

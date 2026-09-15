@@ -1,4 +1,4 @@
-"""The Phase 1 skeleton investigator."""
+"""The skeleton investigator: the deterministic fallback."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def test_selects_the_planted_root_cause_over_the_red_herring(loaded_db: Scratchp
     """The herring occurs far more often, so a count-first heuristic would pick it.
 
     This is what makes the test discriminating rather than a formality, and it is the seed
-    of the plausible-but-wrong eval set Phase 5 builds out.
+    of the plausible-but-wrong eval set.
     """
     result = run_skeleton_investigation(loaded_db)
 

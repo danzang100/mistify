@@ -1,9 +1,9 @@
 """An adapter built from an inferred schema, and the store that lets one be reused.
 
 Once a format has been worked out, the next file from the same source should not pay for it
-again -- §2.2a's last step, and the reason inference is affordable at all. A persisted schema is
-a lookup into a fixed vocabulary of timestamp shapes rather than a stored regex, so reloading
-one cannot introduce a pattern nobody reviewed.
+again -- the last step of the bootstrap, and the reason inference is affordable at all. A
+persisted schema is a lookup into a fixed vocabulary of timestamp shapes rather than a stored
+regex, so reloading one cannot introduce a pattern nobody reviewed.
 
 The adapter itself parses exactly like a hand-written one and reports the same counters, so
 everything downstream is unaware it was inferred. What it must not do is pretend to more

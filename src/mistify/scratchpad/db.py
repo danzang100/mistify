@@ -127,7 +127,7 @@ class ScratchpadDB:
         #
         # Within noise at both sizes, and the gap does not widen with scale -- which it would
         # have to if cache were the constraint. The slowdown between 500k and 2M is real and
-        # is somewhere else; see Issue 16.
+        # is somewhere else: Drain3's per-line cost grows with the clusters it holds.
         self._readonly: sqlite3.Connection | None = None
         self.apply_migrations()
 
@@ -280,7 +280,7 @@ class ScratchpadDB:
         return len(summaries)
 
     def template_burst_stats(self, bucket_minutes: int = 1) -> list[dict[str, Any]]:
-        """Per-template aggregates the anomaly scorer needs (decision G3), and their patterns.
+        """Per-template aggregates the anomaly scorer needs, and their patterns.
 
         Buckets on an ISO minute prefix, which works because timestamps are normalised to
         UTC at ingestion -- a raw local-time string would bucket two services differently.
@@ -646,7 +646,7 @@ class ScratchpadDB:
         test's path, a stack location -- which clustering has already replaced with a wildcard.
 
         Parameterised and on the internal connection, deliberately not through
-        `run_readonly_sql`: that is the model-facing channel (decision G4) and widening its
+        `run_readonly_sql`: that is the model-facing channel and widening its
         signature to take parameters for the benefit of trusted internal callers would loosen
         a security boundary for a convenience that belongs on this side of it.
         """
@@ -711,7 +711,7 @@ class ScratchpadDB:
 
         Volume alone does not make a template noise -- a flood can be the incident, which is
         why the anomaly ceiling is part of the test. What this catches is the heartbeat case
-        from architecture §6.4: a template big enough to crowd out everything else in a time
+        is a known one: a template big enough to crowd out everything else in a time
         slice while carrying no signal of its own.
         """
         total = self.event_count()
@@ -885,7 +885,7 @@ class ScratchpadDB:
 
         The enforcement is layered and none of the layers is a keyword blocklist over the
         query text: a blocklist loses to comments, string literals and CTEs, and the input
-        here is a model-authored string (decision G4).
+        here is a model-authored string.
 
         1.  Opened `mode=ro`, so the file is not writable at the OS level.
         2.  `PRAGMA query_only`, so the connection rejects mutations outright.

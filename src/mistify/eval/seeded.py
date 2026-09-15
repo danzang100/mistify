@@ -1,6 +1,6 @@
 """Conclusions that are wrong on purpose, and the model-free checks that should catch them.
 
-The build plan asks for a plausible-but-wrong set scored on **catch rate** and **false-flip
+The critique is scored on a plausible-but-wrong set, on **catch rate** and **false-flip
 rate**. Those are properties of the *critique*, not of the loop, and they cannot be measured by
 running the loop and hoping it errs -- across five real CI failures it produced 21 sound
 `avoids` out of 21. The wrong conclusion has to be planted.
@@ -22,7 +22,7 @@ Two things this deliberately does not do:
 *   **It does not read claims.** A detector here sees evidence, not prose, so it can find "this
     note rests on templates that were firing all week" and cannot find "this note says 503 and
     the rows say 500". The second needs a reader and is what the model critique is for. The
-    split is `architecture §6.2`'s own: one mechanical test that cannot be talked out of, and
+    split is the critique's own: one mechanical test that cannot be talked out of, and
     two that need judgement.
 *   **It does not assume a defect is catchable.** Running this offline partitions the defects
     into the ones the free checks already catch and the ones that need the model, which is what

@@ -1,6 +1,6 @@
 """Elasticsearch adapter: `_search` responses and NDJSON index dumps.
 
-The fourth and last format, and the one the build plan singled out as impossible to write from
+The fourth and last format, and the one that was always going to be impossible to write from
 a specification. That is half right, and the half matters:
 
 **The envelope is normative.** A `_search` response is `{"hits": {"hits": [{"_index": ...,

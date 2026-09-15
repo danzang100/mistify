@@ -62,8 +62,7 @@ class UnknownFormatError(RuntimeError):
     `--format` naming something that is not registered. The CLI catches this one type, so
     both paths have to arrive as it rather than as a bare `ValueError`.
 
-    From Phase 4 the detection case hands off to the unknown-format bootstrapper instead of
-    raising.
+    The detection case hands off to the unknown-format bootstrapper instead of raising.
     """
 
 
@@ -90,7 +89,7 @@ def derive_incident_id(source: str | Path) -> str:
     """Build a default incident id from the source filename and today's date.
 
     `investigate` and `report` are both keyed on an incident id that nothing previously
-    created, so ingestion is where an incident comes into existence (decision G6).
+    created, so ingestion is where an incident comes into existence.
     """
     from datetime import UTC, datetime
 
@@ -124,7 +123,7 @@ def _bootstrap(
 
     Returns None when nothing cleared the match-rate gate, which leaves the caller on its
     existing path -- raw lines, or refusal. A bootstrapper that returned a low-confidence
-    schema rather than nothing would be the silent failure the architecture warns about.
+    schema rather than nothing would be the silent failure this stage is prone to.
 
     The provider is built only when the structural pass has already been given its chance, and
     a missing credential is not fatal here: inference is an improvement on reading raw lines,
@@ -394,7 +393,7 @@ def ingest(
 
         # Streamed in fixed-size batches rather than buffered whole. Holding every record
         # until the end cost roughly a kilobyte per line, which is ~16 GB of resident memory
-        # on the Thunderbird corpus the Phase 5 stress test is meant to run -- the pipeline
+        # on the Thunderbird corpus the stress test is meant to run -- the pipeline
         # would die before reaching the thing it was measuring. Peak memory is now the batch
         # plus the template registry, both bounded.
         events_loaded = 0

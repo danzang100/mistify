@@ -4,7 +4,7 @@ The report consumes only scratchpad state -- notes, their cited evidence, templa
 statistics and health metrics -- never raw logs directly.
 
 Citations are resolved back to real rows before rendering. That is the deterministic half of
-the citation-faithfulness check (decision G8): it proves every cited id exists and reports
+the citation-faithfulness check: it proves every cited id exists and reports
 any that do not. Whether a claim is actually *entailed* by those rows is a separate semantic
 check that needs a model judge and a labelled fixture set, and it is scheduled as an eval
 rather than pretended to be a unit test.

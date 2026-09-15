@@ -70,7 +70,7 @@ class AdaptersConfig(_Strict):
     auto_detect: bool = True
     #: Derived from the adapter registry rather than listed, so it cannot go stale.
     #:
-    #: It said `["json_lines"]` with a comment promising Loki and OTLP "arrive in Phase 4".
+    #: It said `["json_lines"]` with a comment promising Loki and OTLP would arrive later.
     #: They arrived and this did not move, so every caller that built a config in code rather
     #: than from `config.yaml` -- the test suite, the eval harness, anything importing the
     #: package -- silently had one adapter registered. An OTLP export handed to one of those
@@ -83,7 +83,7 @@ class AdaptersConfig(_Strict):
     #: zero always, so it is never selected by confidence -- only reached deliberately.
     registered: list[str] = Field(default_factory=lambda: _registered_adapters())
     #: Minimum detect() confidence before an adapter is accepted; below this the
-    #: unknown-format bootstrapper takes over (Phase 4).
+    #: unknown-format bootstrapper takes over.
     min_detect_confidence: float = Field(default=0.6, ge=0.0, le=1.0)
 
     #: What to do when nothing matches. `raw_lines` reads the file line by line and records
@@ -95,7 +95,7 @@ class AdaptersConfig(_Strict):
 
 
 class BootstrapConfig(_Strict):
-    """Unknown-format bootstrapper settings. Consumed from Phase 4 onward."""
+    """Unknown-format bootstrapper settings."""
 
     #: Off by default. The architecture's risk table calls this stage's failure *silent* -- a
     #: confidently wrong schema yields templates that are garbage with no error thrown -- so it
@@ -158,8 +158,8 @@ class Drain3Config(_Strict):
     uncompressible_max_clusters: int = Field(default=2000, ge=1)
 
     #: Try several thresholds against a sample and keep the one whose compression ratio
-    #: lands in the target band, instead of trusting one hardcoded guess (architecture
-    #: §6.1). When disabled, `sim_th` above is used as-is.
+    #: lands in the target band, instead of trusting one hardcoded guess about an unseen
+    #: file. When disabled, `sim_th` above is used as-is.
     calibrate: bool = True
     calibration_candidates: list[float] = Field(default_factory=lambda: [0.3, 0.4, 0.5])
     calibration_sample_size: int = Field(default=2000, ge=1)
@@ -187,10 +187,10 @@ class Drain3Config(_Strict):
 
 
 class AnomalyConfig(_Strict):
-    """Weights for the deterministic template anomaly score (decision G3).
+    """Weights for the deterministic template anomaly score.
 
-    Relative contributions, normalised before use -- they do not need to sum to one. Phase 5
-    sweeps these against the eval corpus.
+    Relative contributions, normalised before use -- they do not need to sum to one. The eval
+    harness is where they get swept.
     """
 
     severity: float = Field(default=0.5, ge=0.0)
@@ -206,8 +206,7 @@ class AnomalyConfig(_Strict):
     severity_unmapped_ceiling: float = Field(default=0.9, ge=0.0, le=1.0)
 
     #: A template is noise when it takes at least this share of the file *and* scores below
-    #: `noise_anomaly_ceiling`. Volume alone is not noise: a flood can be the incident
-    #: (architecture §6.4).
+    #: `noise_anomaly_ceiling`. Volume alone is not noise: a flood can be the incident.
     noise_share_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
     noise_anomaly_ceiling: float = Field(default=0.35, ge=0.0, le=1.0)
 
@@ -241,7 +240,7 @@ class RedactionConfig(_Strict):
     mode: Literal["strict", "permissive", "off"] = "strict"
     #: `credit_card` is out of scope for v1 and `phone` is available but off by default --
     #: both shapes collide with numeric identifiers and neither carries a checksum to tell
-    #: the difference (decision G5). See `redaction/patterns.py`.
+    #: the difference. See `redaction/patterns.py`.
     entities: list[str] = Field(default_factory=lambda: list(DEFAULT_ENTITIES))
     #: Mixed into the entity hash so redaction tokens are not reversible via a rainbow table
     #: of common values. Correlation is preserved within a run regardless.
@@ -306,9 +305,9 @@ class ScratchpadConfig(_Strict):
 class LLMConfig(_Strict):
     """Which model runs what, and through which provider.
 
-    The loop and the adversarial pass must not share a model: architecture §6.3 identifies
-    correlated blind spots between the reasoner and its checker as the core risk of the
-    adversarial design, and a shared model is the most direct way to produce them. Different
+    The loop and the adversarial pass must not share a model: correlated blind spots between
+    the reasoner and its checker are the core risk of the adversarial design, and a shared
+    model is the most direct way to produce them. Different
     *providers* satisfy that more strongly than two models from one family, which is why the
     provider is configurable per role rather than once for the whole run.
     """
@@ -320,11 +319,11 @@ class LLMConfig(_Strict):
     model: str = "gemini-3.5-flash-lite"
 
     #: Provider and model for the adversarial pass. Defaulting to the same provider but a
-    #: different model is the weaker half of §6.3; pointing this at another provider entirely
-    #: is the stronger one.
+    #: different model is the weaker form of independence; pointing this at another provider
+    #: entirely is the stronger one.
     adversarial_provider: Literal["gemini", "scripted"] | None = None
     #: Must differ from whichever model writes the conclusion -- the loop's, or the synthesis
-    #: model when one is set. §6.3 wants the critique independent of the reasoning it checks,
+    #: model when one is set. The critique has to be independent of the reasoning it checks,
     #: and the critique is one call against the loop's fifteen, so it is a cheap place to spend.
     adversarial_model: str = "gemini-3.6-flash"
 
@@ -365,14 +364,15 @@ class LLMConfig(_Strict):
         That used to mean "differ from the loop", because the loop wrote the conclusion. With a
         synthesis model the conclusion has a different author, and the rule follows the author:
         a critique sharing a model with the synthesis is marking its own homework, which is the
-        exact failure §6.3 exists to prevent and the one hardest to see in a finished report.
+        exact failure the separate model exists to prevent and the one hardest to see in a
+        finished report.
         """
         critic = (self.adversarial_provider or self.provider, self.adversarial_model)
         for role, author in self.conclusion_authors():
             if critic == author:
                 raise ValueError(
                     f"the adversarial pass must not use the same provider and model as the "
-                    f"{role} (architecture §6.3: a shared model gives the reasoner and its "
+                    f"{role} (a shared model gives the reasoner and its "
                     f"checker one blind spot). Change llm.adversarial_model, or the "
                     f"{role}'s model."
                 )

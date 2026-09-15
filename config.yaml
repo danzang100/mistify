@@ -46,7 +46,7 @@ drain3:
   persistence: file
   snapshot_path: .cache/drain3_{incident_id}.json
   # Try each candidate against a sample and keep the one whose compression ratio lands in
-  # the band, rather than trusting one guess about an unseen file (architecture §6.1).
+  # the band, rather than trusting one guess about an unseen file.
   calibrate: true
   calibration_candidates: [0.3, 0.4, 0.5]
   calibration_sample_size: 2000
@@ -77,7 +77,7 @@ redaction:
   mode: strict
   # Runs immediately after adapter parse(), before templating and before any model call.
   # `phone` is supported but off by default, and `credit_card` is out of scope for v1 --
-  # both collide with numeric identifiers and neither has a checksum (decision G5).
+  # both collide with numeric identifiers and neither has a checksum.
   entities: [api_key, email, ipv6, ipv4, ssn]
   salt: ""
   # Keep a reversible mapping so an operator can reveal values in their own logs. Off by
@@ -118,7 +118,7 @@ llm:
   synthesis_model: null
   # Must differ from whichever model writes the conclusion -- the loop's, or the synthesis
   # model when one is set. The critique cannot share a model with the thing it is checking
-  # (architecture §6.3). Enforced at config load.
+  # or it shares its blind spots. Enforced at config load.
   # A tier above the loop. gemini-3.6-flash was tried here and timed out repeatedly on the
   # critique prompt, taking a run's whole retry budget with it; 3.5-flash is the fallback.
   # Note this now matches judge_model, so `mistify eval --judge` will warn that the judge is

@@ -2,8 +2,8 @@
 
 Every number this project has produced answers "did the investigation find the planted cause".
 None of them answer "did it beat `grep -i error | sort | uniq -c | sort -rn | head`", which is
-the first thing anyone sensible asks and the comparison the build plan's descope ladder names
-twice. A system that cannot beat a shell pipeline has not earned the model calls.
+the first thing anyone sensible asks. A system that cannot beat a shell pipeline has not
+earned the model calls.
 
 Two baselines, because one of them is a straw man:
 

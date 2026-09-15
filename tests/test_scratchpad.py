@@ -223,7 +223,7 @@ def test_mutations_are_refused(populated: ScratchpadDB, query: str) -> None:
     ],
 )
 def test_evasion_attempts_are_refused(populated: ScratchpadDB, query: str) -> None:
-    """This is a security boundary and the input is a model-authored string (decision G4)."""
+    """This is a security boundary and the input is a model-authored string."""
     with pytest.raises(ReadOnlyViolation):
         populated.run_readonly_sql(query)
 
@@ -410,7 +410,7 @@ def test_suppression_requires_saying_what_noise_is(noisy: ScratchpadDB) -> None:
 
     The query methods used to default to 0.15/0.35, duplicating `config.yaml`. A caller that
     asked to exclude noise without naming thresholds silently got numbers the configuration
-    had no say over (Issue.md #6).
+    had no say over.
     """
     assert noisy.get_slice(max_lines=10) == noisy.get_slice(max_lines=10, noise=None)
     assert {r["template_id"] for r in noisy.get_slice(max_lines=10)} == {1}

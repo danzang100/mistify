@@ -1,6 +1,6 @@
 """Capture a real Loki query response, by pushing logs through a real collector.
 
-The build plan is explicit that Elastic and Loki fixtures must come from running stacks rather
+Elastic and Loki fixtures have to come from running stacks rather
 than from hand-authored JSON, because the nesting and label conventions those stores impose are
 the entire reason the adapters exist -- an invented fixture encodes the invention, the adapter
 is written to match it, and both are wrong together in a way no test can see.

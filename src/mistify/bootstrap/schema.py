@@ -2,7 +2,7 @@
 
 A schema here is one regex with named groups -- `ts`, `severity`, `source`, `message` -- built
 from a small vocabulary of timestamp shapes rather than written freely. That constraint is the
-point. Architecture §2.2a's risk table lists this stage's failure as *silent*: a confidently
+point. This stage's natural failure is *silent*: a confidently
 inferred wrong schema produces templates that are garbage with no error thrown, and every
 number downstream describes a misreading. A schema assembled from known parts can be checked;
 an arbitrary regex from a model can only be trusted.

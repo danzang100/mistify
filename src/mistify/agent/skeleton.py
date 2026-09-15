@@ -1,14 +1,14 @@
-"""Phase 1 skeleton investigator.
+"""Skeleton investigator: the deterministic fallback.
 
 This is deliberately not intelligent. It is a hardcoded three-step walk -- rank templates,
 pull one slice, write one note -- whose only job is to prove that every seam between the
 templater, the scratchpad, the note format and the report renderer actually fits together.
-Phase 3 replaces the body of `run_skeleton_investigation` with the real bounded agent loop
-and leaves the surrounding contract unchanged.
+The bounded agent loop replaced it as the default and left the surrounding contract
+unchanged; this remains the way to exercise the whole pipeline without a model.
 
 Because it is a heuristic and not a conclusion, it writes its note at `low` confidence and
 the report says plainly which investigator produced it. A skeleton that presented its output
-as a finding would be the exact silent failure the architecture warns about.
+as a finding would be a silent failure: a wrong answer with nothing to mark it as one.
 """
 
 from __future__ import annotations

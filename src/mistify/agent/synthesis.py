@@ -14,12 +14,13 @@ It is handed the notes the investigation recorded and the rows those notes cite,
 returns that was not already cited by some note is dropped and counted. A conclusion is a
 judgement about evidence that was gathered, not an opportunity to gather more.
 
-**It must not be the model that checks it.** Architecture §6.3 wants the critique independent of
-the reasoning it critiques. Before this existed the loop wrote the conclusion, so "different
-from the loop" was enough; now the conclusion has a different author and the rule follows the
-author. `LLMConfig` enforces that the adversarial model differs from whichever model wrote the
-conclusion, which is why enabling synthesis on the critique's model is rejected at config load
-rather than producing a run that silently marks its own homework.
+**It must not be the model that checks it.** The critique has to be independent of the
+reasoning it critiques, or the two share one blind spot. Before this existed the loop wrote
+the conclusion, so "different from the loop" was enough; now the conclusion has a different
+author and the rule follows the author. `LLMConfig` enforces that the adversarial model
+differs from whichever model wrote the conclusion, which is why enabling synthesis on the
+critique's model is rejected at config load rather than producing a run that silently marks
+its own homework.
 """
 
 from __future__ import annotations

@@ -9,7 +9,7 @@ break for the one reason that has nothing to do with investigation quality.
 `source` is a callable that writes a file, so an external corpus is added by pointing a case at
 a downloaded path rather than by teaching the harness a second notion of what a case is. That
 matters more than it looks: the whole value of a harness is that adding a case is cheap, and
-the plan's Loghub and LogDx-CI corpora are cases, not a different kind of thing.
+the Loghub and LogDx-CI corpora are cases, not a different kind of thing.
 """
 
 from __future__ import annotations
@@ -63,8 +63,8 @@ class EvalCase:
     must_mention: tuple[str, ...] = ()
 
     #: Diagnoses that are wrong for this log and plausible enough to be reached anyway. The
-    #: check the testing strategy says no public dataset provides, and the reason LogDx-CI is
-    #: worth more here than a larger pile of logs would be.
+    #: check no public dataset provides, and the reason LogDx-CI is worth more here than a
+    #: larger pile of logs would be.
     #:
     #: Deterministic substring matching does not detect negation: a conclusion that says "this
     #: is not a network failure" contains the forbidden phrase and fails. Recorded as a known

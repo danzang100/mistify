@@ -306,7 +306,7 @@ def test_a_sound_investigation_draws_no_objections(loaded_db: ScratchpadDB) -> N
 def test_objections_citing_nothing_cannot_overturn_a_cited_conclusion(
     loaded_db: ScratchpadDB,
 ) -> None:
-    """Architecture §6.2: weight objections by evidence strength, not by existence."""
+    """Weight objections by evidence strength, not by existence."""
     loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
     critic = _critique(
         {
@@ -383,7 +383,7 @@ def test_nothing_to_check_when_the_loop_recorded_nothing(loaded_db: ScratchpadDB
 
 
 def test_the_critique_is_attributed(loaded_db: ScratchpadDB) -> None:
-    """A report must be able to show the checker was not the reasoner (§6.3)."""
+    """A report must be able to show the checker was not the reasoner."""
     loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
     run_adversarial_check(loaded_db, _critique({"objections": []}), [9, 8])
 

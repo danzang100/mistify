@@ -1,11 +1,11 @@
-"""Deterministic anomaly scoring for templates (decision G3).
+"""Deterministic anomaly scoring for templates.
 
 Runs as a post-load pass over the scratchpad. No model call and no baseline corpus: the score
 is computed from the incident's own distribution, so it works on the first file from a service
 nobody has ever ingested before.
 
-The point of scoring outside the model is stated in the architecture's own failure analysis:
-an LLM can deprioritise a correct but mundane signal in favour of a novel-sounding wrong one.
+The point of scoring outside the model is a known failure of scoring inside it: an LLM can
+deprioritise a correct but mundane signal in favour of a novel-sounding wrong one.
 A number the model did not produce is what lets the adversarial check ask "was a high-scoring
 template left out of the conclusion?" and get an answer that is not just the reasoner agreeing
 with itself.
@@ -33,7 +33,7 @@ saturate, thousands of templates tie on score, and the tie is broken by template
 the order the lines first appeared. So the ranking that decides what the model reads first was
 "whatever the build printed earliest", which on a CI log is the setup section. Recovering
 severity from the text puts 14 of those 18 markers inside the top 40, and 39 of 65 across
-twenty cases -- 25 of 47 on the fifteen it was not designed on. See `docs/digest-rerank.md`.
+twenty cases -- 25 of 47 on the fifteen it was not designed on.
 """
 
 from __future__ import annotations
@@ -241,10 +241,10 @@ def severity_source(rows: Sequence[Mapping[str, Any]], severity_informative: boo
     nothing keeping them equal.
 
     `"lexical"` requires the recovered values to actually differ between templates. A file
-    where every template says "error" is the incident Issue 3 describes, a log entirely on
-    fire, and a term with one value on every row ranks nothing above anything else: it is the
-    same silent no-op as the unmapped severity field this exists to replace, so it is dropped
-    the same way and the weight is redistributed.
+    where every template says "error" is a log entirely on fire, the export of the five
+    minutes around an outage, and a term with one value on every row ranks nothing above
+    anything else: it is the same silent no-op as the unmapped severity field this exists to
+    replace, so it is dropped the same way and the weight is redistributed.
     """
     if severity_informative:
         return "field"

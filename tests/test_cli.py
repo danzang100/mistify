@@ -1,4 +1,4 @@
-"""CLI surface and the Phase 1 exit criterion: one file to one report."""
+"""CLI surface and the walking skeleton: one file to one report."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def test_version_is_reported(runner: CliRunner) -> None:
 def test_run_produces_a_report_naming_the_root_cause(
     runner: CliRunner, incident_file: Path, config_file: Path, tmp_path: Path
 ) -> None:
-    """Phase 1 exit criterion."""
+    """One file in, one report out."""
     result = runner.invoke(
         cli,
         [
@@ -196,7 +196,7 @@ def test_missing_source_is_rejected_by_click(runner: CliRunner, config_file: Pat
 
 
 def test_the_loop_is_the_default_investigator(runner: CliRunner) -> None:
-    """Phase 3's investigator is the product's default; the heuristic is the fallback."""
+    """The model-driven loop is the product's default; the heuristic is the fallback."""
     result = runner.invoke(cli, ["investigate", "--help"])
     assert result.exit_code == 0
     assert "--investigator" in result.output

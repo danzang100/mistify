@@ -1,12 +1,12 @@
 """The structural pass: infer a format from the shape of the lines, with no model call.
 
-Architecture §2.2a puts this first for a reason. Most unknown formats are unknown only in the
+This runs before any model is asked, for a reason. Most unknown formats are unknown only in the
 sense that nobody wrote an adapter for them -- they still begin with a timestamp, name a
 severity, and put free text at the end. That is recoverable by looking, and looking is free.
 
 The model is the fallback, not the method. Every line this stage handles is a line that never
-reaches a prompt, which matters for cost, for latency, and for the risk the architecture flags
-against this whole stage: a schema derived by inspection can be explained, and one derived by
+reaches a prompt, which matters for cost, for latency, and for the risk that hangs over this
+whole stage: a schema derived by inspection can be explained, and one derived by
 inference has to be taken on trust and then checked.
 """
 
@@ -28,7 +28,7 @@ _COMPILED_TIMESTAMPS = {name: re.compile(pattern) for name, pattern in TIMESTAMP
 #: clusters on -- so a wrong guess here shows up as templates full of hostnames.
 _SOURCE_SHARE = 0.8
 
-#: How many candidate shapes a sub-template retry will consider. Architecture §2.2a says 2-3:
+#: How many candidate shapes a sub-template retry will consider. Two or three is the limit:
 #: past that it stops being "this file has a couple of shapes" and becomes a parser that will
 #: match anything, which is the same as not validating at all.
 MAX_SUBSHAPES = 3
@@ -72,7 +72,7 @@ def cluster_shapes(lines: list[str]) -> list[tuple[LineShape, int]]:
 
     This is what makes the sub-template retry possible: when one schema cannot reach the match
     rate, the answer is usually that the file holds two or three shapes -- stack traces mixed
-    with key-value lines is the case §2.2a names -- rather than that inference failed.
+    with key-value lines is the common case -- rather than that inference failed.
     """
     shapes = [_shape_of(line) for line in lines if line.strip()]
     counts: Counter[tuple[str | None, bool, bool, str]] = Counter(s.signature for s in shapes)

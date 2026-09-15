@@ -4,7 +4,7 @@ No model is called anywhere here: the structural pass is the majority of the sta
 and the inference path is driven through a stand-in provider so its *checking* is what gets
 tested rather than a model's mood.
 
-What these pin is mostly refusal. Architecture §2.2a's risk table lists this stage's failure as
+What these pin is mostly refusal. This stage's natural failure is
 silent -- a confidently wrong schema produces templates that are garbage with no error thrown --
 so nearly every test below is about the gate saying no, and each one is paired with a case that
 makes it say yes.
@@ -136,7 +136,7 @@ def test_the_model_is_only_asked_when_structure_fails() -> None:
 def test_a_model_reading_that_is_not_in_the_line_is_discarded() -> None:
     """A paraphrased or invented timestamp describes a line other than the one it was given.
 
-    This is the check that turns the architecture's silent failure into a loud one: a claim
+    This is the check that turns the stage's silent failure into a loud one: a claim
     that cannot be found in its own line is dropped rather than averaged in.
     """
     lines = [f"2026-08-30T14:{i % 60:02d}:00Z\x01payload" for i in range(200)]
@@ -187,7 +187,7 @@ def test_the_model_sees_a_deduplicated_spread_not_the_first_lines() -> None:
 
 
 def test_a_file_of_two_shapes_is_clustered() -> None:
-    """Stack traces mixed with key-value lines is the case §2.2a names."""
+    """Stack traces mixed with key-value lines is the common case."""
     shapes = cluster_shapes(ISO[:50] + SYSLOG[:50])
 
     assert len(shapes) >= 2

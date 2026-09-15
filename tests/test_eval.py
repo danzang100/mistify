@@ -737,8 +737,8 @@ def test_a_conclusion_missing_a_required_term_fails(loaded_db: ScratchpadDB) -> 
 def test_a_forbidden_diagnosis_is_caught(loaded_db: ScratchpadDB) -> None:
     """The plausible-but-wrong check.
 
-    The testing strategy records that no public dataset scores whether a verification pass
-    catches a plausible-but-wrong conclusion. LogDx-CI's `must_not_claim` is the closest thing
+    No public dataset scores whether a verification pass catches a plausible-but-wrong
+    conclusion. LogDx-CI's `must_not_claim` is the closest thing
     to one, and this is the check that reads it.
     """
     loaded_db.write_note(1, "The build failed because of a network failure", EVIDENCE, "high")

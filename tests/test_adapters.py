@@ -70,7 +70,7 @@ def test_registry_routes_json_lines(tmp_path: Path) -> None:
 
 
 def test_registry_returns_none_below_threshold() -> None:
-    """None is the handoff to the Phase 4 bootstrapper, not a failure."""
+    """None is the handoff to the unknown-format bootstrapper, not a failure."""
     adapter, _ = detect_format(PLAINTEXT_SAMPLE)
     assert adapter is None
 

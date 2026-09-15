@@ -1,6 +1,6 @@
 """Unknown-format bootstrapper: work out how to read a file nothing recognises.
 
-Architecture §2.2a, in order: reuse a schema already worked out for this shape; otherwise look
+In order: reuse a schema already worked out for this shape; otherwise look
 at the lines; otherwise ask a model; then *always* validate against lines the inference never
 saw, and only persist what passes.
 
@@ -141,7 +141,7 @@ def bootstrap_format(
 
     # 4. Sub-shapes. Failing the gate usually means the file holds two or three shapes rather
     #    than that inference was wrong -- stack traces mixed with key-value lines is the case
-    #    §2.2a names. The best single schema over the commonest shape is still better than
+    #    the common case. The best single schema over the commonest shape is still better than
     #    nothing, provided it clears the gate on that shape's own lines.
     clusters = cluster_shapes(sample)[:MAX_SUBSHAPES]
     if len(clusters) > 1:

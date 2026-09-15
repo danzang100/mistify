@@ -1,4 +1,4 @@
-"""Drain3 threshold calibration and over-clustering detection (architecture §6.1)."""
+"""Drain3 threshold calibration and over-clustering detection."""
 
 from __future__ import annotations
 

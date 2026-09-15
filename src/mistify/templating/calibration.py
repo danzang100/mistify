@@ -1,4 +1,4 @@
-"""Drain3 similarity-threshold calibration (architecture §6.1).
+"""Drain3 similarity-threshold calibration.
 
 Drain3 fails in two opposite directions and neither one raises:
 
@@ -196,7 +196,7 @@ def find_over_merged(
 ) -> list[OverMergedTemplate]:
     """Flag templates whose members span an implausibly wide range of severities.
 
-    This is the over-clustering half of the §6.1 detection, and the compression ratio alone
+    This is the over-clustering half of the health check, and the compression ratio alone
     cannot see it: a low ratio looks like excellent compression right up until you notice one
     template contains both routine INFO lines and FATAL ones, which means two different
     conditions were merged and one of them is now invisible.

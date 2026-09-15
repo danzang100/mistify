@@ -126,7 +126,7 @@ def test_write_report_creates_the_file(loaded_db: ScratchpadDB, tmp_path: Path) 
     assert ROOT_CAUSE_MARKER in path.read_text(encoding="utf-8")
 
 
-# --------------------------------------------------------------- decision G8
+# --------------------------------------------------------------- citation checking
 
 
 def test_citation_check_passes_on_real_evidence(loaded_db: ScratchpadDB) -> None:
@@ -191,7 +191,7 @@ def test_clean_run_has_no_warnings_section(loaded_db: ScratchpadDB) -> None:
     assert "### Warnings" not in generate_report(loaded_db)
 
 
-# --------------------------------------------------------------- Phase 2 health warnings
+# --------------------------------------------------------------- health warnings
 
 
 def test_signal_at_risk_calibration_is_called_out(loaded_db: ScratchpadDB) -> None:

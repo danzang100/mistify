@@ -1,4 +1,4 @@
-"""The semantic half of decision G8: is a claim actually supported by the rows it cites?
+"""The semantic half of citation checking: is a claim actually supported by the rows it cites?
 
 `verify_citations` proves every cited id exists. It cannot prove the rows say what the note
 says they say, and that gap is not theoretical -- one measured run cited two real log events

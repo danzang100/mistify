@@ -1,24 +1,24 @@
 """The adversarial check, and the rebuttal that answers it.
 
-Architecture §6.2 is explicit about the shape of this: the critique **objects**, it never
-rewrites. A pass with unilateral authority to replace the conclusion can overturn a correct
-one, so what comes back here is a structured list of objections and the original reasoning
-gets a chance to answer them. A one-shot veto becomes a short debate, which is cheap.
+The shape of this is deliberate: the critique **objects**, it never rewrites. A pass with
+unilateral authority to replace the conclusion can overturn a correct one, so what comes back
+here is a structured list of objections and the original reasoning gets a chance to answer
+them. A one-shot veto becomes a short debate, which is cheap.
 
 Three checks, in descending order of how much they depend on judgement:
 
 1.  **Unexplained signal.** Which high-anomaly templates does the conclusion never mention?
     This is arithmetic - the signal set was cut at the largest score gap by
     `select_signal_templates`, with no model involved - and it is the only test here that
-    cannot be talked out of. §6.3 warns that a checker sharing the reasoner's blind spots will
-    rubber-stamp; a mechanical test is the part that cannot.
+    cannot be talked out of. A checker sharing the reasoner's blind spots will rubber-stamp;
+    a mechanical test is the part that cannot.
 2.  **Unsupported claims.** Does each note's cited evidence exist, and does it say what the
     note says? The first half is already deterministic (`verify_citations`); the second needs
     a reader.
 3.  **Alternative explanations.** Is there a different story the same rows support?
 
 Objections are weighted by evidence. One citing no rows cannot overturn a conclusion that
-cites many - §6.2 again: weight objections by evidence strength, not by existence.
+cites many: weight objections by evidence strength, not by existence.
 
 The critique runs on a different model from the loop, and ideally a different provider. That
 is enforced in config rather than trusted here.

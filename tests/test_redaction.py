@@ -5,7 +5,8 @@ below it asserts the properties every entity must hold, once each. A seventh ent
 row in that table, not a new section.
 
 What deliberately stays outside the table is the false-positive corpora further down. Those
-are regression tests for specific bugs (decision G5 and the clock-time collision), not
+are regression tests for specific bugs (the credit-card pattern and the clock-time collision),
+not
 examples of a shared property -- collapsing them would trade a documented bug for a smaller
 file.
 """
@@ -292,7 +293,7 @@ def test_only_configured_entities_are_redacted() -> None:
     ],
 )
 def test_long_digit_runs_are_not_redacted(text: str) -> None:
-    """Decision G5: no credit-card pattern in v1, so identifiers survive intact."""
+    """No credit-card pattern in v1, so identifiers survive intact."""
     assert Redactor().redact(text) == text
 
 
@@ -349,7 +350,7 @@ def test_timestamp_survives_alongside_a_real_address_on_the_same_line() -> None:
 )
 def test_bare_digit_runs_are_not_mistaken_for_ssns(text: str) -> None:
     """Dashes in the 3-2-4 shape are required -- a bare nine-digit run is the credit-card
-    mistake again, and it would shred epoch-millisecond identifiers (decision G5)."""
+    mistake again, and it would shred epoch-millisecond identifiers."""
     assert Redactor().redact(text) == text
 
 
@@ -386,7 +387,7 @@ def test_version_guard_is_context_scoped() -> None:
 
 
 def test_default_entities_exclude_phone() -> None:
-    """Decision G5, one step milder than credit_card: available, but opt-in."""
+    """One step milder than credit_card: available, but opt-in."""
     assert "phone" not in DEFAULT_ENTITIES
     assert "phone" in SUPPORTED_ENTITIES
     assert "phone" in PATTERNS

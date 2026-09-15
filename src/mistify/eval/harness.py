@@ -133,7 +133,7 @@ def run_case(
 ) -> CaseReport:
     """Run one case `runs` times and score each one.
 
-    `judge` adds the semantic check from decision G8, which costs a model call per note and is
+    `judge` adds the semantic half of citation checking, which costs a model call per note and is
     off by default for that reason.
 
     `baseline` replaces the investigation with a grep pipeline, scored by the same checks. It

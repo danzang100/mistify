@@ -4,7 +4,7 @@
 
 -- Incident identity and provenance. Without this there is no defined point at which an
 -- incident is created and nowhere for `investigate` / `report` to resolve their
--- --incident-id against (decision G6).
+-- --incident-id against.
 CREATE TABLE incidents (
   incident_id   TEXT PRIMARY KEY,
   created_at    TEXT NOT NULL,
@@ -22,9 +22,9 @@ CREATE TABLE templates (
   last_seen         TEXT,
   severity_mix_json TEXT NOT NULL DEFAULT '{}',
   max_severity_rank INTEGER NOT NULL DEFAULT 0,
-  -- Frequency deviation from baseline. Populated in Phase 2; the adversarial check's
-  -- "was a high-scoring template excluded from the conclusion" test depends on it being
-  -- non-constant, so it is a v1 requirement rather than a future improvement (decision G3).
+  -- Frequency deviation from baseline. Populated by the scoring pass after load; the
+  -- adversarial check's "was a high-scoring template excluded from the conclusion" test
+  -- depends on it being non-constant, so it is a requirement rather than an improvement.
   anomaly_score     REAL NOT NULL DEFAULT 0.0
 );
 
@@ -69,7 +69,7 @@ CREATE TABLE query_log (
 
 -- Per-stage health metrics. The architecture states that a health metric per stage is not
 -- optional polish, but the original four-table schema had nowhere to put one, so nothing
--- could be asserted in a test or declared in a report (decision G7).
+-- could be asserted in a test or declared in a report.
 CREATE TABLE run_metadata (
   id        INTEGER PRIMARY KEY,
   stage     TEXT NOT NULL,

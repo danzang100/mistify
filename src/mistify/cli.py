@@ -419,7 +419,7 @@ def eval_command(
     if judge and config.llm.judge_model in {config.llm.model, config.llm.adversarial_model}:
         # Not fatal, because the judge is opt-in tooling rather than a shipped guarantee -- but
         # a judge sharing a model with the thing it judges is the correlated-blind-spot problem
-        # §6.3 exists to prevent, and it should not pass silently.
+        # the separate critique model exists to prevent, and it should not pass silently.
         click.echo(
             f"warning: judge_model {config.llm.judge_model!r} is also the loop's or the "
             "critique's model, so its verdicts are not independent.",

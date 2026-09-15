@@ -8,10 +8,10 @@ That is the whole safety argument. A model-authored regex has to be trusted befo
 tested: it may not compile, it may backtrack catastrophically, and a persisted one is a pattern
 nobody reviewed being run on every future file from that source. A quoted substring can be
 checked against the line it came from before anything is built, and a claim that does not
-appear in its line is discarded rather than believed. Architecture §2.2a's risk table calls this
-stage's failure mode *silent*; this is what makes it noisy instead.
+appear in its line is discarded rather than believed. This stage's natural failure mode is
+*silent* -- a confidently wrong schema and no error -- and this is what makes it noisy instead.
 
-The sub-sample is deduplicated and diverse rather than the first N lines, per §2.2a. Sequential
+The sub-sample is deduplicated and diverse rather than the first N lines. Sequential
 log lines are near-identical, so a raw prefix shows the model one shape several times and
 teaches it nothing about the file.
 """

@@ -76,7 +76,7 @@ def test_unknown_redaction_entity_is_rejected() -> None:
 
 
 def test_credit_card_is_not_a_supported_entity() -> None:
-    """Out of scope for v1 (decision G5): the pattern shredded diagnostic identifiers."""
+    """Out of scope for v1: the pattern shredded diagnostic identifiers."""
     with pytest.raises(ValidationError, match="credit_card"):
         MistifyConfig.model_validate({"redaction": {"entities": ["credit_card"]}})
 
@@ -87,7 +87,7 @@ def test_invalid_redaction_mode_is_rejected() -> None:
 
 
 def test_loop_and_adversarial_models_differ_by_default() -> None:
-    """Architecture §6.3: a shared model gives the reasoner and its checker one blind spot."""
+    """A shared model gives the reasoner and its checker one blind spot."""
     llm = MistifyConfig().llm
     assert llm.model != llm.adversarial_model
 
@@ -167,7 +167,7 @@ def test_signal_bounds_must_be_positive() -> None:
 
 
 def test_noise_thresholds_come_from_one_place(tmp_path: Path) -> None:
-    """Issue.md #6: the scratchpad used to carry its own copy of these two numbers.
+    """The scratchpad used to carry its own copy of these two numbers.
 
     Retuning the config must actually change what the investigator sees suppressed, which
     only holds while the query layer has no defaults of its own to fall back on.

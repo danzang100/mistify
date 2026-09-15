@@ -1,6 +1,6 @@
 """Capture real Elasticsearch responses, by shipping logs through a real Filebeat.
 
-The build plan is explicit that Elastic and Loki fixtures must come from running stacks rather
+Elastic and Loki fixtures have to come from running stacks rather
 than from hand-authored JSON. `capture_loki.py` is the precedent and it earned itself
 immediately: four things about Loki's output would have been guessed wrong, and each was a
 whole-file failure rather than a bad line.

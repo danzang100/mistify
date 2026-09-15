@@ -1,7 +1,7 @@
 """Last-resort adapter: every line is the message, and nothing is claimed about it.
 
-Phase 4's exit criterion is that a file no adapter recognises "falls back to raw-line mode
-loudly, with the reason in run_metadata". Loudly is the operative word. The two failure modes
+The contract is that a file no adapter recognises falls back to raw-line mode *loudly*, with
+the reason in run_metadata. Loudly is the operative word. The two failure modes
 this replaces are both worse than a degraded parse:
 
 * **Refusing the file.** An investigation that cannot start is not safer than one that starts

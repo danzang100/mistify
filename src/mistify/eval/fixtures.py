@@ -1,4 +1,4 @@
-"""Deterministic synthetic incident used as ground truth from Phase 1 onward.
+"""Deterministic synthetic incident used as ground truth throughout.
 
 The scenario: a checkout service degrades over an hour. The planted root cause is database
 connection pool exhaustion, preceded by a rising connection-acquisition latency warning.
@@ -7,9 +7,9 @@ Two properties are deliberate:
 
 *   A **red herring** is planted alongside it - a payment-gateway timeout that occurs far
     more often than the root cause. A ranking heuristic that sorts on count alone picks the
-    herring; one that sorts on severity first picks the real cause. That makes the Phase 1
-    skeleton test discriminating rather than a formality, and it is the seed of the
-    plausible-but-wrong eval set Phase 5 needs.
+    herring; one that sorts on severity first picks the real cause. That makes the skeleton
+    investigator's test discriminating rather than a formality, and it is the seed of the
+    plausible-but-wrong eval set.
 *   **PII is planted at known positions** - addresses, client IPs and an API token - so the
     redaction and stage-ordering tests can assert on exact values rather than on regex
     behaviour in the abstract.

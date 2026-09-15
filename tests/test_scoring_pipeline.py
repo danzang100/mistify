@@ -1,4 +1,4 @@
-"""Phase 2 end-to-end behaviour: sim_th calibration and deterministic anomaly scoring."""
+"""End-to-end behaviour of sim_th calibration and deterministic anomaly scoring."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def test_calibration_can_be_disabled(
 def test_calibration_records_health_metrics(
     ingested: IngestResult, loaded_db: ScratchpadDB
 ) -> None:
-    """Decision G7: the choice must be auditable, not magic."""
+    """The choice must be auditable, not magic."""
     view = MetricView(loaded_db.metrics("templating"))
     assert view.text(TEMPLATING_CALIBRATION_STATUS) == ingested.calibration_status
     assert view.text(TEMPLATING_CALIBRATION_CANDIDATES)
@@ -64,13 +64,13 @@ def test_calibration_records_health_metrics(
 def test_over_merged_metric_is_zero_for_the_clean_incident(
     ingested: IngestResult, loaded_db: ScratchpadDB
 ) -> None:
-    """The over-clustering half of §6.1: nothing in the synthetic file should trip it."""
+    """The over-clustering half of the health check: nothing in the synthetic file trips it."""
     view = MetricView(loaded_db.metrics("templating"))
     assert view.number(TEMPLATING_OVER_MERGED) == 0
     assert ingested.over_merged == 0
 
 
-# --------------------------------------------------------------- decision G3
+# --------------------------------------------------------------- anomaly scoring
 
 
 def test_anomaly_stage_records_health_metrics(loaded_db: ScratchpadDB) -> None:
@@ -102,7 +102,7 @@ def test_anomaly_weights_are_honoured_end_to_end(
     assert top["max_severity_rank"] == severity_rank("FATAL")
 
 
-# --------------------------------------------------------------- decision G1
+# --------------------------------------------------------------- redaction before templating
 
 
 def test_calibration_does_not_inflate_redaction_counts(
@@ -194,7 +194,7 @@ def test_labelled_logs_keep_the_severity_component(ingested: IngestResult) -> No
 
 
 def test_signal_template_set_is_recorded(loaded_db: ScratchpadDB) -> None:
-    """The set the Phase 3 adversarial check must account for."""
+    """The set the adversarial check must account for."""
     view = MetricView(loaded_db.metrics("anomaly"))
     recorded = view.number(ANOMALY_SIGNAL_TEMPLATES)
     ids_value = view.text(ANOMALY_SIGNAL_TEMPLATE_IDS)

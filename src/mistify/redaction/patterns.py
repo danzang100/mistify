@@ -7,7 +7,7 @@ first keeps the inner value from being tokenized twice).
 Scope note: `credit_card` is deliberately absent. The pattern proposed for it in the v1
 scaffolding matched any 13-16 digit run, which shreds epoch-millisecond timestamps, request
 IDs and trace IDs -- the correlation keys an investigation depends on. It is out of scope for
-v1 (decision G5); if it returns it needs a Luhn checksum and the false-positive corpus.
+v1; if it returns it needs a Luhn checksum and the false-positive corpus.
 
 `phone` is implemented but off by default for the same reason, one step milder: the canonical
 `NNN-NNN-NNNN` shape is structurally identical to a numeric identifier or a range, and unlike

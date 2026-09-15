@@ -1,4 +1,4 @@
-"""Deterministic template anomaly scoring (decision G3)."""
+"""Deterministic template anomaly scoring."""
 
 from __future__ import annotations
 
@@ -180,9 +180,9 @@ def test_invalid_bucket_width_is_rejected(loaded_db: ScratchpadDB, method: str) 
 
 
 def test_planted_root_cause_ranks_top_five_by_anomaly(loaded_db: ScratchpadDB) -> None:
-    """Phase 2 exit criterion.
+    """The whole point of the score.
 
-    Scoring is what gives the Phase 3 adversarial check its only mechanical test -- "was a
+    Scoring is what gives the adversarial check its only mechanical test -- "was a
     high-scoring template left out of the conclusion?" is meaningless while the column is a
     constant.
     """
@@ -368,7 +368,7 @@ def test_severity_source_names_where_the_term_came_from() -> None:
 
 
 def test_a_uniformly_worded_file_drops_the_term_rather_than_flattening_it() -> None:
-    """Issue 3's shape: when every template says the same thing, the term ranks nothing."""
+    """A log entirely on fire: when every template says the same thing, the term ranks nothing."""
     rows = [_text_row(1, "error: a failed"), _text_row(2, "error: b failed")]
     assert severity_source(rows, severity_informative=False) == "none"
 

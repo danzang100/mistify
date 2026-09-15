@@ -1,4 +1,4 @@
-"""Drain3 wrapper behaviour, including the redaction-placeholder masking from decision G2."""
+"""Drain3 wrapper behaviour, including the masking of redaction placeholders."""
 
 from __future__ import annotations
 
@@ -43,13 +43,13 @@ def test_empty_templater_has_zero_ratio() -> None:
     assert DrainTemplater().compression_ratio == 0.0
 
 
-# --------------------------------------------------------------- decision G2
+# --------------------------------------------------------------- redaction placeholders
 
 
 def test_redaction_placeholders_do_not_fragment_templates() -> None:
     """Without the placeholder mask, each distinct address becomes its own template.
 
-    This is the regression test for decision G2: redaction moved ahead of templating, so the
+    This is the regression test for the stage order: redaction runs ahead of templating, so the
     templater must treat `[IPV4:xxxx]` as one token shape rather than as many literals.
     """
     redactor = Redactor()
@@ -122,7 +122,7 @@ def test_snapshot_is_written(tmp_path: Path) -> None:
 
 
 def test_snapshot_contains_no_unredacted_values(tmp_path: Path) -> None:
-    """Decision G2: the snapshot is a durable artifact and must not hold secrets.
+    """The snapshot is a durable artifact and must not hold secrets.
 
     Read through `read_snapshot`, not off the file. Drain3 stores base64-encoded compressed
     state, so asserting against the raw bytes would pass no matter what the tree held.

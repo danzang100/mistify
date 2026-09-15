@@ -32,7 +32,7 @@ class UnknownAdapterError(ValueError):
 #: is how that stops being a guess; until it has been run against a real stack the field
 #: mapping is a considered assumption and the adapter's docstring says so. OTLP is a
 #: specification and could be written without a stack; Loki was written against captures taken
-#: from a real collector and a real Loki, per testing §6.
+#: from a real collector and a real Loki.
 ADAPTERS: dict[str, type[LogAdapter]] = {
     ElasticAdapter.format_name: ElasticAdapter,
     JsonLinesAdapter.format_name: JsonLinesAdapter,
@@ -76,8 +76,7 @@ def detect_format(
     """Pick the best-matching adapter for a sample.
 
     Returns `(adapter, scores)`. A `None` adapter means no registered format was confident
-    enough; from Phase 4 that hands off to the unknown-format bootstrapper rather than
-    failing ingestion.
+    enough; that hands off to the unknown-format bootstrapper rather than failing ingestion.
 
     Selection is by specificity tier first and confidence second, not by confidence alone.
     Every adapter that clears the floor has made a claim, but the claims are not comparable:
@@ -117,7 +116,7 @@ def detect_format(
 def detection_matrix(samples: dict[str, list[str]]) -> dict[str, dict[str, float]]:
     """Every adapter's confidence on every sample, as `{sample: {adapter: score}}`.
 
-    The confusion matrix Phase 4 asks for. Detection is the one decision in this pipeline that
+    The detection confusion matrix. Detection is the one decision in this pipeline that
     is made once, silently, and determines how every later stage reads the file -- a format
     that loses by a hair is indistinguishable in the output from one that never applied. Seeing
     the whole grid is how near-misses become visible before they become a wrong parse.
