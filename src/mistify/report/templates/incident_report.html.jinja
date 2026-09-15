@@ -72,7 +72,7 @@
 <h2>What was found</h2>
 {% if issues %}
 <p class="note">Every issue the investigation recorded, most significant first. Order is the
-anomaly ranking of the templates each one cites &mdash; computed, not chosen by a model &mdash;
+anomaly ranking of the templates each one cites - computed, not chosen by a model -
 so two runs that reason differently but reach the same templates present them in the same order.</p>
 
 {% for issue in issues %}
@@ -88,7 +88,7 @@ so two runs that reason differently but reach the same templates present them in
 {% endfor %}
 
 {% if issues | length > 1 %}
-<p class="note">More than one issue was recorded. They are not necessarily one incident &mdash;
+<p class="note">More than one issue was recorded. They are not necessarily one incident -
 two unrelated failures in the same window are common, and the ranking does not decide which of
 these belong together.</p>
 {% endif %}
@@ -96,7 +96,7 @@ these belong together.</p>
 {% if adversarial %}
 <div class="verdict{% if conceded_count %} contested{% endif %}">
   {% if conceded_count %}
-  <strong>Contested &mdash; {{ conceded_count }} objection(s) conceded.</strong>
+  <strong>Contested - {{ conceded_count }} objection(s) conceded.</strong>
   The investigation gave ground on its own reasoning. Read <em>The challenge</em> before acting on any of the above.
   {% elif objections %}
   <strong>Challenged and answered.</strong>
@@ -109,15 +109,15 @@ these belong together.</p>
   {% endif %}
 </div>
 {% elif adversarial_ran %}
-<div class="verdict"><strong>Checked, but the critique's text was not recorded</strong> &mdash;
+<div class="verdict"><strong>Checked, but the critique's text was not recorded</strong> -
 this incident was investigated before the challenge was kept in the scratchpad.</div>
 {% else %}
 <div class="verdict">No adversarial pass was run, so nothing has checked the above except the
 citation resolver.</div>
 {% endif %}
 {% else %}
-<p>No hypothesis was recorded. Either the investigator found no templates to rank &mdash; check
-the ingest signals in the appendix &mdash; or it stopped before concluding.</p>
+<p>No hypothesis was recorded. Either the investigator found no templates to rank - check
+the ingest signals in the appendix - or it stopped before concluding.</p>
 {% endif %}
 
 {% if warnings %}
@@ -135,7 +135,7 @@ the same way whatever route the investigation took.</p>
 <table class="facts">
   <tr><td>Incident window</td><td class="mono">{{ glance.first_ts }} &rarr; {{ glance.last_ts }}</td></tr>
   <tr><td>Duration</td><td>{{ "%.0f" | format(glance.duration_minutes) }} min</td></tr>
-  <tr><td>Measured across</td><td>template(s) {{ glance.window_template_ids | join(", ") }}{% if glance.window_is_from_verdict %}, cited by the leading issue{% else %}, the highest-ranked template &mdash; no issue cited one{% endif %}</td></tr>
+  <tr><td>Measured across</td><td>template(s) {{ glance.window_template_ids | join(", ") }}{% if glance.window_is_from_verdict %}, cited by the leading issue{% else %}, the highest-ranked template - no issue cited one{% endif %}</td></tr>
 </table>
 <p class="note">Not the log window in the header, which is only where the file starts and stops.</p>
 
@@ -177,8 +177,8 @@ and did not stop after it, so it is background rather than event.</p>
     <td>{{ row.source or "unknown" }}</td>
     <td class="num">{{ "{:,}".format(row.events) }}</td>
     <td class="num">{{ "{:,}".format(row.bad_events or 0) }}</td>
-    <td class="mono">{{ row.first_bad or "&mdash;" }}</td>
-    <td class="mono">{{ row.last_bad or "&mdash;" }}</td>
+    <td class="mono">{{ row.first_bad or "-" }}</td>
+    <td class="mono">{{ row.last_bad or "-" }}</td>
   </tr>
   {% endfor %}
 </table>
@@ -188,7 +188,7 @@ and did not stop after it, so it is background rather than event.</p>
 <p class="note">Every hypothesis the investigation recorded, in the order it recorded them.
 Each cites rows that were checked to exist.</p>
 {% for note in notes %}
-<h3>Step {{ note.step }} &mdash; confidence: {{ note.confidence }}</h3>
+<h3>Step {{ note.step }} - confidence: {{ note.confidence }}</h3>
 <p>{{ note.note }}</p>
 <ul class="note">
   {% if note.evidence.get("template_ids") %}<li>Templates: {{ note.evidence.get("template_ids") | join(", ") }}</li>{% endif %}
@@ -233,7 +233,7 @@ Outcome: <strong>{{ adversarial.outcome }}</strong>.</p>
     {%- if objection.template_ids %} templates {{ objection.template_ids | join(", ") }}{% endif %}
     {%- if objection.template_ids and objection.log_event_ids %},{% endif %}
     {%- if objection.log_event_ids %} events {{ objection.log_event_ids | join(", ") }}{% endif %}
-    {%- if not objection.template_ids and not objection.log_event_ids %} nothing &mdash; an objection citing no rows cannot outweigh a conclusion that cites them{% endif %}
+    {%- if not objection.template_ids and not objection.log_event_ids %} nothing - an objection citing no rows cannot outweigh a conclusion that cites them{% endif %}
   </div>
   {% if objection.response is not none %}
   <p>{% if objection.conceded %}<span class="conceded">Conceded.</span> {% else %}<strong>Answer:</strong> {% endif %}{{ objection.response }}</p>
@@ -269,7 +269,7 @@ the first thing to check if that issue does not hold up.</p>
 <p class="note">Showing the {{ shown_template_count }} highest-scoring templates of
 {{ template_count }}. The rest are in the scratchpad and not in this report.</p>
 {% endif %}
-<p class="note">Scored deterministically from severity, burstiness and rarity &mdash; no model
+<p class="note">Scored deterministically from severity, burstiness and rarity - no model
 involvement, so a high score here is independent of whatever narrative the investigation settled
 on. The ranking is the search order.</p>
 <table>
@@ -290,7 +290,7 @@ on. The ranking is the search order.</p>
 {% if redaction_on %}
 <p class="note">Values like <code>[IPV4:a7f2]</code> are redacted placeholders. The same source
 value always produces the same placeholder within this incident, so they can be correlated
-across lines &mdash; but the hash is one-way.
+across lines - but the hash is one-way.
 {% if vault_kept %}
 This run kept a reversible vault:
 <code>mistify reveal --incident-id {{ incident.incident_id }} --token "[IPV4:a7f2]"</code>
@@ -316,15 +316,15 @@ happened. It is here so a conclusion can be checked, not because a responder nee
 
 <h2>Token usage</h2>
 {% if token_stages %}
-<p class="note">Cached tokens are a subset of input, not an extra column to add &mdash; the
+<p class="note">Cached tokens are a subset of input, not an extra column to add - the
 total is input plus output.</p>
 <table>
   <tr><th>Stage</th><th>Model</th><th class="num">Calls</th><th class="num">Input</th><th class="num">Cached</th><th class="num">Output</th><th class="num">Total</th></tr>
   {% for stage in token_stages %}
   <tr>
     <td>{{ stage.stage }}</td>
-    <td class="mono">{{ stage.model or "&mdash;" }}</td>
-    <td class="num">{{ stage.calls if stage.calls is not none else "&mdash;" }}</td>
+    <td class="mono">{{ stage.model or "-" }}</td>
+    <td class="num">{{ stage.calls if stage.calls is not none else "-" }}</td>
     <td class="num">{{ "{:,}".format(stage.input_tokens) }}</td>
     <td class="num">{{ "{:,}".format(stage.cached_input_tokens) }} ({{ "%.0f" | format(stage.cached_share * 100) }}%)</td>
     <td class="num">{{ "{:,}".format(stage.output_tokens) }}</td>

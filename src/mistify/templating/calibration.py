@@ -80,13 +80,13 @@ def calibrate_sim_th(
     scores *better* on ratio while destroying the only line worth finding. So selection is a
     gate followed by a preference, not a target band:
 
-    1.  **Gate — signal must survive.** Any candidate that produces an over-merged template
+    1.  **Gate - signal must survive.** Any candidate that produces an over-merged template
         (members spanning `over_merge_span` severity levels) is rejected outright, however
         well it compresses.
-    2.  **Preference — collapse as much noise as possible.** Among candidates that pass, the
+    2.  **Preference - collapse as much noise as possible.** Among candidates that pass, the
         one yielding the fewest templates wins, because the agent's haystack is the template
         list and a shorter one is strictly easier to search.
-    3.  **Fallback — prefer signal over tidiness.** If every candidate over-merges, the
+    3.  **Fallback - prefer signal over tidiness.** If every candidate over-merges, the
         strictest threshold is used and the run is flagged, since under-clustering only costs
         tokens whereas over-clustering loses the needle.
 

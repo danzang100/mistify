@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Incident Log Analysis Agent — v1 Architecture</title>
+<title>Incident Log Analysis Agent - v1 Architecture</title>
 <style>
   :root {
     --bg: #0f1115;
@@ -109,10 +109,10 @@
 <div class="wrap">
 
   <h1>Incident Log Analysis Agent</h1>
-  <p class="subtitle">v1 architecture — a log-compression + agentic-loop framework for LLM-driven incident diagnosis</p>
+  <p class="subtitle">v1 architecture - a log-compression + agentic-loop framework for LLM-driven incident diagnosis</p>
 
   <div class="card">
-    <strong>Goal:</strong> Take gigabyte-scale, heterogeneous incident logs, compress them into a queryable representation an LLM can reason over efficiently, let an agent iteratively investigate via SQL slices, adversarially check its own conclusion, then produce a structured incident report — without blowing the context window or losing low-salience but critical signal.
+    <strong>Goal:</strong> Take gigabyte-scale, heterogeneous incident logs, compress them into a queryable representation an LLM can reason over efficiently, let an agent iteratively investigate via SQL slices, adversarially check its own conclusion, then produce a structured incident report - without blowing the context window or losing low-salience but critical signal.
   </div>
 
   <h2>1. End-to-end pipeline</h2>
@@ -161,13 +161,13 @@
 }</pre>
 
   <h3>2.2a Unknown-format bootstrapper</h3>
-  <p>First-class pipeline stage (not a future improvement) — triggers whenever incoming lines don't confidently match any registered adapter.</p>
+  <p>First-class pipeline stage (not a future improvement) - triggers whenever incoming lines don't confidently match any registered adapter.</p>
   <ol>
     <li><strong>Structural clustering pass.</strong> Group the first sample of lines (~100, more for noisy formats) by shape: token count, delimiter style (JSON braces, pipes, commas, spaces), presence of timestamp-like tokens (regex for ISO-8601 / epoch / syslog-style), presence of severity words. Cheap, no LLM call.</li>
     <li><strong>LLM-assisted schema inference (fallback).</strong> If structural clustering can't confidently locate timestamp / severity / message fields, send a deduplicated, diverse sub-sample (20–50 lines, not the raw sequential 100) to an LLM with a structured-output prompt to infer a parsing template: field boundaries, which field is the timestamp, which is severity, which is free-text message.</li>
-    <li><strong>Feed into Drain3.</strong> The inferred message-boundary becomes a custom mask/pattern for Drain3 — Drain3 still does the clustering and variable-token extraction once the message boundary is roughly correct.</li>
+    <li><strong>Feed into Drain3.</strong> The inferred message-boundary becomes a custom mask/pattern for Drain3 - Drain3 still does the clustering and variable-token extraction once the message boundary is roughly correct.</li>
     <li><strong>Validate before committing.</strong> Run the inferred template against the next 500–1000 lines; if match rate falls below a threshold (e.g. 85%), assume multiple sub-shapes exist (multiline stack traces mixed with kv-pairs is a common case) and attempt to detect 2–3 sub-templates rather than forcing one.</li>
-    <li><strong>Persist as a new adapter.</strong> Once confirmed, save the inferred regex + field mapping as a lightweight adapter definition so future files from the same source skip LLM inference entirely — mirrors Drain3's own persisted snapshot state, one layer up.</li>
+    <li><strong>Persist as a new adapter.</strong> Once confirmed, save the inferred regex + field mapping as a lightweight adapter definition so future files from the same source skip LLM inference entirely - mirrors Drain3's own persisted snapshot state, one layer up.</li>
   </ol>
 
   <h3>2.3 Drain3 templating layer</h3>
@@ -179,15 +179,15 @@
   </ul>
 
   <h3>2.3a Secret / PII redaction</h3>
-  <p>Runs immediately after templating, before anything is written to the scratchpad or reaches an LLM — inspired by log-essence's approach of stripping sensitive data before any external model sees it.</p>
+  <p>Runs immediately after templating, before anything is written to the scratchpad or reaches an LLM - inspired by log-essence's approach of stripping sensitive data before any external model sees it.</p>
   <ul>
     <li>Pattern-based redaction for common entities: emails, IPs, credit cards, SSNs, phone numbers, API keys/tokens.</li>
     <li>Same-entity → same-hash replacement (e.g. <code class="mono">user@acme.com</code> → <code class="mono">[EMAIL:a7f2]</code>) so correlation across log lines is preserved without exposing the original value.</li>
-    <li>Redaction applied to both the <code>raw</code> field and extracted template parameters — templates themselves should never leak a real value through a wildcard capture.</li>
+    <li>Redaction applied to both the <code>raw</code> field and extracted template parameters - templates themselves should never leak a real value through a wildcard capture.</li>
     <li>Configurable mode (strict / permissive) so local-only analysis can optionally skip redaction when nothing leaves the machine.</li>
   </ul>
 
-  <h3>2.4 SQLite scratchpad — schema</h3>
+  <h3>2.4 SQLite scratchpad - schema</h3>
   <p>This is the working memory of the whole system: the agent reads and writes here rather than re-reading raw logs on every step.</p>
   <pre>-- raw normalized + templated records
 CREATE TABLE log_events (
@@ -224,10 +224,10 @@ CREATE TABLE query_log (
     <div class="card">
       <strong>Tools exposed to the agent</strong>
       <ul>
-        <li><code>query_templates()</code> — ranked by count / severity / recency</li>
-        <li><code>run_sql(query)</code> — read-only, scoped to scratchpad tables</li>
-        <li><code>get_slice(time_range, source, severity)</code> — bounded raw-line pull</li>
-        <li><code>write_note(text, evidence, confidence)</code> — persist a hypothesis</li>
+        <li><code>query_templates()</code> - ranked by count / severity / recency</li>
+        <li><code>run_sql(query)</code> - read-only, scoped to scratchpad tables</li>
+        <li><code>get_slice(time_range, source, severity)</code> - bounded raw-line pull</li>
+        <li><code>write_note(text, evidence, confidence)</code> - persist a hypothesis</li>
       </ul>
     </div>
     <div class="card">
@@ -241,21 +241,21 @@ CREATE TABLE query_log (
   </div>
 
   <h3>2.6 Adversarial check</h3>
-  <p>A separate call, not just "are you sure?" — it is given a distinct mandate and direct scratchpad access rather than only the draft summary:</p>
+  <p>A separate call, not just "are you sure?" - it is given a distinct mandate and direct scratchpad access rather than only the draft summary:</p>
   <ol>
-    <li>Verify each claim in the draft against its cited <code>supporting_evidence_json</code> — flag unsupported claims.</li>
+    <li>Verify each claim in the draft against its cited <code>supporting_evidence_json</code> - flag unsupported claims.</li>
     <li>Actively search the scratchpad for an alternative explanation not considered in the current line of reasoning.</li>
     <li>Check whether any high-severity template with low narrative weight was dropped from the conclusion.</li>
   </ol>
 
   <h3>2.7 Report generation</h3>
-  <p>Final call consumes only the verified scratchpad state (notes + evidence, post-adversarial-check) — never raw logs directly — to produce a structured incident report: summary, timeline, root cause hypothesis with confidence, supporting evidence, and open questions.</p>
+  <p>Final call consumes only the verified scratchpad state (notes + evidence, post-adversarial-check) - never raw logs directly - to produce a structured incident report: summary, timeline, root cause hypothesis with confidence, supporting evidence, and open questions.</p>
 
   <h3>2.8 MCP server exposure</h3>
-  <p>Package the pipeline as an MCP server (alongside a CLI) so it can be invoked directly from Claude Desktop, Claude Code, Cursor, and other MCP-compatible clients — avoids requiring a standalone UI for v1 and lets the agent loop run inside a client the user already has open.</p>
+  <p>Package the pipeline as an MCP server (alongside a CLI) so it can be invoked directly from Claude Desktop, Claude Code, Cursor, and other MCP-compatible clients - avoids requiring a standalone UI for v1 and lets the agent loop run inside a client the user already has open.</p>
   <ul>
     <li>Exposed tools: <code>ingest_logs(path/source)</code>, <code>investigate(incident_id)</code>, <code>get_report(incident_id)</code>.</li>
-    <li>Redaction (§2.3a) runs regardless of invocation path — MCP exposure doesn't bypass it.</li>
+    <li>Redaction (§2.3a) runs regardless of invocation path - MCP exposure doesn't bypass it.</li>
   </ul>
 
   <h2>3. Tech stack (v1)</h2>
@@ -308,19 +308,19 @@ CREATE TABLE query_log (
   </div>
 
   <h2>5. Evaluation plan</h2>
-  <p>Before claiming this works, benchmark against naive baselines (grep, tail, raw injection) on a small set of real or replayed incidents, scoring root-cause accuracy, cost per case, and tool-call count — the same axes used in recent log-reduction benchmarking work. This is the difference between a demo and something credible.</p>
+  <p>Before claiming this works, benchmark against naive baselines (grep, tail, raw injection) on a small set of real or replayed incidents, scoring root-cause accuracy, cost per case, and tool-call count - the same axes used in recent log-reduction benchmarking work. This is the difference between a demo and something credible.</p>
 
   <h2>6. Known failure modes &amp; mitigations</h2>
 
   <div class="principle">
-    <strong>Design principle:</strong> every stage must be able to fail loudly with a measurable signal, rather than silently degrading and producing a confident-looking but wrong output. A pipeline health metric per stage is not optional polish — it's what separates this from a demo that only works on clean examples.
+    <strong>Design principle:</strong> every stage must be able to fail loudly with a measurable signal, rather than silently degrading and producing a confident-looking but wrong output. A pipeline health metric per stage is not optional polish - it's what separates this from a demo that only works on clean examples.
   </div>
 
   <h3>6.1 Drain3 ineffective on a given log file</h3>
   <p>Two distinct failure directions:</p>
   <ul>
-    <li><strong>Under-clustering</strong> — high line-to-line variability (stack traces, verbose free-text, high-cardinality unmasked tokens) means almost every line becomes its own template. No compression is achieved.</li>
-    <li><strong>Over-clustering</strong> — too-loose similarity threshold/depth merges genuinely distinct error conditions into one template, destroying the signal being compressed for.</li>
+    <li><strong>Under-clustering</strong> - high line-to-line variability (stack traces, verbose free-text, high-cardinality unmasked tokens) means almost every line becomes its own template. No compression is achieved.</li>
+    <li><strong>Over-clustering</strong> - too-loose similarity threshold/depth merges genuinely distinct error conditions into one template, destroying the signal being compressed for.</li>
   </ul>
   <table>
     <tr><th>Detection</th><th>Mitigation</th></tr>
@@ -331,16 +331,16 @@ CREATE TABLE query_log (
   <h3>6.2 Adversarial step overturns a correct conclusion</h3>
   <p>Real risk if the adversarial call has unilateral authority to replace the draft conclusion.</p>
   <ul>
-    <li><strong>Don't let it rewrite — let it object.</strong> The adversarial call produces a structured critique (specific evidence gaps or a specific alternative explanation with its own citations), never a direct replacement of the conclusion.</li>
-    <li><strong>Require evidence-backed objections only.</strong> An objection citing no scratchpad evidence cannot flip a well-evidenced conclusion — weight objections by evidence strength, not existence.</li>
-    <li><strong>Add a rebuttal step.</strong> The original reasoning gets a chance to respond to the objection with a targeted scratchpad query before anything is finalized — turns a one-shot veto into a real debate, cheaply.</li>
+    <li><strong>Don't let it rewrite - let it object.</strong> The adversarial call produces a structured critique (specific evidence gaps or a specific alternative explanation with its own citations), never a direct replacement of the conclusion.</li>
+    <li><strong>Require evidence-backed objections only.</strong> An objection citing no scratchpad evidence cannot flip a well-evidenced conclusion - weight objections by evidence strength, not existence.</li>
+    <li><strong>Add a rebuttal step.</strong> The original reasoning gets a chance to respond to the objection with a targeted scratchpad query before anything is finalized - turns a one-shot veto into a real debate, cheaply.</li>
   </ul>
 
   <h3>6.3 Adversarial step misses a wrong-but-plausible line of reasoning</h3>
-  <p class="muted">The harder failure — a false negative that looks like verification happened.</p>
+  <p class="muted">The harder failure - a false negative that looks like verification happened.</p>
   <ul>
     <li><strong>Correlated blind spots are the core risk.</strong> If the same model/prompt style produced both the reasoning and the "check," they can share the same bias. Use a different model, or at minimum a different temperature/framing, for the adversarial pass.</li>
-    <li><strong>Force a checklist, not vibes.</strong> Not "does this seem right?" — instead: does every claim map to cited evidence? Is there a high <code>anomaly_score</code> template excluded from the conclusion? What's the strongest alternative explanation using only the scratchpad?</li>
+    <li><strong>Force a checklist, not vibes.</strong> Not "does this seem right?" - instead: does every claim map to cited evidence? Is there a high <code>anomaly_score</code> template excluded from the conclusion? What's the strongest alternative explanation using only the scratchpad?</li>
     <li><strong>Needs an eval set to actually measure.</strong> A handful of incidents with known ground truth, deliberately including plausible-but-wrong red herrings, so the adversarial pass's catch rate is measured rather than trusted by design.</li>
   </ul>
 
@@ -350,7 +350,7 @@ CREATE TABLE query_log (
     <tr>
       <td><span class="tag danger">silent</span>Bootstrapper infers wrong schema confidently</td>
       <td>Downstream templates garbage, no error thrown</td>
-      <td>Always run the match-rate validation gate (§2.2a) — never skip it even at high LLM confidence</td>
+      <td>Always run the match-rate validation gate (§2.2a) - never skip it even at high LLM confidence</td>
     </tr>
     <tr>
       <td>Redaction over/under-reach</td>
@@ -375,7 +375,7 @@ CREATE TABLE query_log (
     <tr>
       <td><span class="tag danger">silent</span>Tool-call budget exhaustion</td>
       <td>Forced convergence produces a confident-sounding but incomplete report</td>
-      <td>Report must explicitly state "investigation was budget-limited" and list unexplored slices — never hide it</td>
+      <td>Report must explicitly state "investigation was budget-limited" and list unexplored slices - never hide it</td>
     </tr>
     <tr>
       <td>Multiple concurrent root causes</td>
@@ -386,7 +386,7 @@ CREATE TABLE query_log (
   <p class="muted">Items tagged <span class="tag danger">silent</span> are the highest-priority failure modes: they produce a plausible-looking output with no indication anything went wrong. These need automated detection first, before any prompt-engineering fix.</p>
 
   <footer>
-    Draft v1 — architecture document for personal/portfolio project scoping. Not a production spec.
+    Draft v1 - architecture document for personal/portfolio project scoping. Not a production spec.
   </footer>
 
 </div>

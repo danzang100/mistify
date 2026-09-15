@@ -512,7 +512,7 @@
           <div>
             <div class="stage-name">Parse <span>adapters/{json_lines,otlp,loki,raw_lines}.py</span></div>
             <p>
-              Four formats, all streaming — peak memory is flat regardless of file size. Nothing
+              Four formats, all streaming - peak memory is flat regardless of file size. Nothing
               unrecognised is refused: <code>raw_lines</code> reads one record per line, invents
               no timestamp beyond a line ordinal, and says so in the metrics so the report can
               distrust the incident window.
@@ -523,7 +523,7 @@
           <div>
             <div class="stage-name">Redact <span>redaction/redactor.py</span></div>
             <p>
-              Immediately after parse and before anything else — templater, database, or model —
+              Immediately after parse and before anything else - templater, database, or model -
               sees a record. Five entity types by default; the same source value always yields
               the same placeholder <code>[IPV4:a7f2]</code> within an incident, so the model can
               correlate on it without recovering it. Optional reversible vault, off by default,
@@ -536,7 +536,7 @@
             <div class="stage-name">Template <span>templating/{drain_wrapper,calibration}.py</span></div>
             <p>
               Drain3, with the similarity threshold calibrated per file against a sample rather
-              than guessed once. A file that does not compress gets a lower cluster ceiling —
+              than guessed once. A file that does not compress gets a lower cluster ceiling -
               2.15× throughput on a real CI log for 0.17% more fragmentation.
             </p>
           </div>
@@ -546,7 +546,7 @@
             <div class="stage-name">Rank <span>scratchpad/anomaly.py</span></div>
             <p>
               A deterministic score per template from severity, burstiness and rarity, computed
-              from the incident's own distribution — no model, no baseline corpus. It decides the
+              from the incident's own distribution - no model, no baseline corpus. It decides the
               digest the investigation starts from and the signal set it is held to. This is
               where most of today's work went; see below.
             </p>
@@ -566,7 +566,7 @@
           <div>
             <div class="stage-name">Challenge <span>agent/adversarial.py</span></div>
             <p>
-              A different model — enforced at config load — attacks the conclusion, and the
+              A different model - enforced at config load - attacks the conclusion, and the
               investigation rebuts. Objections carry ids so an answer lands on the objection it
               was written for. One check is model-free: was a high-scoring template left out?
             </p>
@@ -577,8 +577,8 @@
             <div class="stage-name">Report <span>report/generator.py</span></div>
             <p>
               Markdown, HTML or PDF, rendered from the scratchpad rather than from the loop's
-              narrative. Leads with health warnings — degraded parse, poor clustering, a
-              budget-limited run, a ranking with no severity to rank by — then findings with
+              narrative. Leads with health warnings - degraded parse, poor clustering, a
+              budget-limited run, a ranking with no severity to rank by - then findings with
               their cited rows, then the challenge.
             </p>
           </div>
@@ -592,7 +592,7 @@
       <p>
         One SQLite file per incident, and the only thing any downstream stage reads. The report
         renders from it, the scorer scores it, the model queries it through a read-only
-        connection with an authorizer. Nothing scrapes the rendered document — a scraper fails
+        connection with an authorizer. Nothing scrapes the rendered document - a scraper fails
         silently when the document moves, and did, producing a table of confidently wrong numbers
         during development.
       </p>
@@ -605,7 +605,7 @@
           <tbody>
             <tr><td>log_events</td><td>ts, source, severity, template_id, raw, message, fields, trace_id</td><td>tools, scorer</td></tr>
             <tr><td>templates</td><td>pattern, counts, first/last seen, severity mix, anomaly_score</td><td>digest, ranking, report</td></tr>
-            <tr><td>scratchpad_notes</td><td>step, note, evidence, confidence — CHECK-constrained non-empty</td><td>report, scorer, critique</td></tr>
+            <tr><td>scratchpad_notes</td><td>step, note, evidence, confidence - CHECK-constrained non-empty</td><td>report, scorer, critique</td></tr>
             <tr><td>query_log</td><td>every tool call, in order, with row counts</td><td>audit trail, report appendix</td></tr>
             <tr><td>run_metadata</td><td>84 declared metrics, upserted by key</td><td>report warnings, eval</td></tr>
             <tr><td>adversarial_*</td><td>objections with ids, responses, concessions, revised confidence</td><td>report</td></tr>
@@ -619,7 +619,7 @@
     <section id="ranking">
       <h2>The ranking, and what was wrong with it</h2>
       <p class="deck">
-        The score is a weighted sum — severity 0.5, burstiness 0.3, rarity 0.2, normalised —
+        The score is a weighted sum - severity 0.5, burstiness 0.3, rarity 0.2, normalised -
         never a product, because the most frequent template in any incident has rarity exactly
         zero and a product would silence the loudest line in the file.
       </p>
@@ -628,7 +628,7 @@
         The digest is the top 40 templates, embedded in the system prompt. It is the model's
         entire first view of the incident. In September it was measured against ground truth for
         the first time, and the result was that <strong>none of it worked on CI logs</strong>:
-        across all five LogDx-CI dev cases, zero ground-truth markers reached the top 40 —
+        across all five LogDx-CI dev cases, zero ground-truth markers reached the top 40 -
         including a 170-template case where the top 40 is a quarter of the file.
       </p>
 
@@ -654,7 +654,7 @@
       </p>
       <p>
         With all three flat, thousands of templates tied, and the tie-break was
-        <code>template_id</code> — the order lines first appeared. The digest was the build's
+        <code>template_id</code> - the order lines first appeared. The digest was the build's
         setup section, which is systematically the wrong end of a CI log.
       </p>
 
@@ -663,7 +663,7 @@
         <strong>Severity is recovered from the template's own words</strong> when the source
         carries no severity field: ERROR-equivalent for failure vocabulary, WARN-equivalent for
         hedging vocabulary, INFO otherwise, on the same non-linear scale the severity field used,
-        so no weight was retuned. ANSI is stripped first — a CI log paints its errors red and
+        so no weight was retuned. ANSI is stripped first - a CI log paints its errors red and
         <code>\x1b[31;1merror</code> has no word boundary before <code>error</code>. It is still
         dropped when the recovered values are constant, which is the log-entirely-on-fire case.
         <code>anomaly.severity_source</code> records which of the three happened.
@@ -713,7 +713,7 @@
         </svg>
         <figcaption>
           Before either fix the count was <strong>1 of 65</strong>. Depth 40 is now a wash; the
-          evidence moves <em>up</em>, which is the half that matters — the set the coverage nudge
+          evidence moves <em>up</em>, which is the half that matters - the set the coverage nudge
           enforces is five templates, not forty.
         </figcaption>
       </figure>
@@ -726,7 +726,7 @@
           </thead>
           <tbody>
             <tr><td>discount mostly-punctuation templates</td><td class="num">15</td><td class="num">23</td><td class="num">40</td><td>Costs a marker at every depth; banners only ranked through the burstiness artefact anyway</td></tr>
-            <tr><td>break ties by recency, not id</td><td class="num">14</td><td class="num">25</td><td class="num down">48</td><td>Best at depth 40 and a trap: moves one case's root cause from rank 3 to 504 — the marker three runs of three cited</td></tr>
+            <tr><td>break ties by recency, not id</td><td class="num">14</td><td class="num">25</td><td class="num down">48</td><td>Best at depth 40 and a trap: moves one case's root cause from rank 3 to 504 - the marker three runs of three cited</td></tr>
             <tr><td>replace rarity with token IDF</td><td class="num">18</td><td class="num">26</td><td class="num">37</td><td>Worse at every depth and every weight</td></tr>
             <tr class="total"><td>shipped: singleton burstiness</td><td class="num up">21</td><td class="num up">27</td><td class="num">42</td><td>Also empties the banners out of the signal set</td></tr>
           </tbody>
@@ -752,7 +752,7 @@
             <tr><td>query_templates</td><td>ranked template list, four orderings</td><td>noise thresholds from config</td></tr>
             <tr><td>get_slice</td><td>a bounded window of real lines</td><td>60 by default, 500 cap, says how many it withheld</td></tr>
             <tr><td>run_sql</td><td>read-only SQL for what the tools do not cover</td><td>separate connection, SQLite authorizer, row cap</td></tr>
-            <tr><td>read_notes</td><td>everything concluded so far, with citations</td><td>cheap by design — notes are the durable channel</td></tr>
+            <tr><td>read_notes</td><td>everything concluded so far, with citations</td><td>cheap by design - notes are the durable channel</td></tr>
             <tr><td>write_note</td><td>a hypothesis plus its evidence</td><td>refuses an event id the model was never shown</td></tr>
           </tbody>
         </table>
@@ -765,7 +765,7 @@
         investigation did not finish rather than presenting it as one that did. Tool output older
         than three steps is reduced to its header line, because the whole conversation is
         re-sent every step and one wide slice would otherwise be paid for forever. The system
-        prompt — digest included — is built once and never edited, so a provider that caches
+        prompt - digest included - is built once and never edited, so a provider that caches
         prefixes can serve it from cache.
       </p>
 
@@ -773,7 +773,7 @@
       <p>
         A conclusion that ignores something the run was shown is sent back, up to
         <code>pipeline.coverage_nudges</code> times. Two questions, strongest first: a signal
-        template that no note cites, and — added today — the three highest-ranked digest
+        template that no note cites, and - added today - the three highest-ranked digest
         templates the run never pulled lines from. That second question exists because the first
         stopped being enough: measured across fifteen runs, the loop opens a median of
         <strong>4 of the 40</strong> templates it is handed, and every ground-truth marker it
@@ -793,7 +793,7 @@
     <section id="challenge">
       <h2>Critique and report</h2>
       <p>
-        The critique runs on a model that must differ from whichever model wrote the conclusion —
+        The critique runs on a model that must differ from whichever model wrote the conclusion -
         enforced at config load, because a critique sharing a model with the thing it checks is
         the correlated-blind-spot problem the architecture exists to avoid. Objections carry
         stable ids the rebuttal quotes back. What was conceded, and the confidence
@@ -817,22 +817,22 @@
       <div class="seams">
         <div class="seam">
           <h4>mistify eval</h4>
-          <p>Planted-answer cases — a pool exhaustion with a latency precursor and a red herring, and a quiet hour with nothing wrong in it. The score is arithmetic over the scratchpad.</p>
+          <p>Planted-answer cases - a pool exhaustion with a latency precursor and a red herring, and a quiet hour with nothing wrong in it. The score is arithmetic over the scratchpad.</p>
           <p class="emits">--baseline naive|templated scores a grep pipeline with the same checks, no model calls</p>
         </div>
         <div class="seam">
           <h4>mistify eval --logdx SPLIT</h4>
-          <p>35 real GitHub Actions failures with author-verified diagnoses, fetched on demand, never committed. <code>must_not_claim</code> becomes <code>avoids[]</code> — the plausible-but-wrong test no other public corpus offers.</p>
+          <p>35 real GitHub Actions failures with author-verified diagnoses, fetched on demand, never committed. <code>must_not_claim</code> becomes <code>avoids[]</code> - the plausible-but-wrong test no other public corpus offers.</p>
           <p class="emits">CC-BY-4.0 · cached in .cache/logdx · six splits</p>
         </div>
         <div class="seam">
           <h4>mistify eval --digest</h4>
           <p>Added 4 September. Ingests each case and reports where its known evidence lands in the ranked digest, with every marker's rank kept beside the recall. Exits non-zero when evidence sits below the digest.</p>
-          <p class="emits">no model calls — the pre-flight before a paid sweep</p>
+          <p class="emits">no model calls - the pre-flight before a paid sweep</p>
         </div>
         <div class="seam">
           <h4>mistify eval-templating</h4>
-          <p>Grouping accuracy against Loghub-2k's human-annotated templates — the foundation everything else sits on. Mean 0.907 across four systems; OpenSSH is the outlier at 0.718.</p>
+          <p>Grouping accuracy against Loghub-2k's human-annotated templates - the foundation everything else sits on. Mean 0.907 across four systems; OpenSSH is the outlier at 0.718.</p>
           <p class="emits">no model calls</p>
         </div>
       </div>
@@ -858,8 +858,8 @@
         </table>
         <caption>
           The two cases the re-ranking moved are the two with <em>zero</em> spread. jest-nextjs
-          previously wrote no notes at all in 21 steps — its 5/12 was <code>avoids</code> passing
-          on an empty conclusion, so 1/12 honestly counted — and now converges citing the real
+          previously wrote no notes at all in 21 steps - its 5/12 was <code>avoids</code> passing
+          on an empty conclusion, so 1/12 honestly counted - and now converges citing the real
           root cause. pytest-pandas reproduces its loss three times out of three.
         </caption>
       </div>
@@ -867,7 +867,7 @@
       <h3>Silence no longer scores <span class="chip chip-built">new</span></h3>
       <p>
         <code>avoids[...]</code> is a substring search over the conclusion, so an empty conclusion
-        passed every one of them — 81 times out of 81 across a day of runs, never once failing.
+        passed every one of them - 81 times out of 81 across a day of runs, never once failing.
         <code>Check.scorable</code> now separates "could not be asked" from "answered badly", the
         same distinction the harness already drew between a run that failed and a run that never
         got there.
@@ -911,7 +911,7 @@
 
       <p>
         The single largest win was not an optimisation but a bug: Drain3 was writing its entire
-        cluster tree on every new cluster — 97.5% of a 489-second ingest, every write discarded
+        cluster tree on every new cluster - 97.5% of a 489-second ingest, every write discarded
         by the next. Removing it took 4,000 lines from 130.31 s to 3.06 s. Parallel redaction
         gives 3.20× on its own stage and 1.55× end to end; Amdahl caps the whole run near 1.7×
         because redaction is 42% of an ingest, so eight workers reach 90% of the ceiling and
@@ -973,7 +973,7 @@
       <div class="note">
         <b>One premise did not survive checking.</b> Multi-line records were billed as the reason
         OpenSSH sits at 0.718 grouping accuracy. <code>OpenSSH_2k.log</code> has zero continuation
-        lines — so do Hadoop, BGL and Apache. In CI logs the rate is 0–10%, and GitHub Actions
+        lines - so do Hadoop, BGL and Apache. In CI logs the rate is 0–10%, and GitHub Actions
         prefixes every line with its own timestamp, so the usual "no timestamp means continuation"
         rule finds nothing. It is worth doing for pytest assertion blocks and rustc diagnostics,
         not as a cardinality fix.
@@ -992,7 +992,7 @@
 
       <ul class="seams">
         <li class="seam">
-          <h4>llm/base.py — the LLMProvider protocol</h4>
+          <h4>llm/base.py - the LLMProvider protocol</h4>
           <p>
             A tracing provider that wraps any other and emits one <em>generation</em> per
             <code>converse()</code>: model, latency, prompt and completion, and the
@@ -1003,30 +1003,30 @@
           <p class="emits">emits: generation · model, input/output/cached tokens, stop reason</p>
         </li>
         <li class="seam">
-          <h4>agent/loop.py — one trace per investigation</h4>
+          <h4>agent/loop.py - one trace per investigation</h4>
           <p>
             The loop already numbers its steps and logs every tool call before the model sees the
             result. Each step becomes a span, each tool call a child span carrying the query and
             row count from <code>query_log</code>. The incident id is the natural trace id, and
-            <code>investigate.*</code> metrics — steps, nudges, compactions, input growth — are
+            <code>investigate.*</code> metrics - steps, nudges, compactions, input growth - are
             the trace's metadata.
           </p>
           <p class="emits">emits: trace · spans per step and tool call · tags for outcome, budget_limited</p>
         </li>
         <li class="seam">
-          <h4>eval/harness.py — datasets and runs</h4>
+          <h4>eval/harness.py - datasets and runs</h4>
           <p>
             The strongest fit. LogDx-CI cases are a dataset; each sweep is a dataset run; each
             <code>Check</code> is a score, named exactly as it is today
             (<code>cites[...]</code>, <code>avoids[...]</code>). The new
             <code>Check.scorable</code> flag maps cleanly onto <em>not scoring</em> a run rather
-            than scoring it zero — which is the distinction the vacuity gate exists to preserve,
+            than scoring it zero - which is the distinction the vacuity gate exists to preserve,
             and one a naive export would destroy.
           </p>
           <p class="emits">emits: dataset run · one score per check · run-level metrics</p>
         </li>
         <li class="seam">
-          <h4>eval/judge.py — model-graded scores</h4>
+          <h4>eval/judge.py - model-graded scores</h4>
           <p>
             The entailment judge already returns a verdict plus a one-sentence reason per note.
             That is a Langfuse score with a comment, attached to the same trace as the run it
@@ -1036,7 +1036,7 @@
           <p class="emits">emits: score · supported/unsupported + reason</p>
         </li>
         <li class="seam">
-          <h4>agent/loop.py::SYSTEM_PROMPT — prompt management</h4>
+          <h4>agent/loop.py::SYSTEM_PROMPT - prompt management</h4>
           <p>
             The system prompt is a module constant today, so a prompt change is a code change and
             two sweeps a week apart cannot be compared unless someone remembers. Langfuse's prompt
@@ -1054,7 +1054,7 @@
         <code>config.yaml</code> with <code>enabled: false</code> by default, credentials from
         the environment beside <code>GEMINI_API_KEY</code>, and a no-op tracer when it is off so
         no code path branches on whether tracing exists. Two properties of this project should be
-        preserved rather than traded away — <code>mistify eval</code> with no flags works
+        preserved rather than traded away - <code>mistify eval</code> with no flags works
         offline, and the three model-free harnesses stay model-free. A tracer that reaches for
         the network by default breaks both.
       </p>
@@ -1078,7 +1078,7 @@
       <p style="margin-top:16px">
         The corpora download on demand into <code>.cache/</code> and are never committed. Budget
         roughly 120k tokens and 9–22 steps per real case, and space the requests at
-        <code>llm.min_interval_seconds: 5.5</code> — the shipped 4.0 is exactly the free tier's
+        <code>llm.min_interval_seconds: 5.5</code> - the shipped 4.0 is exactly the free tier's
         15 requests per minute with no headroom.
       </p>
     </section>

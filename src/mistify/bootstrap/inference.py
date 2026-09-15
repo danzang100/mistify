@@ -1,7 +1,7 @@
 """Model-assisted schema inference: the fallback when looking at the lines was not enough.
 
-The model is never asked for a regex. It is asked to point at the substrings — for a handful of
-sample lines, which part is the timestamp, which is the severity, which is the message — and
+The model is never asked for a regex. It is asked to point at the substrings - for a handful of
+sample lines, which part is the timestamp, which is the severity, which is the message - and
 this module derives the schema from where those substrings actually sit.
 
 That is the whole safety argument. A model-authored regex has to be trusted before it can be

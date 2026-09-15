@@ -227,7 +227,7 @@
   <p class="eyebrow">mistify</p>
   <h1>Mistify Data Flow</h1>
   <p class="standfirst">
-    How one line in a log file becomes a line in an incident report — what it is at each hop, and
+    How one line in a log file becomes a line in an incident report - what it is at each hop, and
     which guarantees hold where.
   </p>
 
@@ -334,7 +334,7 @@
   <div class="rule hard">
     <b>The ordering that everything else rests on</b>
     <p>
-      Redaction runs immediately after <code>parse()</code> — before templating, before the Drain3
+      Redaction runs immediately after <code>parse()</code> - before templating, before the Drain3
       snapshot is written to disk, and before any line could reach a model. Put it anywhere later
       and the guarantee fails on the unknown-format path, where the bootstrapper sends sample lines
       to a model before templating has happened at all.
@@ -365,7 +365,7 @@
       <h4>Calibration <span class="tag">side pass</span></h4>
       <p>
         Measures candidate thresholds against a redacted sample and keeps the one leaving fewest
-        templates without merging distinct conditions. It never touches the record stream — its only
+        templates without merging distinct conditions. It never touches the record stream - its only
         output is a number the templater is then built with.
       </p>
     </div>
@@ -387,7 +387,7 @@
     <div class="card">
       <h4>Scoring <span class="tag">search order</span></h4>
       <p>
-        Ranks templates by severity, burstiness and rarity — no model involved. The ranking is the
+        Ranks templates by severity, burstiness and rarity - no model involved. The ranking is the
         search order, so the rarest and most severe are met before the noise.
       </p>
     </div>
@@ -474,7 +474,7 @@ row        log_events(id, ts, source, severity, template_id, raw, message, field
     </div>
     <figcaption>
       The investigator's SQL runs on a connection SQLite itself refuses to let write, and that same
-      authorizer denies <code>ATTACH</code> — which is what makes keeping the vault in its own file a
+      authorizer denies <code>ATTACH</code> - which is what makes keeping the vault in its own file a
       real boundary rather than a naming convention.
     </figcaption>
   </figure>
@@ -493,7 +493,7 @@ row        log_events(id, ts, source, severity, template_id, raw, message, field
     Every stage publishes a few numbers about its own run into <code>run_metadata</code>, so a
     degraded run is visible rather than inferred from a report that reads fine. They are declared
     once in a single vocabulary that writers and readers share, and a handful of them drive warnings
-    in the report — coverage below 1.0, templates evicted, one template dominating the file, the most
+    in the report - coverage below 1.0, templates evicted, one template dominating the file, the most
     severe template failing to rank near the top. The rest are shown and not acted on.
   </p>
   <p>
@@ -507,7 +507,7 @@ row        log_events(id, ts, source, severity, template_id, raw, message, field
   <div class="grid2">
     <div class="card">
       <h4>Redaction is first</h4>
-      <p>Nothing downstream — templater, snapshot, database, model — ever sees an unredacted record.</p>
+      <p>Nothing downstream - templater, snapshot, database, model - ever sees an unredacted record.</p>
     </div>
     <div class="card">
       <h4>Coverage is 1.0</h4>
@@ -519,13 +519,13 @@ row        log_events(id, ts, source, severity, template_id, raw, message, field
     </div>
     <div class="card">
       <h4>Timestamps sort as text</h4>
-      <p>Fixed width, always UTC — string order and chronological order are the same thing.</p>
+      <p>Fixed width, always UTC - string order and chronological order are the same thing.</p>
     </div>
   </div>
 
   <footer>
     Ingest is one pass; investigate and report are separate commands over the same scratchpad. The
-    investigation step is still a hardcoded heuristic — the model-driven loop arrives in Phase 3.
+    investigation step is still a hardcoded heuristic - the model-driven loop arrives in Phase 3.
   </footer>
 
 </div>

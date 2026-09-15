@@ -1,13 +1,13 @@
 """The seam between the investigation and whichever model runs it.
 
-Everything above this line — the loop, the tools, the adversarial pass — is written against
+Everything above this line - the loop, the tools, the adversarial pass - is written against
 these types and never against a vendor SDK. Two adapters satisfy it today: `GeminiProvider`
 talks to a real model, and `ScriptedProvider` replays a fixed sequence of turns, which is what
 lets the whole agent loop be tested without a credential, a network, or a bill.
 
 The seam is deliberately narrow. A provider is handed a system prompt, a conversation, and a
 set of tools, and returns one `Turn`. It does not run the loop, decide when to stop, dispatch
-tools, or know what a scratchpad is — those are the caller's business, so swapping providers
+tools, or know what a scratchpad is - those are the caller's business, so swapping providers
 cannot quietly change how an investigation is conducted.
 
 Capabilities that genuinely differ between vendors are declared rather than assumed. Task

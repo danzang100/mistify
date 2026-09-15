@@ -14,7 +14,7 @@ Provider Gemini, `gemini-3.5-flash-lite` for the loop and `gemini-3.5-flash` for
 The deterministic half of the pipeline is identical on every run; only the model-driven half
 moves, so those rows are the ones worth comparing.
 
-## Deterministic — expect these to be identical
+## Deterministic - expect these to be identical
 
 | | |
 |---|---|
@@ -28,7 +28,7 @@ moves, so those rows are the ones worth comparing.
 | Signal templates | 5 |
 | Chronic among them | 2 (templates 5 and 6) |
 
-## Model-driven — expect these to move
+## Model-driven - expect these to move
 
 | | Baseline |
 |---|---|
@@ -51,9 +51,9 @@ moves, so those rows are the ones worth comparing.
 ## What the numbers say
 
 **Cost fell 3.7×.** The run immediately before this work totalled 180,707 tokens for the same
-file. The three changes together — 60-line slices instead of 200, tool output older than three
+file. The three changes together - 60-line slices instead of 200, tool output older than three
 steps reduced to its summary line, and the withheld-line count that makes a smaller slice safe
-to ask for — brought it to 48,370.
+to ask for - brought it to 48,370.
 
 **There was no regression, and two earlier readings of this were wrong.** This document first
 guessed the baseline run's thinner investigation was model noise, then claimed a measured
@@ -63,7 +63,7 @@ figure counted templates the model *named in prose*, the "after" figure counted 
 
 Measured properly across nine runs: template 7 is cited by none of them, and was cited by none
 of the runs before the cost work either. The model consistently cites the templates its claim
-is chiefly about — 8 and 9, in all nine runs — and omits the one it names as context. Three of
+is chiefly about - 8 and 9, in all nine runs - and omits the one it names as context. Three of
 the nine name template 7 in the finding's prose while citing only 8 and 9.
 
 So the standing defect is under-citation, not a lost precursor and not compaction. The loop's
@@ -73,7 +73,7 @@ the runs below predate it.
 **`ELIDE_MIN_LINES` is kept, on narrower evidence than it was introduced with.** Results at or
 below twenty lines are no longer compacted. The justification is not the precursor story, which
 did not hold: it is `rep5`, which re-queried templates 7, 5 and 6 at steps 14–16 after reading
-all three at steps 3, 6 and 7 — compaction had elided them, so the run paid twice. Whether the
+all three at steps 3, 6 and 7 - compaction had elided them, so the run paid twice. Whether the
 exemption improves conclusions is unproven, and it did not reduce tokens: the three runs after
 it span 54k–89k against 40k–99k before.
 
@@ -85,7 +85,7 @@ and one that is roughly flat, and it is what decides whether a long investigatio
 **Cache reads are zero, and that is a real trade.** Compaction rewrites messages near the front
 of the conversation, which is exactly the prefix a provider's implicit cache keys on, so the
 cache never hits. Earlier runs saw 36–37% cache reads on a much larger prompt. Cutting absolute
-tokens by 3.7× wins by a wide margin over discounting a prompt four times the size — but the
+tokens by 3.7× wins by a wide margin over discounting a prompt four times the size - but the
 two could be had together by compacting in batches, so the prefix stays stable for several
 steps instead of changing on every one. Not done; worth doing.
 
@@ -93,11 +93,11 @@ steps instead of changing on every one. Not done; worth doing.
 for a claim about checkout-service credentials; those rows are unrelated payment-service and
 inventory-service lines. The critique caught it, the investigation conceded, and the report
 leads with *Contested* and a confidence revised from high to medium. The deterministic citation
-resolver could not have caught this — the ids exist, they just do not say what the note claims,
+resolver could not have caught this - the ids exist, they just do not say what the note claims,
 which is the semantic half of decision G8 and is exactly what the second model is for.
 
-**One acute template is genuinely unexplained.** Template 7 — connection acquisition delays for
-seven minutes before the outage — is signal, is within the event, and no note mentions it. That
+**One acute template is genuinely unexplained.** Template 7 - connection acquisition delays for
+seven minutes before the outage - is signal, is within the event, and no note mentions it. That
 warning is now worth reading, which it was not while it fired on the two chronic templates
 every single run.
 
@@ -150,7 +150,7 @@ templates 8 and 9, recorded exactly one note, and was not budget-limited.
 | Loop tokens | 40k–99k |
 
 Two things worth keeping from the batch. `rep5` tried to cite log events 1054 and 1154, which
-it had never been shown, was refused by `write_note`, re-queried for real ids and cited those —
+it had never been shown, was refused by `write_note`, re-queried for real ids and cited those -
 the citation gate doing exactly what it was added for. And three of five runs in the first
 batch died on a 429: the free tier allows 15 requests per minute for `gemini-3.5-flash-lite`, a
 failed request counts against it, and the adapter was backing off on a guess capped at 30s
@@ -158,7 +158,7 @@ while the API returned `retryDelay: '54s'` in the error body. Both fixed.
 
 The one note per run is the open question. The three runs before the cost work recorded two or
 three notes each; all nine since record one. That is a real difference on a small sample, and
-it is confounded — the prompt changed as well — so it is not yet a finding.
+it is confounded - the prompt changed as well - so it is not yet a finding.
 
 ## The coverage nudge
 
@@ -200,13 +200,13 @@ It failed only because it was recorded at high confidence, and being confident t
 wrong is exactly what should happen here.
 
 Run 1 is the genuine miss: *"intermittent performance degradation ... two primary anomalous
-behaviors ... minor resource contention or degraded upstream inventory performance"* — retries
+behaviors ... minor resource contention or degraded upstream inventory performance"* - retries
 and slow responses reframed as degradation, hedged but wrong. Run 2 sits between them.
 
 So the deterministic bar conflates two opposite outcomes. Confidence is a property of how the
 finding was stated; whether it asserts a fault is a property of what it says, and no threshold
-over the scratchpad can separate them. The check needs a judge asking one question — *does this
-finding assert that something is wrong?* — which is a different question from the entailment
+over the scratchpad can separate them. The check needs a judge asking one question - *does this
+finding assert that something is wrong?* - which is a different question from the entailment
 judge already behind `--judge`.
 
 Worth keeping from the sweep: the coverage nudge did not fire once, which is correct. Every
@@ -216,12 +216,12 @@ turns out to be what keeps the negative control quiet as well.
 
 ## The grep baseline
 
-`mistify eval --baseline templated` — no model calls, scored by the same checks as an agent
+`mistify eval --baseline templated` - no model calls, scored by the same checks as an agent
 run, because comparing a number to an anecdote is not a comparison.
 
 Two opponents. **naive** is the literal pipeline: severity-keyword filter, group identical
 lines, rank by count. **templated** concedes this project's own clustering to the baseline
-before ranking, which asks the harder question — does the *investigation* add anything beyond
+before ranking, which asks the harder question - does the *investigation* add anything beyond
 ranking error-level templates by frequency?
 
 | Check | grep (naive) | grep (templated) | agent |
@@ -233,7 +233,7 @@ ranking error-level templates by frequency?
 | Tokens | 0 | 0 | 35k–99k |
 
 **The two fail in opposite directions, and that is the finding.** On the incident, grep matches
-396 lines and leads with the red herring in both variants — 350 payment-gateway timeouts drown
+396 lines and leads with the red herring in both variants - 350 payment-gateway timeouts drown
 40 pool exhaustions, which is exactly what the fixture was built to provoke. The agent never
 once led with the herring and always cited the root cause. On the quiet hour, grep matches
 nothing, writes nothing, and wins outright; the agent wrote a confident finding all three times.

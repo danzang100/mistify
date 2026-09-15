@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --extra pdf
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type-check
+        run: uv run mypy
+
+      # No credential and no network: the model-driven tests run against a fake provider, the
+      # Loghub and LogDx fetches are gated behind MISTIFY_NETWORK_TESTS=1, and the Loki
+      # round-trip skips itself when no stack answers.
+      - name: Test
+        run: uv run pytest
+
+      - name: Build
+        run: uv build

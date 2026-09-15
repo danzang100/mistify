@@ -233,7 +233,7 @@ def test_report_surfaces_the_anomaly_column(loaded_db: ScratchpadDB) -> None:
 def test_uninformative_severity_weight_is_redistributed() -> None:
     """On a log with no severity field, every line normalises to the same default.
 
-    The severity term then adds an identical constant to every template — the heaviest
+    The severity term then adds an identical constant to every template - the heaviest
     weight in the formula contributing nothing, silently. Dropping it hands that weight to
     the two components that still discriminate.
     """

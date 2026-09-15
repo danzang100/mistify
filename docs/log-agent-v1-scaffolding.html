@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Incident Log Analysis Agent — v1 Technical Scaffolding</title>
+<title>Incident Log Analysis Agent - v1 Technical Scaffolding</title>
 <style>
   :root {
     --bg: #0f1115;
@@ -88,7 +88,7 @@
 <div class="wrap">
 
   <h1>Incident Log Analysis Agent</h1>
-  <p class="subtitle">v1 technical scaffolding — repository layout, module interfaces, config formats, and implementation-level specification</p>
+  <p class="subtitle">v1 technical scaffolding - repository layout, module interfaces, config formats, and implementation-level specification</p>
 
   <div class="card">
     This document specifies the actual codebase structure for v1: directory layout, package responsibilities, config file formats, database migrations, module interfaces, and entry points. It complements the higher-level architecture document with concrete implementation detail a contributor would need to start building.
@@ -184,7 +184,7 @@
     └── run_local_incident.py       # scripted end-to-end example</pre>
 
   <h2 id="config">2. Config format</h2>
-  <p><code class="mono">config.yaml</code> — single source of truth for pipeline behavior, loaded by <code>common/config.py</code> and validated against a pydantic model.</p>
+  <p><code class="mono">config.yaml</code> - single source of truth for pipeline behavior, loaded by <code>common/config.py</code> and validated against a pydantic model.</p>
   <pre>pipeline:
   chunk_window_minutes: 15
   chunk_overlap_minutes: 3
@@ -222,7 +222,7 @@ report:
   output_dir: ./reports</pre>
 
   <h2 id="adapters">3. Adapter interface</h2>
-  <p><code>adapters/base.py</code> defines the contract every format adapter implements. Adapters are format-in, <code>LogRecord</code>-out — they never touch templating, redaction, or the scratchpad.</p>
+  <p><code>adapters/base.py</code> defines the contract every format adapter implements. Adapters are format-in, <code>LogRecord</code>-out - they never touch templating, redaction, or the scratchpad.</p>
   <pre>from abc import ABC, abstractmethod
 from typing import Iterator
 from log_agent.common.models import LogRecord
@@ -238,7 +238,7 @@ class LogAdapter(ABC):
     def parse(self, source: str) -> Iterator[LogRecord]:
         """Stream-parse the source into normalized LogRecord objects."""</pre>
 
-  <p><code>common/models.py</code> — the normalized record shape used everywhere downstream:</p>
+  <p><code>common/models.py</code> - the normalized record shape used everywhere downstream:</p>
   <pre>@dataclass
 class LogRecord:
     ts: datetime
@@ -248,7 +248,7 @@ class LogRecord:
     fields: dict[str, Any]
     format: str             # originating adapter name, for traceability</pre>
 
-  <p><code>adapters/registry.py</code> — format detection dispatch:</p>
+  <p><code>adapters/registry.py</code> - format detection dispatch:</p>
   <pre>def detect_format(sample_lines: list[str]) -> LogAdapter | None:
     scores = {a.format_name: a().detect(sample_lines) for a in REGISTERED_ADAPTERS}
     best = max(scores, key=scores.get)
@@ -260,7 +260,7 @@ class LogRecord:
   <pre>bootstrap/structural.py
   def cluster_by_shape(lines: list[str]) -> list[ShapeCluster]:
       # token count, delimiter type, timestamp-regex match, severity-word match
-      # cheap, no LLM call — resolves ~most well-formed but unregistered formats
+      # cheap, no LLM call - resolves ~most well-formed but unregistered formats
 
 bootstrap/llm_inference.py
   def infer_schema(sample: list[str]) -> InferredTemplate:
@@ -342,7 +342,7 @@ CREATE TABLE query_log (
       def log_query(self, step: int, query: str, row_count: int) -> None: ...</pre>
 
   <h2 id="agent">8. Agent loop</h2>
-  <p><code>agent/tools.py</code> — tool schema exposed to the LLM (Claude tool-use format):</p>
+  <p><code>agent/tools.py</code> - tool schema exposed to the LLM (Claude tool-use format):</p>
   <pre>TOOLS = [
   {
     "name": "query_templates",
@@ -412,7 +412,7 @@ log-agent report --incident-id 2026-08-30-checkout --format html</pre>
     <tr><td><code>investigate</code></td><td>incident_id</td><td>Runs the bounded agent loop + adversarial check</td></tr>
     <tr><td><code>get_report</code></td><td>incident_id, format?</td><td>Returns the generated incident report</td></tr>
   </table>
-  <p class="muted">Redaction always runs regardless of entry point — MCP exposure does not bypass it.</p>
+  <p class="muted">Redaction always runs regardless of entry point - MCP exposure does not bypass it.</p>
 
   <h2 id="deps">11. Core dependencies</h2>
   <pre>drain3
@@ -426,16 +426,16 @@ python-dateutil</pre>
 
   <h2 id="test">12. Testing scaffolding</h2>
   <ul>
-    <li><code>tests/fixtures/</code> — one representative sample file per adapter, plus <code>sample_unknown_format.log</code> to exercise the bootstrapper.</li>
-    <li><code>test_adapters.py</code> — detect() confidence scoring + parse() correctness per format.</li>
-    <li><code>test_bootstrap.py</code> — structural clustering accuracy, LLM-inference fallback (mocked), match-rate validation gate.</li>
-    <li><code>test_redaction.py</code> — entity detection + hash-consistency (same value → same hash across lines).</li>
-    <li><code>test_scratchpad.py</code> — schema migrations, read-only SQL enforcement, note evidence constraint.</li>
-    <li><code>test_agent_loop.py</code> — tool-call budget enforcement, forced convergence path (mocked LLM responses).</li>
+    <li><code>tests/fixtures/</code> - one representative sample file per adapter, plus <code>sample_unknown_format.log</code> to exercise the bootstrapper.</li>
+    <li><code>test_adapters.py</code> - detect() confidence scoring + parse() correctness per format.</li>
+    <li><code>test_bootstrap.py</code> - structural clustering accuracy, LLM-inference fallback (mocked), match-rate validation gate.</li>
+    <li><code>test_redaction.py</code> - entity detection + hash-consistency (same value → same hash across lines).</li>
+    <li><code>test_scratchpad.py</code> - schema migrations, read-only SQL enforcement, note evidence constraint.</li>
+    <li><code>test_agent_loop.py</code> - tool-call budget enforcement, forced convergence path (mocked LLM responses).</li>
   </ul>
 
   <footer>
-    v1 technical scaffolding — implementation-level companion to the v1 architecture overview document.
+    v1 technical scaffolding - implementation-level companion to the v1 architecture overview document.
   </footer>
 
 </div>

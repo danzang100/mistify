@@ -410,7 +410,7 @@ def _health_warnings(view: MetricView) -> list[str]:
     if view.triggers(TEMPLATING_REDUCTION_FACTOR):
         reduction = _triggered_value(view, TEMPLATING_REDUCTION_FACTOR)
         warnings.append(
-            f"Templating reduced the file only {reduction:.1f}x — there is "
+            f"Templating reduced the file only {reduction:.1f}x - there is "
             "little repeated structure here, so the agent is searching close to the raw "
             "haystack and template ranking may be unreliable."
         )
@@ -500,7 +500,7 @@ def _health_warnings(view: MetricView) -> list[str]:
         detail = "" if ids is None else f" (templates {ids})"
         warnings.append(
             f"{over_merged} template(s) span a wide severity range"
-            f"{detail} — distinct conditions may have been merged into one template."
+            f"{detail} - distinct conditions may have been merged into one template."
         )
 
     return warnings

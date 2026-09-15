@@ -15,7 +15,7 @@
 
 {% if issues %}
 Every issue the investigation recorded, most significant first. Order is the anomaly ranking of
-the templates each one cites — computed, not chosen by a model — so two runs that reason
+the templates each one cites - computed, not chosen by a model - so two runs that reason
 differently but reach the same templates present them in the same order.
 
 {% for issue in issues %}
@@ -25,14 +25,14 @@ Confidence {{ issue.confidence }} · templates {{ issue.template_ids | join(", "
 
 {% endfor %}
 {% if issues | length > 1 %}
-More than one issue was recorded. They are not necessarily one incident — two unrelated
+More than one issue was recorded. They are not necessarily one incident - two unrelated
 failures in the same window are common, and the ranking above does not decide which of these
 belong together.
 {% endif %}
 
 {% if adversarial %}
 {% if conceded_count %}
-**Contested — {{ conceded_count }} objection(s) conceded.** The investigation gave ground on its
+**Contested - {{ conceded_count }} objection(s) conceded.** The investigation gave ground on its
 own reasoning. Read *The challenge* before acting on any of the above.
 {% elif objections %}
 **Challenged and answered.** {{ objections | length }} objection(s) were raised and none were
@@ -44,7 +44,7 @@ conceded. The reasoning is in *The challenge*.
 Confidence after the challenge: **{{ adversarial.revised_confidence }}**.
 {% endif %}
 {% elif adversarial_ran %}
-**Checked, but the critique's text was not recorded** — this incident was investigated before
+**Checked, but the critique's text was not recorded** - this incident was investigated before
 the challenge was kept in the scratchpad. The counts are in the appendix; re-run
 `mistify investigate` to get the argument itself.
 {% else %}
@@ -52,8 +52,8 @@ No adversarial pass was run against this investigation, so nothing has checked t
 the citation resolver.
 {% endif %}
 {% else %}
-No hypothesis was recorded. Either the investigator found no templates to rank — check the
-ingest signals in the appendix — or it stopped before concluding.
+No hypothesis was recorded. Either the investigator found no templates to rank - check the
+ingest signals in the appendix - or it stopped before concluding.
 {% endif %}
 
 {% if warnings %}
@@ -74,14 +74,14 @@ whatever route the investigation took.
 |---|---|
 | Incident window | {{ glance.first_ts }} → {{ glance.last_ts }} |
 | Duration | {{ "%.0f" | format(glance.duration_minutes) }} min |
-| Measured across | template(s) {{ glance.window_template_ids | join(", ") }}{% if glance.window_is_from_verdict %}, cited by the leading issue{% else %}, the highest-ranked template — no issue cited one{% endif %} |
+| Measured across | template(s) {{ glance.window_template_ids | join(", ") }}{% if glance.window_is_from_verdict %}, cited by the leading issue{% else %}, the highest-ranked template - no issue cited one{% endif %} |
 
 Not the log window in the header, which is only where the file starts and stops.
 
 ### Signal templates and when they were active
 
 Span matters as much as rank. A template active across the whole log was already happening
-before this incident and did not stop after it, so it is background rather than event — and
+before this incident and did not stop after it, so it is background rather than event - and
 folding one into the window above would report a short outage as an hour-long one.
 
 | Template | Max severity | Events | First seen | Last seen | Active for | |
@@ -90,7 +90,7 @@ folding one into the window above would report a short outage as an hour-long on
 | {{ span.template_id }} | {{ span.max_severity }} | {{ "{:,}".format(span.occurrence_count) }} | {{ span.first_seen }} | {{ span.last_seen }} | {{ "%.0f" | format(span.minutes) }} min | {% if span.chronic %}chronic{% else %}within the event{% endif %} |
 {% endfor %}
 {% else %}
-No templates were flagged as signal, so there is no derived incident window — the log window
+No templates were flagged as signal, so there is no derived incident window - the log window
 in the header is all that is known.
 {% endif %}
 
@@ -109,7 +109,7 @@ Ordered by events at ERROR or worse, which is the order to work through them in.
 | Source | Events | ERROR+ | First ERROR+ | Last ERROR+ |
 |---|---|---|---|---|
 {% for row in glance.sources -%}
-| {{ row.source or "unknown" }} | {{ "{:,}".format(row.events) }} | {{ "{:,}".format(row.bad_events or 0) }} | {{ row.first_bad or "—" }} | {{ row.last_bad or "—" }} |
+| {{ row.source or "unknown" }} | {{ "{:,}".format(row.events) }} | {{ "{:,}".format(row.bad_events or 0) }} | {{ row.first_bad or "-" }} | {{ row.last_bad or "-" }} |
 {% endfor %}
 
 ## Findings
@@ -119,7 +119,7 @@ Every hypothesis the investigation recorded, in the order it recorded them. Each
 that were checked to exist.
 
 {% for note in notes %}
-### Step {{ note.step }} — confidence: {{ note.confidence }}
+### Step {{ note.step }} - confidence: {{ note.confidence }}
 
 {{ note.note }}
 
@@ -159,10 +159,10 @@ investigation was given the objections and allowed to answer. Outcome: **{{ adve
 
 {% if objections %}
 {% for objection in objections %}
-**{{ loop.index }}. {{ objection.claim or "(no claim quoted)" }}** — severity {{ objection.severity }}
+**{{ loop.index }}. {{ objection.claim or "(no claim quoted)" }}** - severity {{ objection.severity }}
 
 - Objection: {{ objection.objection }}
-- Cites: {% if objection.template_ids %}templates {{ objection.template_ids | join(", ") }}{% endif %}{% if objection.template_ids and objection.log_event_ids %}, {% endif %}{% if objection.log_event_ids %}events {{ objection.log_event_ids | join(", ") }}{% endif %}{% if not objection.template_ids and not objection.log_event_ids %}nothing — an objection citing no rows cannot outweigh a conclusion that cites them{% endif %}
+- Cites: {% if objection.template_ids %}templates {{ objection.template_ids | join(", ") }}{% endif %}{% if objection.template_ids and objection.log_event_ids %}, {% endif %}{% if objection.log_event_ids %}events {{ objection.log_event_ids | join(", ") }}{% endif %}{% if not objection.template_ids and not objection.log_event_ids %}nothing - an objection citing no rows cannot outweigh a conclusion that cites them{% endif %}
 
 {% if objection.response is not none %}
 - Answer{% if objection.conceded %} (**conceded**){% endif %}: {{ objection.response }}
@@ -205,7 +205,7 @@ rest are in the scratchpad and not in this report, so the list below is the head
 ranking rather than the whole incident.
 
 {% endif %}
-Scored deterministically from severity, burstiness and rarity — no model involvement, so a
+Scored deterministically from severity, burstiness and rarity - no model involvement, so a
 high score here is independent of whatever narrative the investigation settled on. The ranking
 is the search order: the rarest, most severe, most concentrated templates come first so the
 signal is met before the noise.
@@ -218,7 +218,7 @@ signal is met before the noise.
 
 {% if redaction_on %}
 Values like `[IPV4:a7f2]` are redacted placeholders. The same source value always produces the
-same placeholder within this incident, so they can be correlated across lines — but the hash is
+same placeholder within this incident, so they can be correlated across lines - but the hash is
 one-way.
 {% if vault_kept %}
 This run kept a reversible vault:
@@ -226,7 +226,7 @@ This run kept a reversible vault:
 back to the original.
 {% else %}
 This run kept no vault, so the originals cannot be recovered from it. Re-run with
-`redaction.vault: true` if an investigation needs the real values — the vault is plaintext on
+`redaction.vault: true` if an investigation needs the real values - the vault is plaintext on
 disk, which is why it is off by default.
 {% endif %}
 {% endif %}
@@ -253,27 +253,27 @@ Metrics a reader is meant to act on. Anything that tripped is already stated in 
 
 {% if token_stages %}
 Every stage that called a model, and what it spent. Cached tokens are a subset of input, not
-an extra column to add — the total is input plus output.
+an extra column to add - the total is input plus output.
 
 | Stage | Model | Calls | Input | Cached | Output | Total |
 |---|---|---|---|---|---|---|
 {% for stage in token_stages -%}
-| {{ stage.stage }} | {{ stage.model or "—" }} | {{ stage.calls if stage.calls is not none else "—" }} | {{ "{:,}".format(stage.input_tokens) }} | {{ "{:,}".format(stage.cached_input_tokens) }} ({{ "%.0f" | format(stage.cached_share * 100) }}%) | {{ "{:,}".format(stage.output_tokens) }} | {{ "{:,}".format(stage.total_tokens) }} |
+| {{ stage.stage }} | {{ stage.model or "-" }} | {{ stage.calls if stage.calls is not none else "-" }} | {{ "{:,}".format(stage.input_tokens) }} | {{ "{:,}".format(stage.cached_input_tokens) }} ({{ "%.0f" | format(stage.cached_share * 100) }}%) | {{ "{:,}".format(stage.output_tokens) }} | {{ "{:,}".format(stage.total_tokens) }} |
 {% endfor -%}
 | **Total** | | | **{{ "{:,}".format(token_total.input_tokens) }}** | **{{ "{:,}".format(token_total.cached_input_tokens) }}** ({{ "%.0f" | format(token_total.cached_share * 100) }}%) | **{{ "{:,}".format(token_total.output_tokens) }}** | **{{ "{:,}".format(token_total.total_tokens) }}** |
 
 {% if token_total.cached_input_tokens == 0 and token_total.input_tokens > 0 %}
 No tokens were served from cache. The loop is built around a stable system prompt that should
 be cacheable from the second step onward, so this is either that prefix being invalidated every
-step or a provider that does not report cache reads — worth telling apart before reading the
+step or a provider that does not report cache reads - worth telling apart before reading the
 input count as the real cost.
 {% endif %}
 No prices appear here. They change without notice and differ per model, so a cost in dollars
 printed into a report is a number that goes quietly wrong; the token counts are the durable
 part.
 {% else %}
-No stage reported model usage. Either this run used an investigator that calls no model — the
-deterministic `skeleton` — or no model call was made. A stage that spent nothing is absent here
+No stage reported model usage. Either this run used an investigator that calls no model - the
+deterministic `skeleton` - or no model call was made. A stage that spent nothing is absent here
 rather than shown as zero, so that "did not report" and "reported zero" stay distinct.
 {% endif %}
 

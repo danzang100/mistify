@@ -142,7 +142,7 @@ def test_snapshot_contains_no_unredacted_values(tmp_path: Path) -> None:
 
 
 def test_unredacted_values_would_be_visible_in_a_decoded_snapshot(tmp_path: Path) -> None:
-    """Control for the test above — proves the leak check can actually fail."""
+    """Control for the test above - proves the leak check can actually fail."""
     path = tmp_path / "drain3.json"
     templater = DrainTemplater(snapshot_path=path)
     templater.process("auth failed for ana@corp.com from 10.42.7.1")

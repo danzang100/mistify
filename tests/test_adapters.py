@@ -141,7 +141,7 @@ def test_missing_source_becomes_unknown(tmp_path: Path) -> None:
 
 
 def test_malformed_lines_are_skipped_and_counted(tmp_path: Path) -> None:
-    """Malformed input fails predictably and visibly — never partial garbage records."""
+    """Malformed input fails predictably and visibly - never partial garbage records."""
     path = _write(
         tmp_path / "in.jsonl",
         [

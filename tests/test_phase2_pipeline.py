@@ -138,7 +138,7 @@ def test_clean_incident_evicts_nothing(ingested: IngestResult) -> None:
 
 
 def _severityless_file(tmp_path: Path) -> Path:
-    """A log with no severity field at all — most of Loghub looks like this."""
+    """A log with no severity field at all - most of Loghub looks like this."""
     src = tmp_path / "nosev.jsonl"
     with src.open("w", encoding="utf-8") as handle:
         for i in range(600):

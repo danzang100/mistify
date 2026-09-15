@@ -1,7 +1,7 @@
 """The last-resort adapter, and the timestamps it now reads instead of inventing.
 
 Reading a timestamp that is present in the text is not a guess. Assigning one that is not is,
-and the ordinal fallback is still what happens when nothing readable is there — so every test
+and the ordinal fallback is still what happens when nothing readable is there - so every test
 that asserts a timestamp was read is paired with one asserting it was not.
 """
 

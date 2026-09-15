@@ -40,8 +40,8 @@ noise; a flood can be the incident.
 _Avoid_: chatter, spam
 
 **Anomaly score**:
-A per-template number derived from the incident's own distribution — severity, burstiness and
-rarity — computed without any model involvement, so ranking is independent of whatever
+A per-template number derived from the incident's own distribution - severity, burstiness and
+rarity - computed without any model involvement, so ranking is independent of whatever
 narrative an investigation settles on.
 _Avoid_: severity score, priority, weight
 

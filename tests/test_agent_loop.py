@@ -1,8 +1,8 @@
 """The bounded investigation loop and the adversarial pass, driven by a scripted provider.
 
 Every test here runs a complete investigation without a credential, a network call, or a bill.
-That is the whole reason the provider seam has a second adapter: the loop's behaviour — how it
-feeds results back, when it stops, what it records, what it says when it runs out of budget —
+That is the whole reason the provider seam has a second adapter: the loop's behaviour - how it
+feeds results back, when it stops, what it records, what it says when it runs out of budget -
 is decided by our code, not the model's, so it should be testable without one.
 """
 

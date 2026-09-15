@@ -1,0 +1,4 @@
+# Everything was written on Windows and is read on both. Normalise to LF in the repository so
+# a Linux checkout does not diff every line, and keep the binaries out of it.
+* text=auto eol=lf
+*.png binary

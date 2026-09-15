@@ -1,7 +1,7 @@
 [project]
 name = "mistify"
 version = "0.1.0"
-description = "Incident log analysis agent — log compression plus a bounded agentic investigation loop."
+description = "Incident log analysis agent - log compression plus a bounded agentic investigation loop."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

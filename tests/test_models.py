@@ -82,7 +82,7 @@ def test_naive_timestamps_are_treated_as_utc() -> None:
 
 @pytest.mark.parametrize("raw", ["", "   ", "not a date", None, object()])
 def test_unparseable_timestamp_raises(raw: object) -> None:
-    """Never silently default to now() — a wrong timestamp misaligns every time slice."""
+    """Never silently default to now() - a wrong timestamp misaligns every time slice."""
     with pytest.raises(ValueError):
         parse_timestamp(raw)
 
@@ -117,7 +117,7 @@ def test_whole_second_sorts_before_a_fraction_of_the_same_second() -> None:
 
     `ts` is stored as TEXT and every window, bound and ordering compares it as a string. A
     whole-second timestamp used to render without microseconds, so it was two characters
-    shorter and `14:38:00.442Z` compared as *earlier* than `14:38:00Z` — string order was the
+    shorter and `14:38:00.442Z` compared as *earlier* than `14:38:00Z` - string order was the
     reverse of chronological order inside any second that contained both shapes.
     """
     a = _record("2026-08-30T14:38:00Z")

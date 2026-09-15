@@ -9,7 +9,7 @@ Settled 2026-08-31, before Phase 0.
 
 ---
 
-## G1 — Redaction moves ahead of templating
+## G1 - Redaction moves ahead of templating
 
 **Was:** architecture §2.3a placed redaction after Drain3 templating, while asserting it ran
 "before anything ... reaches an LLM". §2.2a sends raw sample lines to a model before
@@ -24,12 +24,12 @@ templating happens at all, so the assertion was false on the unknown-format path
 
 **Amend:** architecture §2.2a, §2.3, §2.3a; scaffolding §6.
 
-## G2 — Drain3 snapshot can no longer hold secrets
+## G2 - Drain3 snapshot can no longer hold secrets
 
 **Was:** the tree was trained on unredacted text and persisted to disk, making
 `drain3_state.json` a durable artifact full of PII and credentials.
 
-**Now:** closed by G1 — the templater only ever sees redacted text. Two supporting changes:
+**Now:** closed by G1 - the templater only ever sees redacted text. Two supporting changes:
 
 - The templater masks the `[TYPE:hash]` placeholder shape, so a redacted value contributes
   one stable token instead of fragmenting a template into one cluster per source value.
@@ -39,44 +39,44 @@ templating happens at all, so the assertion was false on the unknown-format path
 **Where:** `mistify/templating/drain_wrapper.py`. Tests in `tests/test_templating.py`,
 including a control test proving the leak check can actually fail.
 
-## G3 — `anomaly_score` is a v1 requirement, not a future improvement
+## G3 - `anomaly_score` is a v1 requirement, not a future improvement
 
 **Was:** listed under future improvements, yet referenced by the `templates` schema, the
 `query_templates` ordering enum, and step 3 of the adversarial check.
 
 **Now:** the column ships in `0001_init.sql` and `top_templates(order_by="anomaly_score")`
 works. Scoring shipped in Phase 2 as a deterministic post-load pass over the scratchpad. No
-model call, no baseline corpus — the score comes from the incident's own distribution, so it
+model call, no baseline corpus - the score comes from the incident's own distribution, so it
 works on the first file from a service nobody has ingested before. Cross-incident novelty
 still waits for reusable template trees.
 
 **Correction:** this document previously recorded the score as
 `rarity × severity_weight × burstiness`. That was wrong and the implementation deliberately
-differs. It is a **weighted sum** — severity 0.5, burstiness 0.3, rarity 0.2, normalised.
+differs. It is a **weighted sum** - severity 0.5, burstiness 0.3, rarity 0.2, normalised.
 A product zeroes the entire score whenever any single component is zero, and the most frequent
 template in any incident has rarity exactly 0 by construction. Under a product the loudest
 template in the file would score zero no matter how severe it was.
 
 The three components:
 
-- **severity** — a non-linear weight per level, TRACE `0.0` through FATAL `1.0`. The step from
+- **severity** - a non-linear weight per level, TRACE `0.0` through FATAL `1.0`. The step from
   WARN to ERROR should count for more than the step from TRACE to DEBUG.
-- **burstiness** — max events in any one-minute bucket against the mean over the *whole
+- **burstiness** - max events in any one-minute bucket against the mean over the *whole
   incident span*, mapped through `1 - 1/ratio` so extreme peaks saturate instead of running
   away. The denominator is the subtlety found during implementation: measuring against the
   buckets a template itself occupies is wrong, because a template firing 40 times inside one
-  minute occupies that single bucket uniformly and scores as perfectly even — exactly
+  minute occupies that single bucket uniformly and scores as perfectly even - exactly
   inverting the signal the component exists to capture.
-- **rarity** — inverse log frequency, scaled against the most common template in the incident.
+- **rarity** - inverse log frequency, scaled against the most common template in the incident.
 
-**Phase 5 addition — severity recovered from the text.** On a source with no severity field,
+**Phase 5 addition - severity recovered from the text.** On a source with no severity field,
 the severity term used to be dropped and its weight redistributed. Measured against LogDx-CI,
 that was the worse of the two options: with the heaviest term gone and almost every line
 unique, the remaining two saturate, thousands of templates tie, and the tie-break
-(`occurrence_count DESC, template_id`) orders the digest by first appearance — which on a CI
+(`occurrence_count DESC, template_id`) orders the digest by first appearance - which on a CI
 log is the setup section. Not one ground-truth marker reached the top 40 in any of five cases.
 
-Severity is now read from the template's own words when there is no field to read it from —
+Severity is now read from the template's own words when there is no field to read it from -
 ERROR-equivalent for failure vocabulary, WARN-equivalent for hedging vocabulary, INFO
 otherwise, on the same non-linear scale, so no weight changed. Across 20 cases it moved markers
 inside the top 40 from 1 of 65 to 39 of 65, and 1 of 47 to 25 of 47 on the cases it was not
@@ -92,9 +92,9 @@ unexplained number.
 
 **Where:** `mistify/scratchpad/anomaly.py`. Tests in `tests/test_anomaly.py`.
 
-**Amend:** architecture §4 — move anomaly scoring out of "future".
+**Amend:** architecture §4 - move anomaly scoring out of "future".
 
-## G4 — Read-only SQL is enforced by SQLite, not a keyword blocklist
+## G4 - Read-only SQL is enforced by SQLite, not a keyword blocklist
 
 **Was:** `run_readonly_sql()` was to reject `INSERT/UPDATE/DELETE/DROP/ATTACH` by inspecting
 the query text. The input is a model-authored string and the testing doc correctly calls this
@@ -102,7 +102,7 @@ a security boundary; a blocklist loses to comments, string literals and CTEs.
 
 **Now:** three layers, none of them text inspection:
 
-1. A separate connection opened `file:...?mode=ro` — not writable at the OS level.
+1. A separate connection opened `file:...?mode=ro` - not writable at the OS level.
 2. `PRAGMA query_only=ON`.
 3. `set_authorizer()` allowing only `SQLITE_SELECT`, `SQLITE_READ` and `SQLITE_FUNCTION`,
    which is what denies `ATTACH`, `PRAGMA` and extension loading.
@@ -112,12 +112,12 @@ evasion suite (comment-prefixed deletes, CTE-wrapped mutations, `ATTACH`, `load_
 
 **Amend:** scaffolding §7.
 
-## G5 — Credit card detection is out of scope for v1
+## G5 - Credit card detection is out of scope for v1
 
 **Was:** `"credit_card": r"\b(?:\d[ -]*?){13,16}\b"`, enabled by default in strict mode.
 
 **Now:** removed from the pattern library entirely. That expression matches any 13–16 digit
-run — epoch-millisecond timestamps, request IDs, trace IDs — which destroys the correlation
+run - epoch-millisecond timestamps, request IDs, trace IDs - which destroys the correlation
 keys an investigation depends on. If it returns it needs a Luhn checksum and a
 false-positive corpus first.
 
@@ -139,7 +139,7 @@ and a timestamp swallowed by the address pattern would misalign every time slice
 
 **Amend:** scaffolding §6; architecture §2.3a entity list.
 
-## G6 — Ingestion is where an incident comes into existence
+## G6 - Ingestion is where an incident comes into existence
 
 **Was:** `investigate` and `report` were keyed on `--incident-id`, but `ingest` took only
 `--source` and no table recorded an incident.
@@ -150,7 +150,7 @@ redaction mode.
 
 **Amend:** scaffolding §7 schema, §10 CLI.
 
-## G7 — Per-stage health metrics have somewhere to live
+## G7 - Per-stage health metrics have somewhere to live
 
 **Was:** architecture §6 states that a health metric per stage "is not optional polish", but
 the four-table schema had no column for compression ratio, parse errors or the budget-limited
@@ -162,9 +162,9 @@ warnings (poor compression, skipped lines, disabled redaction, orphaned events).
 
 **Amend:** scaffolding §7 schema.
 
-## G8 — Citation faithfulness splits into a unit test and an eval
+## G8 - Citation faithfulness splits into a unit test and an eval
 
-**Was:** classified as a unit test — "diff the claim text against what those rows contain".
+**Was:** classified as a unit test - "diff the claim text against what those rows contain".
 Checking whether a natural-language claim is *entailed* by log rows is not a text diff, and
 written as one it would pass everything.
 
@@ -184,12 +184,12 @@ written as one it would pass everything.
 
 | Decision | Resolution |
 |---|---|
-| Package name | `mistify` throughout — distribution, package and CLI. The scaffolding doc's `log-agent/` is superseded. |
+| Package name | `mistify` throughout - distribution, package and CLI. The scaffolding doc's `log-agent/` is superseded. |
 | Chunking config | `chunk_window_minutes` and `chunk_overlap_minutes` dropped. No pipeline stage consumed them; the investigator slices on demand via `get_slice`. Overlapping windows remain a recorded future improvement. |
-| Loop model | ~~`claude-opus-5`~~ — superseded, see [The default provider is Gemini](#the-default-provider-is-gemini). |
-| Adversarial model | ~~`claude-sonnet-5`~~ — superseded. The rule it served stands: must differ from the loop model (architecture §6.3), enforced by a test. |
-| Bootstrapper model | ~~`claude-haiku-4-5`~~ — superseded. Still a narrow structured-output task behind a match-rate gate. |
-| Entailment judge model | ~~`claude-opus-5`~~ — superseded. Still distinct from the adversarial model. |
+| Loop model | ~~`claude-opus-5`~~ - superseded, see [The default provider is Gemini](#the-default-provider-is-gemini). |
+| Adversarial model | ~~`claude-sonnet-5`~~ - superseded. The rule it served stands: must differ from the loop model (architecture §6.3), enforced by a test. |
+| Bootstrapper model | ~~`claude-haiku-4-5`~~ - superseded. Still a narrow structured-output task behind a match-rate gate. |
+| Entailment judge model | ~~`claude-opus-5`~~ - superseded. Still distinct from the adversarial model. |
 | `LogRecord.message` | Added alongside `raw`. `raw` stays the unmodified source line; `message` is the free-text portion the templater clusters on. Templating a whole JSON line produces templates full of key names. |
 | Phase 1 redaction entities | `email`, `ipv4`, `api_key`. The rest arrive in Phase 2 with their false-positive corpus. |
 
@@ -209,7 +209,7 @@ the direction that matters.
 Compression ratio is a proxy, and it breaks in exactly the case the system exists for. A
 threshold that merges a rare FATAL template into a chatty INFO one scores *better* on ratio
 while destroying the only line worth finding. Demonstrated: 200 distinct messages collapse
-into a single `event <*> <*> <*> <*> <*>` template at a loose threshold — a ratio of 0.005,
+into a single `event <*> <*> <*> <*> <*>` template at a loose threshold - a ratio of 0.005,
 the best score any candidate can post, and total loss of every distinction in the file.
 
 The real objective is that an LLM handed the compressed representation can find the needle.
@@ -228,7 +228,7 @@ That reframes every part of the templating stage:
 Calibration became a gate followed by a preference rather than a target band:
 
 1. Reject any candidate that over-merges, however well it compresses.
-2. Among survivors, prefer the fewest templates — a shorter list is strictly easier to search.
+2. Among survivors, prefer the fewest templates - a shorter list is strictly easier to search.
 3. If every candidate over-merges, take the strictest threshold and flag `signal_at_risk`,
    because under-clustering only costs tokens while over-clustering loses the needle.
 
@@ -241,7 +241,7 @@ from its tree. Final statistics were read from that tree, so every event assigne
 evicted cluster referenced a template row that was never written.
 
 Measured before the fix, on a 2,000-line high-cardinality file with `max_clusters: 50`:
-**1,950 events (98%) orphaned, while the compression ratio read 0.0250** — mid-band, and
+**1,950 events (98%) orphaned, while the compression ratio read 0.0250** - mid-band, and
 indistinguishable from an excellent result. Calibration would have accepted it.
 
 `DrainTemplater` now keeps its own registry of every template it has ever seen, so eviction
@@ -268,7 +268,7 @@ That is what Loghub's annotated ground-truth templates measure, and it is the Ph
 
 ### Events stream to SQLite
 
-Records were buffered whole before the first INSERT — roughly a kilobyte each, so ~16 GB
+Records were buffered whole before the first INSERT - roughly a kilobyte each, so ~16 GB
 resident on the 16.6M-line Thunderbird corpus that the Phase 5 stress test is meant to run.
 The pipeline would have died before reaching the thing it was measuring. Events now flush in
 fixed batches (`EVENT_BATCH_SIZE`), bounding peak memory to the batch plus the template
@@ -278,14 +278,14 @@ registry.
 
 `ts` is stored as TEXT and compared lexicographically, but `datetime.isoformat()` omits
 microseconds when they are zero. `.` sorts before `Z`, so `14:38:00.442000Z` compared as
-*earlier* than `14:38:00Z` — inverted ordering for any second containing both forms, which
+*earlier* than `14:38:00Z` - inverted ordering for any second containing both forms, which
 the synthetic incident did. `LogRecord.isoformat()` now always emits microseconds, making
 string order and chronological order the same thing.
 
 **Where:** `mistify/templating/calibration.py`, `mistify/templating/drain_wrapper.py`,
 `mistify/pipeline.py`, `mistify/common/models.py`.
 
-**Amend:** architecture §6.1 — compression ratio is a diagnostic, not the health metric.
+**Amend:** architecture §6.1 - compression ratio is a diagnostic, not the health metric.
 Coverage is the invariant and anomaly ranking is what solves needle-in-a-haystack.
 
 ## Post-review fixes
@@ -299,7 +299,7 @@ Severity carries the heaviest weight in the anomaly score (0.5), which is right 
 source labels its lines and actively harmful when it does not. On a log with no severity
 field every line normalises to the same default, so the term adds an identical constant to
 every template: the largest single input to the ranking, contributing nothing, silently.
-That is not an edge case — it is most of Loghub, the corpus Phase 5 grades against.
+That is not an edge case - it is most of Loghub, the corpus Phase 5 grades against.
 
 When the share of unmapped severities exceeds `anomaly.severity_unmapped_ceiling` (0.9) the
 severity weight is dropped and redistributed across burstiness and rarity. Measured on an
@@ -317,7 +317,7 @@ fixture was on hand, and a quiet incident where nothing clears the bar yields an
 instead of its own best candidates.
 
 `select_signal_templates` places the cut at the largest gap between consecutive scores in the
-ranked list — the point where the distribution itself separates unusual from ordinary —
+ranked list - the point where the distribution itself separates unusual from ordinary -
 bounded by `signal_min_templates` and `signal_max_templates` so there is always something to
 check against and never more than can be reasoned about. The chosen set is recorded as
 `anomaly.signal_template_ids`.
@@ -325,8 +325,8 @@ check against and never more than can be reasoned about. The chosen set is recor
 ### Noise suppression at the slice level
 
 Architecture §6.4 calls for capping or suppressing templates above an occurrence threshold
-unless the anomaly score flags them as relevant. Volume alone is not noise — a flood can be
-the incident — so the test is both: at least `noise_share_threshold` of the file *and* below
+unless the anomaly score flags them as relevant. Volume alone is not noise - a flood can be
+the incident - so the test is both: at least `noise_share_threshold` of the file *and* below
 `noise_anomaly_ceiling`.
 
 This matters most in `get_slice`, where it is the needle problem in miniature: on a file
@@ -377,15 +377,15 @@ proved it was real rather than decorative. Shipped defaults:
 | Entailment judge | `gemini-3.5-flash` |
 
 The cheap tiers, deliberately. An investigation is roughly fifteen loop calls to the
-critique's one, so the critique is the cheapest place to spend more — which is also what
+critique's one, so the critique is the cheapest place to spend more - which is also what
 satisfies §6.3's different-model requirement rather than working around it. A free AI Studio
 key is real API access, and `GEMINI_API_KEY` is read from the environment or from a `.env`
 file the CLI loads on startup.
 
 `AnthropicProvider` was kept and left selectable at first, then removed outright once it was
 clear no credential for it would appear. Nothing above the seam moved in either direction,
-which is the whole claim the seam makes. `llm.effort` went with it — an Anthropic-only setting
-with no remaining reader — and `llm.task_budget_tokens` is now inert for the same reason,
+which is the whole claim the seam makes. `llm.effort` went with it - an Anthropic-only setting
+with no remaining reader - and `llm.task_budget_tokens` is now inert for the same reason,
 documented as such rather than silently ignored.
 
 ### A second adapter is what made the seam's gap visible
@@ -425,7 +425,7 @@ it.
 ### The critique's argument is scratchpad state, not a metric
 
 `run_adversarial_check` produced objections with citations, an alternative explanation,
-rebuttals and a revised confidence. All of it was discarded — the CLI dropped the return value
+rebuttals and a revised confidence. All of it was discarded - the CLI dropped the return value
 and only counts reached `run_metadata`. A report could say "2 evidence-backed objections at
 high severity" and not what they were, what they cited, or that the investigation had conceded
 both.
@@ -446,8 +446,8 @@ so a claim the investigation successfully defended still counted against it.
 
 Split in two. `high_severity_objections` counts what was thrown, before the answer, and is a
 display metric. `unrebutted_high_severity` counts what was never answered at all, after the
-rebuttal, and is the one that warns. Conceding is an answer — a bad one, stated plainly in the
-overview — and being answered without conceding is the system working. Only silence means
+rebuttal, and is the one that warns. Conceding is an answer - a bad one, stated plainly in the
+overview - and being answered without conceding is the system working. Only silence means
 nothing checked it.
 
 ### A warning that always fires is worse than no warning
@@ -457,8 +457,8 @@ log ranks as signal. `unexplained_signal_templates` then faulted the investigati
 explaining it, on every run, on a fixture that contains exactly that red herring by design.
 
 Chronic templates are now excluded from that warning and counted as an observation instead.
-`ScratchpadDB.chronic_template_ids` is the single definition — the report labels issues with it
-and the adversarial check filters with it — because this project has already shipped one
+`ScratchpadDB.chronic_template_ids` is the single definition - the report labels issues with it
+and the adversarial check filters with it - because this project has already shipped one
 threshold defined in two places and does not need a second. The ranking itself is untouched;
 see issue 8.
 
@@ -471,14 +471,14 @@ again on every step after it, and cost is quadratic in steps. Measured: 177k inp
 Three changes, in order of how much they buy:
 
 - **Tool output is compacted.** Results older than `pipeline.tool_result_history_steps` keep
-  the summary line the tool already wrote — how many rows matched, how many were shown, the
-  filters — and lose the rows. That header is what the model reasons about several steps later;
+  the summary line the tool already wrote - how many rows matched, how many were shown, the
+  filters - and lose the rows. That header is what the model reasons about several steps later;
   the rows it has either used or cited, and citations resolve against the scratchpad rather
   than the transcript. Tool *calls* are never touched: they carry the thought signature, which
   has to replay byte-identical.
 - **Slices are smaller and honest about it.** `SLICE_LINES_DEFAULT` drops from 200 to 60 and
   the ceiling from 500 to 200. `get_slice` now reports how many lines matched in total, so a
-  narrower default costs nothing the investigation cannot ask for — it knows what it did not
+  narrower default costs nothing the investigation cannot ask for - it knows what it did not
   see. "Hit the cap" could not distinguish four withheld lines from forty thousand.
 - **The curve is recorded.** `investigate.input_tokens_per_step` keeps the shape and
   `investigate.input_growth_factor` warns above 5×. The total hides the curve entirely, and the
@@ -495,19 +495,19 @@ mechanical test the report can run.
 
 It happened on the baseline run. The investigation switched from `get_slice` to `run_sql`,
 selected `ts, source, raw` with no `id` column, and by note-writing time had no real ids in
-context — so it passed through the `[1]` and `[2]` footnote markers from its own prose. Events
+context - so it passed through the `[1]` and `[2]` footnote markers from its own prose. Events
 1 and 2 are the first two lines of the file, from services the claim does not mention. Only the
 adversarial model caught it.
 
 `ToolBox` now records every log event id it has returned, and `write_note` refuses a citation
-outside that set. Existence remains a warning rather than a refusal — a typo should not cost a
-sound finding — but reading is now a precondition, because the difference between the two is
+outside that set. Existence remains a warning rather than a refusal - a typo should not cost a
+sound finding - but reading is now a precondition, because the difference between the two is
 the difference between a mistake and an invention.
 
 ### The scratchpad was an output sink, not working memory
 
 The model could write notes and never read them back. Four tools, none of which returned a
-note. Every hypothesis it formed survived only in the conversation — which is precisely what
+note. Every hypothesis it formed survived only in the conversation - which is precisely what
 compaction now summarises away as the investigation runs. `read_notes` closes that, and it went
 from a nicety to a requirement the moment history stopped being kept whole.
 

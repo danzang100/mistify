@@ -414,7 +414,7 @@
   <p class="eyebrow">Implementation plan · drafted 31 Aug 2026</p>
   <h1>Mistify v1 Build Plan</h1>
   <p class="standfirst">
-    A build order for the incident log analysis agent described in the three v1 design documents —
+    A build order for the incident log analysis agent described in the three v1 design documents -
     what to settle before writing code, what to build in which sequence, and what to cut if the
     schedule tightens.
   </p>
@@ -422,7 +422,7 @@
   <div class="verdict">
     <p>
       <strong>Where this stands.</strong> The architecture, scaffolding, and testing documents are
-      unusually complete — module boundaries, config shape, DB schema, and tool signatures are all
+      unusually complete - module boundaries, config shape, DB schema, and tool signatures are all
       specified well enough to build from directly. This plan does not re-derive them.
     </p>
     <p>
@@ -451,7 +451,7 @@
       </div>
       <dl>
         <dt>Docs say</dt>
-        <dd>Architecture §2.3a: redaction runs "before anything is written to the scratchpad or reaches an LLM". But §2.2a step 2 sends 20–50 <em>raw</em> sample lines to an LLM for schema inference — and that happens before templating, which is before redaction.</dd>
+        <dd>Architecture §2.3a: redaction runs "before anything is written to the scratchpad or reaches an LLM". But §2.2a step 2 sends 20–50 <em>raw</em> sample lines to an LLM for schema inference - and that happens before templating, which is before redaction.</dd>
         <dt>Breaks</dt>
         <dd>Every unknown-format ingest leaks unredacted production log lines to the model. The stage ordering makes the guarantee in §2.3a false exactly when it matters most.</dd>
         <dt>Fix</dt>
@@ -483,11 +483,11 @@
       </div>
       <dl>
         <dt>Docs say</dt>
-        <dd>It is a column in <code>templates</code>, an enum value in <code>query_templates(order_by=…)</code>, and step 3 of the adversarial check is "flag any high <code>anomaly_score</code> template excluded from the draft conclusion". But architecture §4 lists anomaly scoring under future improvements — nothing in v1 computes it.</dd>
+        <dd>It is a column in <code>templates</code>, an enum value in <code>query_templates(order_by=…)</code>, and step 3 of the adversarial check is "flag any high <code>anomaly_score</code> template excluded from the draft conclusion". But architecture §4 lists anomaly scoring under future improvements - nothing in v1 computes it.</dd>
         <dt>Breaks</dt>
-        <dd>The column stays <code>0.0</code>. The agent can sort by it and get an arbitrary order. The adversarial check's third and most mechanical test silently becomes a no-op — the one check that does not depend on the model's judgement.</dd>
+        <dd>The column stays <code>0.0</code>. The agent can sort by it and get an arbitrary order. The adversarial check's third and most mechanical test silently becomes a no-op - the one check that does not depend on the model's judgement.</dd>
         <dt>Fix</dt>
-        <dd class="fix">Ship a cheap deterministic score in v1, computed in SQL after load — no model call, no baseline corpus needed: <code>rarity</code> (inverse log frequency) × <code>severity_weight</code> × <code>burstiness</code> (max events in any 1-minute bucket ÷ mean). Add cross-incident novelty later when template trees are reused. It does not need to be sophisticated; it needs to be non-constant.</dd>
+        <dd class="fix">Ship a cheap deterministic score in v1, computed in SQL after load - no model call, no baseline corpus needed: <code>rarity</code> (inverse log frequency) × <code>severity_weight</code> × <code>burstiness</code> (max events in any 1-minute bucket ÷ mean). Add cross-incident novelty later when template trees are reused. It does not need to be sophisticated; it needs to be non-constant.</dd>
       </dl>
     </div>
 
@@ -501,7 +501,7 @@
         <dt>Docs say</dt>
         <dd>Scaffolding §7: <code>run_readonly_sql()</code> "rejects INSERT/UPDATE/DELETE/DROP/ATTACH". Testing §2.3 correctly calls this a security boundary and says to test it adversarially.</dd>
         <dt>Breaks</dt>
-        <dd>A blocklist over SQL text loses to comments, string literals, CTEs, and <code>PRAGMA</code>. Tested adversarially, it will fail — and the failure surface is a model-authored query string.</dd>
+        <dd>A blocklist over SQL text loses to comments, string literals, CTEs, and <code>PRAGMA</code>. Tested adversarially, it will fail - and the failure surface is a model-authored query string.</dd>
         <dt>Fix</dt>
         <dd class="fix">Make SQLite enforce it, not a regex. Open a second connection with <code>sqlite3.connect("file:…?mode=ro", uri=True)</code>, set <code>PRAGMA query_only=ON</code>, register a <code>set_authorizer()</code> callback that denies everything except <code>SQLITE_SELECT</code>/<code>SQLITE_READ</code>/<code>SQLITE_FUNCTION</code> on the four known tables, and cap runtime with <code>set_progress_handler</code>. Keep the keyword check as a fast pre-filter for better error messages, not as the boundary.</dd>
       </dl>
@@ -517,7 +517,7 @@
         <dt>Docs say</dt>
         <dd>Scaffolding §6: <code>"credit_card": r"\b(?:\d[ -]*?){13,16}\b"</code>, on by default in <code>strict</code> mode.</dd>
         <dt>Breaks</dt>
-        <dd>That matches any 13–16 digit run: epoch-millisecond timestamps, request IDs, trace IDs, numeric span IDs. This is the architecture document's own "redaction over-reach destroys diagnostic values" failure mode, pre-triggered by the shipped default — and the destroyed values are exactly the correlation keys the agent needs.</dd>
+        <dd>That matches any 13–16 digit run: epoch-millisecond timestamps, request IDs, trace IDs, numeric span IDs. This is the architecture document's own "redaction over-reach destroys diagnostic values" failure mode, pre-triggered by the shipped default - and the destroyed values are exactly the correlation keys the agent needs.</dd>
         <dt>Fix</dt>
         <dd class="fix">Gate the match behind a Luhn checksum, and require a separator or non-digit boundary. Add the false-positive corpus from testing §2.2 (error codes, version strings, trace IDs, epoch timestamps) as a standing regression fixture before the pattern library grows.</dd>
       </dl>
@@ -526,7 +526,7 @@
     <div class="gap">
       <div class="gap-head">
         <span class="gap-id">G6</span>
-        <span class="gap-title">No <code>incidents</code> record — the CLI's own key has no origin</span>
+        <span class="gap-title">No <code>incidents</code> record - the CLI's own key has no origin</span>
         <span class="chip gap">missing</span>
       </div>
       <dl>
@@ -535,7 +535,7 @@
         <dt>Breaks</dt>
         <dd>There is no defined point where an incident is created, no way to list incidents, and no home for run metadata.</dd>
         <dt>Fix</dt>
-        <dd class="fix">Add <code>--incident-id</code> to <code>ingest</code> (defaulting to a date-plus-slug derived from the source), and add a <code>run_metadata</code> table — see G7, which needs the same table.</dd>
+        <dd class="fix">Add <code>--incident-id</code> to <code>ingest</code> (defaulting to a date-plus-slug derived from the source), and add a <code>run_metadata</code> table - see G7, which needs the same table.</dd>
       </dl>
     </div>
 
@@ -549,7 +549,7 @@
         <dt>Docs say</dt>
         <dd>Architecture §6, stated as a design principle: "A pipeline health metric per stage is not optional polish." Compression ratio, bootstrapper match rate, redaction counts, and the budget-limited flag are all named as required signals.</dd>
         <dt>Breaks</dt>
-        <dd>The four-table schema has no column for any of them. Without persistence there is nothing for the report to declare, nothing to assert in a test, and no way to notice a run degraded — which is the precise failure the principle exists to prevent.</dd>
+        <dd>The four-table schema has no column for any of them. Without persistence there is nothing for the report to declare, nothing to assert in a test, and no way to notice a run degraded - which is the precise failure the principle exists to prevent.</dd>
         <dt>Fix</dt>
         <dd class="fix">Add a fifth table in <code>0001_init.sql</code>: <code>run_metadata(stage, metric, value, ts)</code>. Every stage writes its numbers; the report template reads them into a health block; tests assert on rows rather than on log output.</dd>
       </dl>
@@ -563,11 +563,11 @@
       </div>
       <dl>
         <dt>Docs say</dt>
-        <dd>Testing §2.5 and the matrix mark report faithfulness as <span class="chip ok">unit</span> — "re-fetch its cited rows and diff the claim text against what those rows actually contain."</dd>
+        <dd>Testing §2.5 and the matrix mark report faithfulness as <span class="chip ok">unit</span> - "re-fetch its cited rows and diff the claim text against what those rows actually contain."</dd>
         <dt>Breaks</dt>
-        <dd>Checking whether a natural-language claim is <em>entailed</em> by a set of log rows is not a text diff. Written as a string comparison it will pass everything, which is worse than not having the check — it is a green test asserting nothing.</dd>
+        <dd>Checking whether a natural-language claim is <em>entailed</em> by a set of log rows is not a text diff. Written as a string comparison it will pass everything, which is worse than not having the check - it is a green test asserting nothing.</dd>
         <dt>Fix</dt>
-        <dd class="fix">Split it in two. The deterministic half is a real unit test: every cited <code>log_event.id</code> and <code>template_id</code> exists, falls inside the claimed window, and matches the claimed source and severity. The semantic half is an entailment judge (a third model call, different model from both the loop and the adversarial pass) scored on a labelled fixture set — reclassify it as <span class="chip correct">eval</span> in the matrix.</dd>
+        <dd class="fix">Split it in two. The deterministic half is a real unit test: every cited <code>log_event.id</code> and <code>template_id</code> exists, falls inside the claimed window, and matches the claimed source and severity. The semantic half is an entailment judge (a third model call, different model from both the loop and the adversarial pass) scored on a labelled fixture set - reclassify it as <span class="chip correct">eval</span> in the matrix.</dd>
       </dl>
     </div>
 
@@ -629,11 +629,11 @@
         </tr>
         <tr>
           <td>Structured critique from the adversarial pass; <code>InferredTemplate</code> from the bootstrapper</td>
-          <td><strong>Structured outputs.</strong> <code>client.messages.parse()</code> with a Pydantic model. Note assistant prefill is removed on all current models — if any prompt was going to lean on it to force JSON shape, this replaces it.</td>
+          <td><strong>Structured outputs.</strong> <code>client.messages.parse()</code> with a Pydantic model. Note assistant prefill is removed on all current models - if any prompt was going to lean on it to force JSON shape, this replaces it.</td>
         </tr>
         <tr>
           <td>Re-sending the template digest on every loop step</td>
-          <td><strong>Prompt caching.</strong> The system prompt plus the template summary is a large stable prefix repeated across every step of every investigation. One <code>cache_control</code> breakpoint after it is the single biggest cost lever in the design. Verify with <code>usage.cache_read_input_tokens</code> — put the incident-specific question <em>after</em> the breakpoint or nothing caches.</td>
+          <td><strong>Prompt caching.</strong> The system prompt plus the template summary is a large stable prefix repeated across every step of every investigation. One <code>cache_control</code> breakpoint after it is the single biggest cost lever in the design. Verify with <code>usage.cache_read_input_tokens</code> - put the incident-specific question <em>after</em> the breakpoint or nothing caches.</td>
         </tr>
       </tbody>
     </table>
@@ -648,7 +648,7 @@
   <p class="lede">
     The ordering principle: <strong>get one thin slice running end to end before widening any layer.</strong>
     The scaffolding document lists components by architectural grouping, which is the right way to
-    organize a repository and the wrong order to build one — it puts four adapters and a bootstrapper
+    organize a repository and the wrong order to build one - it puts four adapters and a bootstrapper
     ahead of the first line of agent code, and the agent loop is where the design risk actually lives.
     Phase 1 therefore builds the narrowest possible path from a JSONL file to a rendered report, then
     every later phase widens one layer of something that already works.
@@ -661,7 +661,7 @@
       <div class="phase-body">
         <div class="phase-head"><span class="phase-name">Decisions and skeleton</span><span class="phase-cost">~0.5 day</span></div>
         <ul>
-          <li>Resolve G1–G8 and amend the design docs — the docs are the spec, so the fixes belong in them, not only in code.</li>
+          <li>Resolve G1–G8 and amend the design docs - the docs are the spec, so the fixes belong in them, not only in code.</li>
           <li><code>git init</code>; <code>uv init</code>; <code>pyproject.toml</code> with the §11 dependency set; ruff, pytest, mypy.</li>
           <li><code>common/models.py</code> (<code>LogRecord</code>, <code>Template</code>, <code>Note</code>) and <code>common/config.py</code> with the pydantic model for <code>config.yaml</code>.</li>
           <li>Directory tree from scaffolding §1, every package with a real <code>__init__.py</code> and a failing placeholder test.</li>
@@ -673,7 +673,7 @@
     <div class="phase">
       <div class="rail"><div class="dot">1</div><div class="line"></div></div>
       <div class="phase-body">
-        <div class="phase-head"><span class="phase-name">Walking skeleton — one file to one report</span><span class="phase-cost">2–3 days</span></div>
+        <div class="phase-head"><span class="phase-name">Walking skeleton - one file to one report</span><span class="phase-cost">2–3 days</span></div>
         <ul>
           <li><code>json_lines</code> adapter only. No registry dispatch yet, no bootstrapper.</li>
           <li><code>Redactor</code> with three entities (email, ipv4, api_key), running <em>first</em> per G1.</li>
@@ -681,9 +681,9 @@
           <li><code>ScratchpadDB</code>: migrations, bulk insert, template upsert, <code>run_metadata</code> (G7).</li>
           <li>A deliberately dumb three-step agent: top templates by count → one <code>get_slice</code> → one <code>write_note</code>. Hardcoded, no model call.</li>
           <li>Jinja report template rendering notes plus the health block.</li>
-          <li>A synthetic 5,000-line incident fixture with a <strong>planted, known root cause</strong> — this fixture is the ground truth every later phase is measured against, so build it here.</li>
+          <li>A synthetic 5,000-line incident fixture with a <strong>planted, known root cause</strong> - this fixture is the ground truth every later phase is measured against, so build it here.</li>
         </ul>
-        <div class="exit"><b>Exit</b><code>mistify run --source fixture.jsonl</code> writes a markdown report naming the planted cause. Nothing intelligent has happened yet — but every seam between components has been proven, and from here each phase replaces one box with a real implementation.</div>
+        <div class="exit"><b>Exit</b><code>mistify run --source fixture.jsonl</code> writes a markdown report naming the planted cause. Nothing intelligent has happened yet - but every seam between components has been proven, and from here each phase replaces one box with a real implementation.</div>
       </div>
     </div>
 
@@ -692,13 +692,13 @@
       <div class="phase-body">
         <div class="phase-head"><span class="phase-name">Scratchpad and scoring hardening</span><span class="phase-cost">1–2 days</span></div>
         <ul>
-          <li>Real read-only enforcement per G4, plus the adversarial SQL suite testing §2.3 asks for — comment injection, CTEs, <code>PRAGMA</code>, <code>ATTACH</code>, and a runaway cartesian join against the timeout.</li>
+          <li>Real read-only enforcement per G4, plus the adversarial SQL suite testing §2.3 asks for - comment injection, CTEs, <code>PRAGMA</code>, <code>ATTACH</code>, and a runaway cartesian join against the timeout.</li>
           <li>Mandatory evidence constraint on <code>write_note</code>, enforced in the schema and not only in Python.</li>
           <li><code>anomaly_score</code> computation per G3, as a post-load SQL pass.</li>
           <li>Compression-ratio metric and the §6.1 calibration pass: try 2–3 <code>sim_th</code> values against a sample, pick the one landing in a sane band, record the choice in <code>run_metadata</code>.</li>
           <li>Full redaction entity set with the Luhn fix and the false-positive corpus from G5.</li>
         </ul>
-        <div class="exit"><b>Exit</b>The adversarial SQL suite passes. On the Phase 1 fixture, the planted anomalous template ranks top-5 by <code>anomaly_score</code> — that is what makes the adversarial check's third test real.</div>
+        <div class="exit"><b>Exit</b>The adversarial SQL suite passes. On the Phase 1 fixture, the planted anomalous template ranks top-5 by <code>anomaly_score</code> - that is what makes the adversarial check's third test real.</div>
       </div>
     </div>
 
@@ -710,12 +710,12 @@
           <li>Four tools as <code>@beta_tool</code> functions; Tool Runner drives the loop; every call writes a <code>query_log</code> row.</li>
           <li>Task budget plus the hard call cap; forced convergence path; the budget-limited flag written to <code>run_metadata</code> and surfaced verbatim in the report.</li>
           <li>Prompt caching around the system prompt and template digest.</li>
-          <li>Adversarial pass as structured output — a critique that <em>objects</em>, never one that rewrites (§6.2), with objections weighted by evidence strength.</li>
+          <li>Adversarial pass as structured output - a critique that <em>objects</em>, never one that rewrites (§6.2), with objections weighted by evidence strength.</li>
           <li>The rebuttal step from §6.2: the original reasoning answers the objection with one targeted query before anything finalizes. Cheap, and it is what turns a one-shot veto into a debate.</li>
           <li>Deterministic half of the citation check (G8) wired into report generation.</li>
           <li>Mocked-LLM tests: budget exhaustion, forced convergence, the budget-limited string actually appearing in output.</li>
         </ul>
-        <div class="exit"><b>Exit</b>A live run on the Phase 1 fixture identifies the planted cause with citations that resolve to real rows. Cost and tool-call count recorded — this is the first number worth comparing against a baseline.</div>
+        <div class="exit"><b>Exit</b>A live run on the Phase 1 fixture identifies the planted cause with citations that resolve to real rows. Cost and tool-call count recorded - this is the first number worth comparing against a baseline.</div>
       </div>
     </div>
 
@@ -725,7 +725,7 @@
         <div class="phase-head"><span class="phase-name">Format coverage and bootstrapper</span><span class="phase-cost">2–3 days</span></div>
         <ul>
           <li>Elastic, Loki, and OTLP adapters; <code>registry.detect_format()</code> with the 0.6 confidence floor.</li>
-          <li>Fixtures generated the way testing §6 prescribes — Loghub-2k pushed through real Elastic and Loki Docker stacks, then exported. Hand-authored export JSON gets the nesting and label conventions subtly wrong, and those quirks are the whole point of the adapters.</li>
+          <li>Fixtures generated the way testing §6 prescribes - Loghub-2k pushed through real Elastic and Loki Docker stacks, then exported. Hand-authored export JSON gets the nesting and label conventions subtly wrong, and those quirks are the whole point of the adapters.</li>
           <li>Structural shape clustering; LLM inference as structured output; the match-rate gate; sub-template retry; persisted inferred adapters.</li>
           <li>Detection confusion matrix across all fixtures, including deliberate near-misses.</li>
         </ul>
@@ -738,14 +738,14 @@
       <div class="phase-body">
         <div class="phase-head"><span class="phase-name">Evaluation harness</span><span class="phase-cost">2–4 days</span></div>
         <ul>
-          <li>Loghub-2k: template precision and recall against annotated ground truth, plus long-tail template behaviour specifically — rare templates are where incident signal lives and where clustering fails.</li>
+          <li>Loghub-2k: template precision and recall against annotated ground truth, plus long-tail template behaviour specifically - rare templates are where incident signal lives and where clustering fails.</li>
           <li>Loghub-2.0 at volume (Thunderbird, BGL): compression ratio and Drain3 throughput at real incident scale.</li>
           <li>LogDx-CI: end-to-end diagnosis correctness, cost per case, tool calls per case.</li>
-          <li>Baselines on the same cases — grep, tail, and raw injection — because a root-cause accuracy number means nothing without them.</li>
+          <li>Baselines on the same cases - grep, tail, and raw injection - because a root-cause accuracy number means nothing without them.</li>
           <li>The hand-built adversarial set testing §5 calls for: 10–15 cases, a subset carrying a deliberately plausible-but-wrong narrative, scored on catch rate <em>and</em> on false-flip rate against correct conclusions.</li>
           <li>Batch API for the sweeps.</li>
         </ul>
-        <div class="exit"><b>Exit</b>A scorecard table fit to paste into the README. This is the phase that separates the project from a demo, and it is the one most likely to get squeezed — protect it ahead of Phase 6.</div>
+        <div class="exit"><b>Exit</b>A scorecard table fit to paste into the README. This is the phase that separates the project from a demo, and it is the one most likely to get squeezed - protect it ahead of Phase 6.</div>
       </div>
     </div>
 
@@ -764,7 +764,7 @@
 
   </div>
 
-  <p style="margin-top:26px;"><strong>Total: roughly 11–17 focused days</strong> — call it three to four calendar weeks part-time. Phases 0–3 are strictly sequential; Phase 4 can run in parallel with Phase 5 if Loghub work starts while adapters are being written.</p>
+  <p style="margin-top:26px;"><strong>Total: roughly 11–17 focused days</strong> - call it three to four calendar weeks part-time. Phases 0–3 are strictly sequential; Phase 4 can run in parallel with Phase 5 if Loghub work starts while adapters are being written.</p>
 
   <h2><span class="num">04</span>If the schedule tightens</h2>
   <p class="lede">A descope ladder, from most to least defensible. Each rung is still a coherent thing to show.</p>
@@ -780,13 +780,13 @@
   <div class="decisions">
 
     <div class="decision">
-      <div class="q">Package name — <code>mistify</code> or <code>log-agent</code>?</div>
+      <div class="q">Package name - <code>mistify</code> or <code>log-agent</code>?</div>
       <p class="rec"><span>Rec</span>The repo is <code>mistify</code>; the scaffolding document says <code>log-agent/</code> throughout. Go with <code>mistify</code> for the distribution, package, and CLI, since it is the name that already exists and the docs are the newer thing to amend.</p>
     </div>
 
     <div class="decision">
       <div class="q">Do the chunking config keys stay?</div>
-      <p class="rec"><span>Rec</span><code>chunk_window_minutes</code> and <code>chunk_overlap_minutes</code> are in <code>config.yaml</code>, but no pipeline stage consumes them — the agent slices on demand via <code>get_slice</code> instead. Drop both for v1 rather than shipping config that does nothing; the overlapping-window idea is already recorded as a future improvement in architecture §4.</p>
+      <p class="rec"><span>Rec</span><code>chunk_window_minutes</code> and <code>chunk_overlap_minutes</code> are in <code>config.yaml</code>, but no pipeline stage consumes them - the agent slices on demand via <code>get_slice</code> instead. Drop both for v1 rather than shipping config that does nothing; the overlapping-window idea is already recorded as a future improvement in architecture §4.</p>
     </div>
 
     <div class="decision">
@@ -796,7 +796,7 @@
 
     <div class="decision">
       <div class="q">Start now, or amend the design docs first?</div>
-      <p class="rec"><span>Rec</span>Amend first — it is under an hour of edits to fold G1–G8 back into the three documents, and they are the spec everything else is built against. Then Phase 0.</p>
+      <p class="rec"><span>Rec</span>Amend first - it is under an hour of edits to fold G1–G8 back into the three documents, and they are the spec everything else is built against. Then Phase 0.</p>
     </div>
 
   </div>

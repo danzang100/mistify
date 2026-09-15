@@ -5,12 +5,12 @@ connection pool exhaustion, preceded by a rising connection-acquisition latency 
 
 Two properties are deliberate:
 
-*   A **red herring** is planted alongside it — a payment-gateway timeout that occurs far
+*   A **red herring** is planted alongside it - a payment-gateway timeout that occurs far
     more often than the root cause. A ranking heuristic that sorts on count alone picks the
     herring; one that sorts on severity first picks the real cause. That makes the Phase 1
     skeleton test discriminating rather than a formality, and it is the seed of the
     plausible-but-wrong eval set Phase 5 needs.
-*   **PII is planted at known positions** — addresses, client IPs and an API token — so the
+*   **PII is planted at known positions** - addresses, client IPs and an API token - so the
     redaction and stage-ordering tests can assert on exact values rather than on regex
     behaviour in the abstract.
 """

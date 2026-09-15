@@ -292,7 +292,7 @@ def high_cardinality_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A file with no repeated structure, carrying one rare FATAL line.
 
     Every message is a genuinely distinct shape, which is the input Drain3 handles worst:
-    nothing clusters, so the tree fills and starts evicting. The FATAL line is the needle —
+    nothing clusters, so the tree fills and starts evicting. The FATAL line is the needle -
     one line in two thousand, and the only severe thing in the file.
     """
     start = datetime(2026, 8, 30, 14, 0, 0, tzinfo=UTC)
@@ -359,7 +359,7 @@ def test_eviction_does_not_orphan_the_file(high_cardinality_ingest: IngestResult
 
     Reading final statistics off Drain3's own tree meant every event assigned to an evicted
     cluster pointed at a template row that was never written. On this file that orphaned
-    about 98% of the input — while the compression ratio reported a healthy-looking number,
+    about 98% of the input - while the compression ratio reported a healthy-looking number,
     because a ratio counts templates it can still see. The templater now keeps its own
     registry, so eviction costs matching, not reachability.
     """

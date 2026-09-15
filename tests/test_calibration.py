@@ -14,7 +14,7 @@ from mistify.templating.calibration import (
 
 
 def _repetitive(count: int = 400) -> list[str]:
-    """Highly structured lines — should compress hard at any sane threshold."""
+    """Highly structured lines - should compress hard at any sane threshold."""
     return [f"Handled GET /api/v2/item/{i} in {i % 90}ms" for i in range(count)]
 
 
@@ -28,7 +28,7 @@ def _over_mergeable(count: int = 200) -> list[str]:
 
 
 def _free_text(count: int = 200) -> list[str]:
-    """Lines with no shared shape — nothing to cluster, so compression must fail."""
+    """Lines with no shared shape - nothing to cluster, so compression must fail."""
     return [
         " ".join(f"tok{i}{j}" for j in range(i % 11 + 3)) + f" unique-{i}" for i in range(count)
     ]
@@ -104,7 +104,7 @@ def test_best_compression_is_rejected_when_it_destroys_signal() -> None:
     """The heart of the change: compression is not the objective.
 
     At the loosest threshold these 200 distinct messages collapse into a single
-    `event <*> <*> <*> <*> <*>` template — a compression ratio of 0.005, which is the *best*
+    `event <*> <*> <*> <*> <*>` template - a compression ratio of 0.005, which is the *best*
     score any candidate can post and the worst possible outcome. Selection must reject it in
     favour of the threshold that keeps the messages apart, even though that one compresses
     far worse.

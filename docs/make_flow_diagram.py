@@ -46,16 +46,20 @@ def box(x: float, y: float, w: float, h: float, fill: str, stroke: str, width: f
     )
 
 
-def arrow(x1: float, y1: float, x2: float, y2: float, colour: str = MUTED, dashed: bool = False) -> None:
+def arrow(
+    x1: float, y1: float, x2: float, y2: float, colour: str = MUTED, dashed: bool = False
+) -> None:
     dash = ' stroke-dasharray="5,4"' if dashed else ""
     parts.append(
         f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{colour}" stroke-width="2"{dash}/>'
     )
     # Arrowheads drawn as polygons: markers are the first thing an SVG-to-PDF converter drops.
     if x1 == x2:
-        parts.append(f'<polygon points="{x2 - 5},{y2 - 8} {x2 + 5},{y2 - 8} {x2},{y2}" fill="{colour}"/>')
+        head = f"{x2 - 5},{y2 - 8} {x2 + 5},{y2 - 8} {x2},{y2}"
+        parts.append(f'<polygon points="{head}" fill="{colour}"/>')
     else:
-        parts.append(f'<polygon points="{x2 - 8},{y2 - 5} {x2 - 8},{y2 + 5} {x2},{y2}" fill="{colour}"/>')
+        head = f"{x2 - 8},{y2 - 5} {x2 - 8},{y2 + 5} {x2},{y2}"
+        parts.append(f'<polygon points="{head}" fill="{colour}"/>')
 
 
 def stage(x: float, y: float, w: float, h: float, title: str, lines: list[str],
@@ -70,7 +74,7 @@ def stage(x: float, y: float, w: float, h: float, title: str, lines: list[str],
 
 parts.append(f'<rect width="{W}" height="{H}" fill="#ffffff"/>')
 
-text(40, 44, "mistify — incident log analysis pipeline", size=24, weight="bold")
+text(40, 44, "mistify - incident log analysis pipeline", size=24, weight="bold")
 text(40, 68, "Flow and build status. Green: built and measured. Amber: built, unproven or "
              "incomplete. Grey: not started.", size=13, fill=MUTED)
 
@@ -92,7 +96,7 @@ stage(X1, y, WCOL, 145, "1 · Ingest", [
     "loki written against captures from a running stack",
     "unknown -> bootstrap: structural, then model, gate 0.85",
     "then raw_lines: read anyway, recorded and warned about",
-    "elastic outstanding — needs a stack otel-lgtm is not",
+    "elastic outstanding - needs a stack otel-lgtm is not",
 ], PARTIAL, "PHASE 1/4")
 arrow(X1 + WCOL / 2, y + 145, X1 + WCOL / 2, y + 175)
 y += 175
@@ -101,7 +105,7 @@ stage(X1, y, WCOL, 110, "2 · Redact", [
     "regex + entity hashing, before templating",
     "api_key, email, ipv4, ipv6, ssn · 7,282 on fixture",
     "runs on every path: gzip, directory and inferred alike",
-    "ipv4 in a reverse-DNS host now caught — found on real logs",
+    "ipv4 in a reverse-DNS host now caught - found on real logs",
 ], DONE, "PHASE 1")
 arrow(X1 + WCOL / 2, y + 110, X1 + WCOL / 2, y + 140)
 y += 140
@@ -110,16 +114,16 @@ stage(X1, y, WCOL, 110, "3 · Template", [
     "Drain3, sim_th calibrated per file",
     "over-merge detection · eviction tracked",
     "Loghub-2k grouping accuracy: mean 0.907",
-    "OpenSSH 0.718 — structural, not a threshold",
+    "OpenSSH 0.718 - structural, not a threshold",
 ], DONE, "PHASE 2")
 arrow(X1 + WCOL / 2, y + 110, X1 + WCOL / 2, y + 140)
 y += 140
 
 stage(X1, y, WCOL, 110, "4 · Score anomalies", [
-    "severity × burstiness × rarity — no model",
+    "severity x burstiness x rarity - no model",
     "signal set cut at the largest score gap",
     "chronic templates flagged (>=90% of log span)",
-    "no duration term in the score — Issue 8",
+    "no duration term in the score - Issue 8",
 ], PARTIAL, "PHASE 2")
 arrow(X1 + WCOL / 2, y + 110, X1 + WCOL / 2, y + 140)
 y += 140
@@ -147,7 +151,7 @@ y2 += 158
 stage(X2, y2, WCOL, 92, "7 · Synthesis (disabled)", [
     "stronger model writes the conclusion from notes",
     "built, config default null, awaiting eval evidence",
-    "cannot introduce evidence — drops uncited ids",
+    "cannot introduce evidence - drops uncited ids",
 ], TODO, "HELD")
 arrow(X2 + WCOL / 2, y2 + 92, X2 + WCOL / 2, y2 + 122, dashed=True)
 y2 += 122
@@ -190,7 +194,7 @@ stage(X3, y3, 460, 110, "Cases: pool-exhaustion (+otlp)", [
 y3 += 140
 
 stage(X3, y3, 460, 128, "Case: quiet-hour", [
-    "negative control — nothing planted",
+    "negative control - nothing planted",
     "3 runs: 0/3 on the confidence bar",
     "but run 3 correctly said nothing is wrong",
     "the bar cannot separate right from wrong here",
@@ -217,7 +221,7 @@ stage(X3, y3, 460, 128, "LogDx-CI · foreign incidents", [
 y3 += 158
 
 stage(X3, y3, 460, 92, "Not started", [
-    "Phase 4: elastic — the one format still unread",
+    "Phase 4: elastic - the one format still unread",
     "Phase 5: LogDx-CI sweep with a model behind it",
     "Phase 6: MCP server, packaging",
 ], TODO, "PHASE 4-6")
@@ -229,7 +233,9 @@ arrow(X2 + WCOL, 174, X3, 174, dashed=True)
 text(X2 + WCOL + 14, 165, "scored by", size=11, fill=MUTED)
 
 # ---------------------------------------------------------------- footer
-parts.append(f'<line x1="40" y1="{H - 56}" x2="{W - 40}" y2="{H - 56}" stroke="{RULE}" stroke-width="1"/>')
+parts.append(
+    f'<line x1="40" y1="{H - 56}" x2="{W - 40}" y2="{H - 56}" stroke="{RULE}" stroke-width="1"/>'
+)
 text(40, H - 32,
      "Open: Issue 8 anomaly score has no duration term · Issue 9 no token ceiling · "
      "Issue 11 quiet-hour bar conflates confident-and-right with confident-and-wrong",

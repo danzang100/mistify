@@ -38,7 +38,7 @@ _config_option = click.option(
 @click.group()
 @click.version_option(__version__, prog_name="mistify")
 def cli() -> None:
-    """Mistify — incident log analysis agent."""
+    """Mistify - incident log analysis agent."""
     # A key in a .env file is a key the user has already provided; making them export it as
     # well is a setup step that earns nothing. Never overrides a real environment variable.
     load_dotenv(override=False)

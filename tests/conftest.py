@@ -32,7 +32,7 @@ def _no_live_model_calls(monkeypatch: pytest.MonkeyPatch) -> None:
 
     The CLI loads a `.env` file on startup, which is right for a user and dangerous in a test
     run: a command that defaults to the model-driven investigator would quietly spend real
-    quota and return a different answer every time. This already happened once — a test
+    quota and return a different answer every time. This already happened once - a test
     asserting that a missing credential fails cleanly instead passed, because it had silently
     performed a live investigation.
 

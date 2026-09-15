@@ -13,28 +13,28 @@ or one of the design documents, the fix column says which document to amend.
 |---|---|---|
 | 1. Two rankings coexist | Medium | 3 |
 | 2. Anomaly scores are global, computed once | Medium | 3 |
-| 3. The anomaly baseline is the incident itself | High | 4/5 — promote from "Future" |
+| 3. The anomaly baseline is the incident itself | High | 4/5 - promote from "Future" |
 | 4. No index for trace correlation | ~~Medium~~ | **Fixed** |
 | 5. Unimplemented adapters are dropped silently | Low | 4 |
 | 6. Noise thresholds are defined in two places | ~~Medium~~ | **Fixed** |
-| 7. The provider seam drops thinking blocks | ~~Medium~~ | **Fixed** — it was a hard requirement, not a cost |
-| 8. The anomaly score has no duration term | Medium | 4 — worked around, not solved |
+| 7. The provider seam drops thinking blocks | ~~Medium~~ | **Fixed** - it was a hard requirement, not a cost |
+| 8. The anomaly score has no duration term | Medium | 4 - worked around, not solved |
 | 9. Conversation growth is bounded but not budgeted | Medium | 4 |
 | 13. `parse_timestamp` cannot read common log format | Low | 5 |
 | 12. Model requests had no timeout | ~~High~~ | **Fixed** |
-| 11. The quiet-hour bar cannot tell right from wrong | High | next — vacuity gated, judge question outstanding |
-| 10. The investigator under-cites what it reasons over | ~~Medium~~ | **Fixed** — the check moved earlier, not a better prompt |
+| 11. The quiet-hour bar cannot tell right from wrong | High | next - vacuity gated, judge question outstanding |
+| 10. The investigator under-cites what it reasons over | ~~Medium~~ | **Fixed** - the check moved earlier, not a better prompt |
 | 14. Burstiness and rarity are degenerate on ordinal timestamps | Medium | next |
 | 15. The accounting role is decided by citations alone | Medium | next |
-| 16. Templating is the ingest bottleneck and its share grows | High | next — scale |
-| 17. Threshold calibration adds almost nothing over a constant | High | 5 — scorecard |
+| 16. Templating is the ingest bottleneck and its share grows | High | next - scale |
+| 17. Threshold calibration adds almost nothing over a constant | High | 5 - scorecard |
 
 ---
 
-## 8 — The anomaly score has no duration term
+## 8 - The anomaly score has no duration term
 
 **Problem.** Severity, burstiness and rarity say nothing about how long a template was active.
-A steady background error stream — 350 events spread evenly across the whole log — scores as
+A steady background error stream - 350 events spread evenly across the whole log - scores as
 signal, ranks above templates confined to the outage, and is then held against the
 investigation for not explaining it.
 
@@ -42,7 +42,7 @@ investigation for not explaining it.
 sample incident for ignoring two chronic templates that were correctly ignored. A warning that
 fires on every run is one a reader learns to skip, which costs more than the check is worth.
 
-**What landed.** Chronic templates — active for at least `CHRONIC_SHARE` of the log's own span —
+**What landed.** Chronic templates - active for at least `CHRONIC_SHARE` of the log's own span -
 are excluded from the unexplained-signal warning and counted separately as an observation. The
 report labels them, and an issue resting entirely on chronic templates is marked *background*.
 
@@ -55,7 +55,7 @@ is where the score would gain the term.
 
 ---
 
-## 9 — Conversation growth is bounded but not budgeted
+## 9 - Conversation growth is bounded but not budgeted
 
 **Problem.** The loop re-sends the whole conversation on every step, so cost is quadratic in
 steps. `pipeline.max_agent_tool_calls` caps calls, not context.
@@ -67,12 +67,12 @@ default instead of 200 and say how many they withheld; tool output older than
 first's.
 
 **What has not.** There is still no token ceiling. A run that grows anyway is reported, not
-stopped. The mechanism to stop it already exists — `_converge` takes the tools away and demands
-a conclusion — and wiring a `llm.max_run_tokens` into it is the remaining work.
+stopped. The mechanism to stop it already exists - `_converge` takes the tools away and demands
+a conclusion - and wiring a `llm.max_run_tokens` into it is the remaining work.
 
 ---
 
-## 1 — Two rankings coexist
+## 1 - Two rankings coexist
 
 **Problem.** The Phase 1 skeleton investigator picks its target with
 `db.top_templates(limit=10, order_by="severity")`, which orders by `max_severity_rank DESC,
@@ -88,14 +88,14 @@ invisible to the reader: both halves look internally consistent.
 **Recommended fix.** When the real agent loop lands in Phase 3, make `anomaly_score`
 authoritative everywhere and delete the severity-ordered selection path. Severity is already
 the heaviest input to the score (weight 0.5, decision G3), so nothing is lost by dropping the
-separate severity ranking — it is a coarser version of a signal the score already carries.
+separate severity ranking - it is a coarser version of a signal the score already carries.
 
 **Where.** `src/mistify/agent/skeleton.py`, `src/mistify/report/generator.py`,
 `ScratchpadDB.top_templates` in `src/mistify/scratchpad/db.py`.
 
 **Target phase.** 3.
 
-## 2 — Anomaly scores are global, computed once
+## 2 - Anomaly scores are global, computed once
 
 **Problem.** Scoring runs as a single post-load pass over the whole incident, at the end of
 ingest, and the result is written once into `templates.anomaly_score`. The Phase 3 agent will
@@ -108,9 +108,9 @@ no reason the window can justify. Burstiness is the component that inverts most 
 it is measured against the mean over the entire incident span. The agent would be ranking a
 slice using numbers computed for a file.
 
-**Recommended fix.** Either recompute scores per slice when the agent narrows — `score_templates`
+**Recommended fix.** Either recompute scores per slice when the agent narrows - `score_templates`
 already takes burst statistics as an argument, so this is a query-scope change rather than a
-rewrite — or document that ranking is valid only at full-file scope and have the tool layer
+rewrite - or document that ranking is valid only at full-file scope and have the tool layer
 say so in the slice results. Either is defensible; leaving it undecided is not.
 
 **Where.** `src/mistify/scratchpad/anomaly.py`, the scoring pass in `src/mistify/pipeline.py`,
@@ -118,7 +118,7 @@ say so in the slice results. Either is defensible; leaving it undecided is not.
 
 **Target phase.** 3.
 
-## 3 — The anomaly baseline is the incident itself
+## 3 - The anomaly baseline is the incident itself
 
 **Problem.** `anomaly_score` is computed entirely from the ingested file's own distribution.
 No baseline corpus, no history: rare within this file equals suspicious. That is a deliberate
@@ -129,7 +129,7 @@ service nobody has ingested before.
 traffic with a rare fault buried in it. People export logs because something broke. Hand the
 pipeline the five minutes around an outage and the failing template becomes the *most common*
 thing in the file, while the surviving healthy requests are the rare ones. Rarity does not
-merely weaken there — it inverts, and points away from the cause.
+merely weaken there - it inverts, and points away from the cause.
 
 Severity partly compensates, which is why it carries the heaviest weight. That compensation
 disappears on logs with no severity field, where every event defaults to INFO and the severity
@@ -138,7 +138,7 @@ the whole ranking.
 
 **Recommended fix.** The architecture document lists "persist and reuse template trees across
 incidents" under future improvements. It is not a nice-to-have. It is the only real fix for
-the baseline problem, and it should be promoted out of "Future" into a numbered phase —
+the baseline problem, and it should be promoted out of "Future" into a numbered phase -
 alongside the adapter work in Phase 4 or the evaluation harness in Phase 5, whichever picks up
 cross-incident state first. Cross-incident persistence is what makes "first time this error
 has ever occurred" expressible at all; without it, novelty can only ever mean "rare in this
@@ -146,11 +146,11 @@ export".
 
 **Where.** `src/mistify/scratchpad/anomaly.py`; decision G3 in `docs/v1-decisions.md`.
 
-**Amend.** Architecture §4 — move persisted template trees out of "future improvements".
+**Amend.** Architecture §4 - move persisted template trees out of "future improvements".
 
 **Target phase.** 4/5, reclassified from "Future".
 
-## 4 — No index for trace correlation — FIXED
+## 4 - No index for trace correlation - FIXED
 
 **Resolved.** Migration `0004_trace_id` promotes `trace_id` to a real column with an index and
 backfills it from `fields_json`, so an existing scratchpad gains the capability without a
@@ -160,7 +160,7 @@ NULL rather than `""`: grouping on an empty string would invent one request out 
 untraced line in the file.
 
 The prediction below was right about the timing and wrong about the reason. The cost never
-landed, because no query was ever written — the field sat unread for three phases. What forced
+landed, because no query was ever written - the field sat unread for three phases. What forced
 it was reading a real run: the investigator had no way to follow one request across services,
 and the field it needed was in the database the whole time.
 
@@ -171,7 +171,7 @@ The original write-up follows.
 that JSON blob and nothing indexes it.
 
 **Why it matters.** The architecture names trace_id correlation as the skew-independent
-fallback when clocks drift between sources — the answer to time-window slicing misaligning
+fallback when clocks drift between sources - the answer to time-window slicing misaligning
 causally-related events. Reaching a trace through `fields_json` means a full table scan with
 `json_extract` over every event in the incident, on a corpus deliberately sized in gigabytes.
 No query does this today, so nothing is slow yet; the cost lands the moment Phase 3 implements
@@ -184,11 +184,11 @@ commits schema to a field no code reads.
 **Where.** `src/mistify/scratchpad/migrations/0004_trace_id.sql`;
 architecture §6 failure table, "Clock skew across sources".
 
-## 5 — Unimplemented adapters are dropped silently
+## 5 - Unimplemented adapters are dropped silently
 
 **Problem.** `detect_format` intersects the configured `adapters.registered` list with the
 implemented `ADAPTERS` map: `[n for n in registered if n in ADAPTERS]`. A configured name with
-no implementation behind it — `elastic`, `loki` and `otlp` today — is filtered out with no
+no implementation behind it - `elastic`, `loki` and `otlp` today - is filtered out with no
 error, no warning and no metric.
 
 **Why it matters.** It contradicts the design principle that every stage must be able to fail
@@ -209,7 +209,7 @@ the first adapter that can be named but not built.
 
 **Target phase.** 4.
 
-## 6. Noise thresholds are defined in two places — FIXED
+## 6. Noise thresholds are defined in two places - FIXED
 
 **Resolved.** `NoiseThresholds` is now a single value built from config by
 `AnomalyConfig.noise_thresholds()`, and the query layer has no defaults to fall back on.
@@ -227,7 +227,7 @@ of two numbers.
 **Why it matters.** It is latent today only because no production caller passes
 `exclude_noise=True` without naming both thresholds: the skeleton investigator and the report
 both omit it, so only tests exercise the defaults. It stops being latent the moment the Phase 3
-agent calls `get_slice(exclude_noise=True)` — which is exactly what noise suppression was built
+agent calls `get_slice(exclude_noise=True)` - which is exactly what noise suppression was built
 for. The agent would then be handed a threshold `config.yaml` never set, and tuning the config
 would silently change nothing.
 
@@ -238,32 +238,32 @@ already reaches the code that uses it.
 
 **Where.** `src/mistify/scratchpad/db.py`; `src/mistify/common/config.py` lines 121-122.
 
-**Target phase.** 3, and before the agent loop rather than after — it is cheaper to thread
+**Target phase.** 3, and before the agent loop rather than after - it is cheaper to thread
 config through three signatures than to explain later why a documented setting had no effect.
 
 **Note.** This was raised as its own candidate in the Phase 2 architecture review and did not
 make it into this register at the time. Recorded now so it is not rediscovered a third time.
 
-## 7. The provider seam drops thinking blocks — FIXED
+## 7. The provider seam drops thinking blocks - FIXED
 
-**Resolved, and it turned out to be more serious than recorded below.** On Anthropic — whose
-adapter has since been removed — this was a token cost. On Gemini it is a hard requirement: replaying a `functionCall` part without its
+**Resolved, and it turned out to be more serious than recorded below.** On Anthropic - whose
+adapter has since been removed - this was a token cost. On Gemini it is a hard requirement: replaying a `functionCall` part without its
 `thought_signature` is rejected with `400 INVALID_ARGUMENT`, so the second turn of every
 investigation failed. `ToolCall` now carries an opaque `signature` that adapters populate and
-hand back verbatim. Opaque is the load-bearing word — nothing above the seam reads it, because
+hand back verbatim. Opaque is the load-bearing word - nothing above the seam reads it, because
 the moment it acquires a meaning it stops being a seam and becomes one vendor's data model
 leaking upward.
 
 Worth noting how it was found: it did not show up in review or in any test, because with one
 adapter there was nothing to disagree with. The second adapter is what made the seam's gap
-visible on its first real run. That is the argument for two adapters, demonstrated — and worth
+visible on its first real run. That is the argument for two adapters, demonstrated - and worth
 remembering now that the codebase is back down to one.
 
 The original write-up follows.
 
 
 **Problem.** `Turn` in `src/mistify/llm/base.py` carries text, tool calls, a stop reason and
-usage — but not the model's reasoning blocks. `AnthropicProvider` therefore discards them, and
+usage - but not the model's reasoning blocks. `AnthropicProvider` therefore discards them, and
 the loop never sends them back.
 
 **Why it matters.** On a provider that returns reasoning, replaying it unchanged on the next
@@ -284,15 +284,15 @@ replay).
 harness will measure the token cost directly and say whether it is worth the seam widening.
 
 **Note.** Found while building the Anthropic adapter, not by the review. The seam is mine and
-this is a gap in it — recorded rather than absorbed, because a silently costlier loop is
+this is a gap in it - recorded rather than absorbed, because a silently costlier loop is
 exactly the kind of thing that gets attributed to the model later.
 
 ---
 
-## 10 — The investigator under-cites what it reasons over
+## 10 - The investigator under-cites what it reasons over
 
 **Problem.** Across nine runs of the sample incident the loop cited templates 8 and 9 every
-time and template 7 never — while three of those runs named template 7 in the finding's prose
+time and template 7 never - while three of those runs named template 7 in the finding's prose
 as the precursor. It cites what the claim is chiefly about and omits the context it reasons
 over.
 
@@ -300,13 +300,12 @@ over.
 tests citation, so a template discussed in a note is still reported as unaccounted for: the
 warning is correct by its own definition and misleading to a reader. And a claim whose
 supporting context cannot be followed back to rows is the exact failure the citation discipline
-exists to prevent — the report says "preceded by slow connection acquisitions" and offers no
+exists to prevent - the report says "preceded by slow connection acquisitions" and offers no
 way to check it.
 
 **Fixed, and not by the prompt.** Asking for it in the system prompt changed nothing: the run
 after that change cited 8 and 9 and did not mention template 7 at all. Ten runs, zero hits. The
-prompt fix also could not have worked in the six runs where the model never named the template
-— there was nothing for "cite what you name" to bite on.
+prompt fix also could not have worked in the six runs where the model never named the template - there was nothing for "cite what you name" to bite on.
 
 What worked was moving a check that already existed. `unexplained_signal_templates` is
 model-free and ran in the adversarial pass, after the investigation had ended, where it could
@@ -316,7 +315,7 @@ not relevant. Bounded by `pipeline`-level `coverage_nudges` so a model that keep
 cannot spin the loop, and chronic templates are excluded on the same grounds as issue 8.
 
 First run with it: templates 7, 8 and 9 cited across two notes, `unexplained_signal` 0, no
-warnings — against 0/10 before. One run, and one positive against a stable zero baseline is
+warnings - against 0/10 before. One run, and one positive against a stable zero baseline is
 strong but not conclusive; the confirmation runs are still owed.
 
 **Note on the diagnosis.** "Cite what you name" was aimed at the 3-in-9 case where prose and
@@ -330,7 +329,7 @@ now part of the repeat protocol in `docs/baseline.md`.
 
 ---
 
-## 11 — The quiet-hour bar cannot tell right from wrong
+## 11 - The quiet-hour bar cannot tell right from wrong
 
 **Problem.** The negative control scores `invents-no-incident` as "no note recorded at high
 confidence". Measured over three runs it scored 0/3, and one of those three had written the
@@ -367,7 +366,7 @@ behaviour actually looks like -- produced two wrong conclusions in `docs/baselin
 
 ---
 
-## 12 — Model requests had no timeout — FIXED
+## 12 - Model requests had no timeout - FIXED
 
 **Problem.** The Gemini adapter set no request timeout, so a request the server never answered
 blocked forever. Found the expensive way: an OTLP eval run sat alive for over thirty minutes
@@ -393,16 +392,16 @@ function: the wrong factor gives a 120-millisecond timeout that fails everything
 
 ---
 
-## 13 — `parse_timestamp` cannot read common log format
+## 13 - `parse_timestamp` cannot read common log format
 
-**Problem.** `30/Aug/2026:14:22:01 +0000` — the Apache/nginx access-log timestamp — raises
+**Problem.** `30/Aug/2026:14:22:01 +0000` - the Apache/nginx access-log timestamp - raises
 `ValueError`. The bootstrapper recognises the shape, so a CLF file infers a schema that matches
 every line and then produces zero records.
 
 **Currently contained, not fixed.** The match-rate gate now checks that the timestamp it
 extracts actually parses, so a CLF file fails the gate and falls to raw-line mode: readable,
 labelled, and honest. Before that check the same file validated at 100% and ingested nothing,
-silently — the exact failure the gate exists to prevent, and it was the gate that was letting it
+silently - the exact failure the gate exists to prevent, and it was the gate that was letting it
 through.
 
 **Fix.** Teach `parse_timestamp` the CLF shape. It is a self-contained addition to one function
@@ -415,13 +414,13 @@ change.
 
 ---
 
-## 14 — Burstiness and rarity are degenerate on ordinal timestamps
+## 14 - Burstiness and rarity are degenerate on ordinal timestamps
 
 **Problem.** A file read as `raw_lines` has no timestamps; the adapter supplies line ordinals so
 the schema and every ordering query have something to work with. Burstiness is then measured
 over one-minute buckets of *line numbers*, and its formula saturates for anything rare:
 `max_per_bucket / (count / total_buckets)` gives a template with one occurrence a burstiness of
-`1 - 1/total_buckets` regardless of what it is. Rarity is near-constant for the same reason —
+`1 - 1/total_buckets` regardless of what it is. Rarity is near-constant for the same reason -
 9,307 templates for 10,992 events means almost every template has a count of one. Two of the
 three terms carry no information, and until Phase 5 the third carried none either, which is how
 the digest came to be ordered by first appearance.
@@ -435,13 +434,13 @@ top five from 14 of 65 to 19 and cleared the section banners out of the set the 
 enforces. Rarity is untouched.
 
 **Measured, and deliberately not taken.** Zeroing burstiness and rarity as well scores best of
-six weightings — 31 of 47 markers on unseen cases against the shipped 27 — but the corpus that
+six weightings - 31 of 47 markers on unseen cases against the shipped 27 - but the corpus that
 says so is entirely ordinal-timestamped. An unlabelled log *with* real timestamps is the case
 that would be damaged, and nothing here measures it.
 
 **Fix.** Detect the condition rather than the corpus: the pipeline already counts
 `unparseable_timestamp` per line, so a file whose timestamps are synthetic could drop
-burstiness the same way an unlabelled file drops severity — one rule, one metric, the same
+burstiness the same way an unlabelled file drops severity - one rule, one metric, the same
 redistribution. Rarity needs its own answer; inverse log frequency against the most common
 template says nothing when the mode is one, which is the remaining half of the flat-tie problem
 now that singleton burstiness is gone.
@@ -449,7 +448,7 @@ now that singleton burstiness is gone.
 **Related, and now fixed at the source.** The flat tie had a second cause outside the scorer:
 GitHub Actions stamps an ISO instant on the front of every line, and Drain3 kept it, so almost
 every line was its own template. Masking it as transport rather than content took the twenty
-LogDx-CI cases from **43,589 templates to 7,795** — hibernate from 22,071 to 453 — with Loghub
+LogDx-CI cases from **43,589 templates to 7,795** - hibernate from 22,071 to 453 - with Loghub
 grouping accuracy unchanged to the digit. Rarity is still degenerate, but on a far smaller
 population.
 
@@ -457,7 +456,7 @@ population.
 `severity_source` is the shape the decision should take. Related: Issue 2 (scores are global)
 and Issue 8 (no duration term), both of which also live in the same function.
 
-## 15 — The accounting role is decided by citations alone
+## 15 - The accounting role is decided by citations alone
 
 **Problem.** `ToolBox._write_note` tags a note `accounting` when its cited templates fall
 entirely inside the set a coverage nudge named. That is the only structural signal available:
@@ -469,7 +468,7 @@ The rule is exact when it fires and silent when it does not. Measured on three r
 
 | run | nudged | note answering it | tagged |
 |---|---|---|---|
-| sample incident | `{7}` | cites 7 and 9 — establishes the precursor | `finding`, correctly |
+| sample incident | `{7}` | cites 7 and 9 - establishes the precursor | `finding`, correctly |
 | quiet-hour | `{1,3,4}` | dismisses 1, 3, 4 and re-cites 5, 6 from its own earlier note | `finding`, **arguably wrong** |
 | customer-log slice | `{4,14,35,45,47}` | dismisses exactly those | `accounting`, correctly |
 
@@ -479,8 +478,8 @@ actively causes this: *"Cite every template your note names, not only the one th
 chiefly about"*, because a template discussed in prose but missing from citations is reported as
 unaccounted for. So the two rules pull against each other and this will recur.
 
-**Why it is not fixed now.** The obvious widening — accounting when the note introduces nothing
-outside *nudged ∪ already-cited* — was checked against the same three runs and mis-tags the
+**Why it is not fixed now.** The obvious widening - accounting when the note introduces nothing
+outside *nudged ∪ already-cited* - was checked against the same three runs and mis-tags the
 sample incident's second note, which cites one nudged template plus one the run had already
 cited and is a genuine finding about the precursor. Strict has a false negative, wide has a
 false positive, and at n=3 there is nothing to choose between them. Trading one error for the
@@ -488,14 +487,14 @@ other without measuring is the mistake this project has already made once with t
 
 **Recommended fix.** Gather cases first. `investigate.nudged_templates` now records what each
 nudge asked about, so any run from here on is re-scorable against a candidate rule without
-being re-run. Revisit once a handful of runs on logs with degenerate rankings exist — that is
+being re-run. Revisit once a handful of runs on logs with degenerate rankings exist - that is
 the only shape where the tag does any work, since a fixture whose ranking works has the nudge
 naming the real cause.
 
 **Target phase.** Next, alongside the plausible-but-wrong set, whose seeded conclusions can
 produce both shapes deliberately rather than waiting for a model to produce them by chance.
 
-## 16 — Templating is the ingest bottleneck, and its share grows with scale
+## 16 - Templating is the ingest bottleneck, and its share grows with scale
 
 **Problem.** Ingest throughput decays badly: 7,444 lines/s at 500k lines, 4,347 at 2M, and
 about 2,100 by 7.5M on the same corpus. Measured with the database removed entirely, Drain3
@@ -507,7 +506,7 @@ alone accounts for it:
 | 2,000,000 | 4,347 | 5,553 | **78%** | 180.1 | 2,208 |
 
 Templating decays **2.09×** where the whole pipeline decays 1.71×, so it is not merely the
-largest component — it is the one getting worse, and every other optimisation is working on a
+largest component - it is the one getting worse, and every other optimisation is working on a
 shrinking share. Note also that per-line cost more than doubled while the cluster count grew
 only 1.48×, so the cost is not simply proportional to clusters.
 
@@ -520,14 +519,14 @@ at 2, 64 and 256 MB:
 | 500,000 | 7,444 | 7,059 | 7,510 |
 | 2,000,000 | 4,347 | 4,294 | 4,350 |
 
-Within noise, and the gap does not widen with scale — which it must if cache were the
+Within noise, and the gap does not widen with scale - which it must if cache were the
 constraint. A 128× increase buys nothing. The knob was removed rather than shipped; the numbers
 are in a comment at the PRAGMA site so the next person with this very reasonable idea does not
 spend the time again.
 
 **Candidate fixes, with what is already measured about each.**
 
-*   **Memoise the masked message — measured and rejected.** 36.0% of 500k and 38.1% of 2M
+*   **Memoise the masked message - measured and rejected.** 36.0% of 500k and 38.1% of 2M
     masked messages are exact repeats, so a cache from masked message to template id looked
     like ~38% off templating for nothing. It is not exact, it is not fast, and it is not cheap:
 
@@ -649,7 +648,7 @@ none of that.
 The customer log's own pass was at least internally consistent -- parse 7%, redact 24%,
 template 16%, rest 53% -- and is recorded as an indication rather than a measurement.
 
-**Why depth 12 produced fewer clusters — answered, and it is not the child cap.** The
+**Why depth 12 produced fewer clusters - answered, and it is not the child cap.** The
 suspicion was Drain's `max_children` limit of 100 funnelling excess tokens into a shared `<*>`
 child. Measured: **zero** nodes at the cap on either corpus. The mechanism is
 `parametrize_numeric_tokens`, which turns any digit-bearing token into `<*>` for routing. Deeper
@@ -681,8 +680,8 @@ the 3 leading positions that are constant across 95% of a sample:
 | customer, strip 3 | 694 | 250 | 11.7 |
 
 Worse on both. **Leaves stayed at 32**, which is the number that explains it: the constant prefix
-was never gating leaf count. Leaf count comes from token-count diversity — 28 distinct counts on
-Thunderbird against 174 on the customer log — and removing the same three tokens from every line
+was never gating leaf count. Leaf count comes from token-count diversity - 28 distinct counts on
+Thunderbird against 174 on the customer log - and removing the same three tokens from every line
 shifts every count equally and adds no diversity at all.
 
 Clusters then doubled because Drain's similarity is matching positions over total positions.
@@ -696,7 +695,7 @@ repeated five times, 300k records, inside the synced tree and outside it: spread
 exercises reads for two seconds, where the anomalies were on multi-minute runs writing gigabytes,
 so the write-path hypothesis is untested rather than refuted.
 
-The useful part is that short repeats are stable at all — 1.07x to 1.29x — where single long
+The useful part is that short repeats are stable at all - 1.07x to 1.29x - where single long
 passes swung two- to fourfold. That points at a time-correlated perturbation rather than a
 location-correlated one, and it makes the mitigation the same either way: **measure in short
 repeats and report the minimum**, never a single long pass. Minimum is the right estimator
@@ -710,14 +709,14 @@ lowers matching cost directly.
 
 **A separate finding, worth its own look.** 0.37% of distinct messages are assigned more than
 one cluster over a run with no cache involved. That fragments a template's statistics across
-two ids — the same condition counted twice, with two anomaly scores — and it is a property of
+two ids - the same condition counted twice, with two anomaly scores - and it is a property of
 the templater rather than of anything downstream. Small, but it is the sort of thing that makes
 a count in a report quietly wrong.
 
 **Target phase.** Next, ahead of any further storage work: at 2M lines the whole storage layer
 is 22% of ingest and falling, and the safe storage wins left are worth about 3%.
 
-## 17 — Grouping accuracy is 0.745, and threshold selection is near its ceiling
+## 17 - Grouping accuracy is 0.745, and threshold selection is near its ceiling
 
 **What was measured.** Grouping accuracy across all fifteen Loghub-2k systems, not the four the
 handoff reports:
@@ -740,7 +739,7 @@ ratio, over-merge risk -- and never the accuracy it is scored on:
 | rule | mean GA | vs shipped |
 |---|---|---|
 | plateau end | 0.755 | +0.010 |
-| **current: fewest templates among safe** | **0.745** | — |
+| **current: fewest templates among safe** | **0.745** | - |
 | fixed 0.4 | 0.740 | -0.005 |
 | fixed 0.6 | 0.697 | -0.048 |
 | knee of the count curve | 0.684 | -0.061 |

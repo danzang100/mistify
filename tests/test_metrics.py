@@ -25,7 +25,7 @@ from mistify.redaction.patterns import ENTITY_ORDER
 #: Every `(stage, metric)` pair the vocabulary declares.
 #:
 #: This is the one place metric names are written as literals. Tests elsewhere import the
-#: constants, so a rename updates them silently and no assertion notices — the safety there
+#: constants, so a rename updates them silently and no assertion notices - the safety there
 #: comes from the type checker. Here it must fail loudly, because renaming a metric changes
 #: the wire format of an existing scratchpad and breaks any report reading one.
 EXPECTED_METRIC_KEYS = {
