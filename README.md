@@ -4,13 +4,9 @@ Incident log analysis agent. Compresses gigabyte-scale, heterogeneous incident l
 queryable SQLite representation, lets a bounded agent loop investigate it via SQL slices,
 adversarially checks the conclusion, and emits a structured incident report.
 
-Design documents live in [`docs/`](docs/). The build order and the resolved v1 design questions
-are in [`docs/log-agent-v1-build-plan.html`](docs/log-agent-v1-build-plan.html) and
-[`docs/v1-decisions.md`](docs/v1-decisions.md).
-
 ## Status
 
-**Phases 0-5 of 6 are built; Phase 6 is partly built.** A model drives the investigation through
+**What works today.** A model drives the investigation through
 the scratchpad tools, behind a provider seam, with an adversarial pass that objects to the
 conclusion rather than rewriting it. Four formats are read - JSON Lines, OTLP, Loki, and
 anything else via the bootstrapper or the raw-line fallback. An Elastic adapter is written but
@@ -21,23 +17,16 @@ hand-authored fixture is exactly the kind of evidence it should not be trusted o
 ingest, templating, scoring, reporting, and the deterministic `--investigator skeleton` - runs
 with no account anywhere, and so does the entire test suite.
 
-| Phase | Scope | State |
-|-------|-------|-------|
-| 0 | Decisions, repo skeleton, config | done |
-| 1 | Walking skeleton: JSONL -> redact -> Drain3 -> SQLite -> report | done |
-| 2 | `anomaly_score`, Drain3 threshold calibration, over-merge detection, full redaction set | done |
-| 3 | Provider seam, agent loop, adversarial pass with rebuttal | done |
-| 4 | Elastic / Loki / OTLP adapters, unknown-format bootstrapper | Elastic written, unregistered |
-| 5 | Evaluation harness (Loghub, LogDx-CI, baselines, seeded conclusions) | done |
-| 6 | MCP server, HTML/PDF reports, packaging | reports done; MCP server and packaging not started |
-
-[`docs/implementation-map.html`](docs/implementation-map.html) describes what is actually
-built, stage by stage, with the measurement behind each number - the other five documents in
-`docs/` describe the v1 plan rather than the code.
-
-Deferred problems, each with a recommended fix and a target phase, are in
-[`Issue.md`](Issue.md). Two of them (#1 two rankings, #2 whole-file anomaly scores) are Phase 3
-decisions that are now due.
+| Area | State |
+|------|-------|
+| Ingest: adapters, redaction, Drain3 templating with threshold calibration, SQLite scratchpad | done |
+| Anomaly scoring and over-merge detection | done |
+| Provider seam, agent loop, adversarial pass with rebuttal | done |
+| JSON Lines / OTLP / Loki adapters, unknown-format bootstrapper, raw-line fallback | done |
+| Elastic adapter | written, unregistered |
+| Evaluation harness: Loghub, LogDx-CI, grep baselines, seeded wrong conclusions | done |
+| Markdown / HTML / PDF reports | done |
+| MCP server, PyPI packaging | not started |
 
 ## Install
 
@@ -72,14 +61,13 @@ in a `.env` file at the repo root, which the CLI loads on startup. A free AI Stu
 enough.
 
 The shipped models are the cheap tiers - `gemini-3.5-flash-lite` for the loop and
-`gemini-3.5-flash` for the adversarial pass. They must differ: architecture §6.3 requires the
-critique to run on a different model from the reasoning, and config rejects a run where they
-match. The loop is roughly fifteen calls to the critique's one, so the critique is the cheap
+`gemini-3.5-flash` for the adversarial pass. They must differ: a critique that shares the
+reasoning model shares its blind spots, so config rejects a run where they match. The loop is roughly fifteen calls to the critique's one, so the critique is the cheap
 place to spend more.
 
 Free-tier quotas are per-minute. The adapter retries throttling with backoff; if that is not
 enough, set `llm.min_interval_seconds` to space calls out. A run over the sample incident costs
-roughly 48k tokens end to end - see `docs/baseline.md`.
+roughly 48k tokens end to end (see *What a run costs*).
 
 Gemini is the only real provider that ships. The seam it sits behind (`src/mistify/llm/`) took
 a second adapter once and would take another; an Anthropic implementation lived there and was
@@ -162,8 +150,21 @@ subset of CSS; a browser's print-to-PDF on the HTML gives a better-looking file 
 
 ### What a run costs
 
-`docs/baseline.md` records the reference numbers for the sample incident. Compare against it
-rather than against memory.
+Reference numbers for `examples/sample_incident.jsonl`, recorded 2026-09-01, so a later change
+has something to be compared against rather than argued about from memory. The deterministic
+half should reproduce exactly; the model-driven half will move.
+
+| | Reference |
+|---|---|
+| Events ingested / templates | 4,946 / 9 |
+| Compression ratio | 0.00182 |
+| Redactions | 7,282 (6,226 ipv4, 1,044 email, 12 api_key) |
+| Signal templates, chronic among them | 5, 2 |
+| Steps / tool calls / notes written | 9 / 8 / 1 |
+| Loop tokens (in / out) | 46,648 / 393 |
+| Critique tokens (in / out) | 1,009 / 320 |
+| **Total tokens** | **48,370** |
+| Input growth factor | 2.69x |
 
 The loop re-sends the whole conversation on every step, so an early slice is paid for again on
 every step after it. Three things keep that bounded, and all three are measured rather than
@@ -294,8 +295,8 @@ trusted, and a persisted one would be a pattern nobody reviewed running on every
 
 Failing all that, the file is read line by line: no real timestamps, severity guessed from the
 text, and the report says so in words rather than presenting the resulting incident window as a
-fact. It is off by default - the architecture calls this stage's failure mode silent, and it is
-opted into rather than inherited.
+fact. It is off by default - this stage's failure mode is silent, a confidently wrong schema
+producing garbage templates with no error thrown, so it is opted into rather than inherited.
 
 ### Evaluate
 
@@ -332,8 +333,7 @@ correct diagnosis rests on anywhere in the ranked list the model reads first? It
 case, resolves its known markers against the digest, prints the rank of every one and exits
 non-zero if any sits below it. No model is called. The question was worth asking: on the five
 LogDx-CI dev cases the answer was zero of eighteen markers, which is why severity is now
-recovered from the template text when a file carries no severity field - see
-`docs/digest-rerank.md`.
+recovered from the template text when a file carries no severity field.
 
 ```bash
 uv run mistify eval --digest --logdx dev
@@ -341,10 +341,9 @@ uv run mistify eval --digest --logdx dev
 
 `--baseline naive|templated` replaces the investigation with a grep pipeline and scores it
 with the same checks - no model calls. On the incident both variants lead with the red herring;
-on the quiet hour both correctly claim nothing. The agent is the mirror image. See
-`docs/baseline.md`.
+on the quiet hour both correctly claim nothing. The agent is the mirror image.
 
-`--judge` adds the semantic half of decision G8: a model is asked whether each claim actually
+`--judge` adds the semantic half of citation checking: a model is asked whether each claim actually
 follows from the rows it cites. `verify_citations` proves the ids exist and cannot prove the
 rows say what the note says - a measured run cited two genuine log events, both unrelated INFO
 lines from other services, for a claim about database credentials. Off by default because it
@@ -380,7 +379,7 @@ chooses for each - mean **0.745**:
 A fixed `sim_th=0.4` scores 0.740 over the same fifteen, and the best threshold per system,
 chosen with the answer key in hand, reaches 0.842. That 0.097 is not recoverable at run time:
 seven selection rules were scored against the full grid, each seeing only what the pipeline
-sees, and the shipped rule sits within 0.010 of the best of them (`Issue.md` 17). A mean also
+sees, and the shipped rule sits within 0.010 of the best of them. A mean also
 hides that two log families are essentially not clustered at all - OpenStack and Proxifier are
 worth reading individually, not as part of an average.
 

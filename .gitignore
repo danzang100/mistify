@@ -17,3 +17,11 @@ examples/*.jsonl
 
 # Logs handed over for analysis. Real production data: never committed, like the corpora.
 test-logs/
+
+# Development documents: design plan, decisions, session handoffs, deferred issues, and the
+# measurement write-ups behind them. Kept locally, not shipped - the README is the user-facing
+# document and config.yaml is commented for the rest.
+HANDOFF.md
+CONTEXT.md
+Issue.md
+docs/

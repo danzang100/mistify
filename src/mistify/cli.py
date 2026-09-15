@@ -422,7 +422,7 @@ def eval_command(
         # §6.3 exists to prevent, and it should not pass silently.
         click.echo(
             f"warning: judge_model {config.llm.judge_model!r} is also the loop's or the "
-            "critique's model, so its verdicts are not independent (architecture §6.3).",
+            "critique's model, so its verdicts are not independent.",
             err=True,
         )
     reports = []
