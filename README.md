@@ -4,6 +4,10 @@ Incident log analysis agent. Compresses gigabyte-scale, heterogeneous incident l
 queryable SQLite representation, lets a bounded agent loop investigate it via SQL slices,
 adversarially checks the conclusion, and emits a structured incident report.
 
+## Note
+
+This was my first attempt at fully spec-driven AI-powered development. This idea of mine was originally inspired by a problem I had come across while researching on incident management and log summarization. Initially, it was just to create a pipeline which would ingest logs and be able to compress them for LLM-based analysis, but the sqlite scratchpad and investigative loop were also fun ideas that paid off. I'm open to any suggestions at all as well to make this tool better!
+
 ## Status
 
 **What works today.** A model drives the investigation through
