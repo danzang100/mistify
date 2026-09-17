@@ -35,6 +35,8 @@ MIGRATIONS: tuple[str, ...] = (
     "0003_objection_ids",
     "0004_trace_id",
     "0005_event_indexes",
+    "0006_brief",
+    "0007_rebuttal_evidence",
 )
 
 #: A template active for at least this share of the log's own span is chronic rather than part
@@ -180,11 +182,18 @@ class ScratchpadDB:
         source: str,
         format_name: str | None = None,
         redaction_mode: str | None = None,
+        brief: str | None = None,
     ) -> None:
+        """Open the incident row.
+
+        `brief` is what was reported, already redacted by the caller: this layer has no
+        redactor and must not grow one, so a caller that passes raw text is storing raw text.
+        """
         self._conn.execute(
             "INSERT OR REPLACE INTO incidents"
-            " (incident_id, created_at, source, format, redaction_mode) VALUES (?, ?, ?, ?, ?)",
-            (incident_id, _now(), source, format_name, redaction_mode),
+            " (incident_id, created_at, source, format, redaction_mode, brief)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (incident_id, _now(), source, format_name, redaction_mode, brief),
         )
         self._conn.commit()
 
@@ -483,8 +492,8 @@ class ScratchpadDB:
         self._conn.executemany(
             "INSERT INTO adversarial_objections"
             " (objection_id, claim, objection, severity, template_ids_json, log_event_ids_json,"
-            "  response, conceded, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  response, conceded, response_log_event_ids_json, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     str(o.get("objection_id", "")),
@@ -495,6 +504,7 @@ class ScratchpadDB:
                     json.dumps([int(i) for i in o.get("log_event_ids", [])]),
                     o.get("response"),
                     None if o.get("conceded") is None else int(bool(o.get("conceded"))),
+                    json.dumps([int(i) for i in o.get("response_log_event_ids", [])]),
                     now,
                 )
                 for o in objections
@@ -514,6 +524,9 @@ class ScratchpadDB:
             item = dict(row)
             item["template_ids"] = json.loads(item.pop("template_ids_json"))
             item["log_event_ids"] = json.loads(item.pop("log_event_ids_json"))
+            item["response_log_event_ids"] = json.loads(
+                item.pop("response_log_event_ids_json", None) or "[]"
+            )
             item["conceded"] = None if item["conceded"] is None else bool(item["conceded"])
             objections.append(item)
         return objections

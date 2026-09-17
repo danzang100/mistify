@@ -15,7 +15,7 @@ from mistify.common.models import NoiseThresholds
 def test_defaults_load_without_a_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     config = load_config()
-    assert config.pipeline.max_agent_tool_calls == 20
+    assert config.pipeline.max_agent_tool_calls == 30
     # Every implemented adapter, derived rather than listed. This asserted `["json_lines"]`
     # for three phases after Loki and OTLP shipped, so a caller building a config in code
     # instead of from YAML had one adapter registered and an OTLP export fell through to the

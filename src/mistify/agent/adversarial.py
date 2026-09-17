@@ -30,6 +30,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from mistify.agent.tools import MAX_CELL_CHARS, ToolBox, clip
 from mistify.llm.base import LLMProvider, Message, Usage
 from mistify.metrics import (
     ADVERSARIAL_CACHED_INPUT_TOKENS,
@@ -61,7 +62,7 @@ CRITIQUE_PROMPT = """You are checking an incident investigation someone else car
 You are not rewriting their conclusion and you cannot replace it. Your job is to object where
 objection is warranted, and to say plainly when it is not.
 
-Work through three questions:
+Work through four questions:
 
 1. Does every claim in the notes rest on the evidence it cites? You are given the cited rows.
    A claim the rows do not actually support is the most serious thing you can find.
@@ -69,6 +70,10 @@ Work through three questions:
    templates the ranking flagged as signal. Being ignored is not proof of relevance, but an
    unexplained one is worth raising.
 3. Is there a different explanation these same rows support at least as well?
+4. If what was reported is given, does the conclusion explain it? A finding that is true of
+   the log but does not account for the reported user, item or symptom is not a finding about
+   this incident, and an investigation that never looked for what was reported has not
+   investigated it. That is worth objecting to even when every citation holds.
 
 Rules:
 
@@ -91,19 +96,37 @@ Reply with JSON only, no prose around it:
 
 REBUTTAL_PROMPT = """Your investigation has been challenged. Answer the objections.
 
-For each one, either concede it, or answer it by pointing at evidence already in the
-scratchpad. Do not restate your conclusion; address the specific objection.
+Work in two phases.
+
+First, read. If tools are offered, use them before you answer. An objection is a claim about
+rows like any other, and a critique can misread a row: for every objection that names a row
+or a template, fetch it and the lines around it and check the objection describes them. An
+objection your cited rows do not answer may still be answerable from rows you did not cite -
+the same thread or session a few seconds on, the request that did or did not follow. Fetch
+the line that settles it rather than repeating what you already said. You have a few calls,
+not an investigation. Do not reply with your answer until you have read what you need; a
+reply that is only JSON ends the exchange.
+
+Then answer. For each objection, either concede it or answer it by pointing at rows. Do not
+concede on the objection's say-so: concede when the rows agree with the objection, answer
+when they do not, and say which it was. Do not restate your conclusion; address the specific
+objection.
 
 Every objection carries an id. Quote it back in `objection_id` so your answer is attached to
 the right one; an answer whose id matches no objection is reported as unmatched rather than
-guessed at.
+guessed at. Cite in `log_event_ids` the rows your answer rests on, from the `id` column of
+what you were shown; an id you were not shown is dropped.
 
-Reply with JSON only:
+When you have finished reading, reply with JSON only, in this shape:
 
 {"responses": [{"objection_id": "<the id you are answering>", "response": "<your answer>",
-                "conceded": true|false}],
+                "log_event_ids": [<int>], "conceded": true|false}],
  "revised_confidence": "low|medium|high"}
 """
+
+#: Tools the rebuttal is offered: the readers, never `write_note`. Answering an objection is
+#: not the moment to extend the conclusion.
+REBUTTAL_TOOLS: tuple[str, ...] = ("get_slice", "run_sql", "query_templates")
 
 
 @dataclass(slots=True)
@@ -223,7 +246,8 @@ def _evidence_bundle(db: ScratchpadDB) -> str:
             f"cited events:\n"
             + (
                 "\n".join(
-                    f"  [{r['id']}] {r['ts']} {r['severity']} {r['source']} :: {r['message']}"
+                    f"  [{r['id']}] {r['ts']} {r['severity']} {r['source']} :: "
+                    f"{clip(str(r['message']), MAX_CELL_CHARS)}"
                     for r in rows
                 )
                 or "  (none)"
@@ -239,11 +263,15 @@ def run_adversarial_check(
     max_tokens: int = 4096,
     rebut: bool = True,
     rebuttal_provider: LLMProvider | None = None,
+    toolbox: ToolBox | None = None,
+    rebuttal_tool_calls: int = 3,
 ) -> AdversarialResult:
     """Critique the investigation, then let it answer.
 
     `rebuttal_provider` defaults to the critique's provider, but the caller should pass the
     loop's: the point of the rebuttal is that the *original reasoning* gets to respond.
+    `toolbox` lets the rebuttal read the scratchpad for up to `rebuttal_tool_calls` calls
+    before answering; without one it answers from the notes alone, as it used to.
     """
     result = AdversarialResult()
     result.unexplained_signal, result.unexplained_chronic = unexplained_signal_templates(
@@ -256,8 +284,12 @@ def run_adversarial_check(
         _record(db, provider, result)
         return result
 
+    # The critique gets the same brief the loop had. Without it the critique can only judge
+    # whether the notes hold against their rows, and a sound conclusion about the wrong
+    # incident passes that test - it did, once, with "no objections".
+    brief = (db.incident() or {}).get("brief")
     prompt = (
-        f"{_evidence_bundle(db)}\n\n"
+        (f"## What was reported\n\n{brief}\n\n" if brief else "") + f"{_evidence_bundle(db)}\n\n"
         f"Templates the ranking flagged as signal: {signal_template_ids}\n"
         f"Of those, none of the notes cite: {result.unexplained_signal}\n"
     )
@@ -298,11 +330,16 @@ def run_adversarial_check(
 
     if rebut and result.evidenced_objections:
         answering = rebuttal_provider or provider
-        result.rebuttals, result.revised_confidence, rebuttal_usage = _rebut(
-            db, answering, result.evidenced_objections, max_tokens
+        result.rebuttals, result.revised_confidence, rebuttal_usage, calls = _rebut(
+            db,
+            answering,
+            result.evidenced_objections,
+            max_tokens,
+            toolbox=toolbox,
+            max_tool_calls=rebuttal_tool_calls,
         )
         result.usage = result.usage + rebuttal_usage
-        result.model_calls += 1
+        result.model_calls += calls
         # Two models can spend this stage's tokens. Recording only the critique's would
         # attribute the rebuttal's share to the wrong one, at the wrong price.
         if answering.model != provider.model:
@@ -318,33 +355,71 @@ def _rebut(
     provider: LLMProvider,
     objections: list[Objection],
     max_tokens: int,
-) -> tuple[list[dict[str, Any]], str, Usage]:
-    """Answer the objections, returning the revised confidence and the cost alongside them.
+    toolbox: ToolBox | None = None,
+    max_tool_calls: int = 3,
+) -> tuple[list[dict[str, Any]], str, Usage, int]:
+    """Answer the objections, returning the revised confidence, the cost and the call count.
 
     The usage comes back rather than being recorded here because this call may run on the
     loop's provider, not the critique's, and the caller is the only one that knows which.
+
+    With a toolbox the rebuttal may read the scratchpad first, a bounded number of times.
+    The tools are then taken away for the answer, the same way the loop converges: a reply
+    that could still ask for more is not an answer. Ids the reply cites are kept only if the
+    rebuttal was actually shown them, by the same rule `write_note` applies to the loop.
     """
     listing = "\n".join(
         f"[{o.id}] {o.claim}: {o.objection} "
         f"(cites templates {o.template_ids}, events {o.log_event_ids})"
         for o in objections
     )
-    reply = provider.converse(
-        system=REBUTTAL_PROMPT,
-        messages=[
-            Message(
-                role="user",
-                text=f"Your notes:\n\n{_evidence_bundle(db)}\n\nObjections:\n{listing}",
+    messages = [
+        Message(
+            role="user",
+            text=f"Your notes:\n\n{_evidence_bundle(db)}\n\nObjections:\n{listing}",
+        )
+    ]
+    usage = Usage()
+    calls = 0
+    specs = toolbox.specs() if toolbox is not None and max_tool_calls > 0 else []
+    tool_calls_made = 0
+    while True:
+        offered = specs if tool_calls_made < max_tool_calls else []
+        reply = provider.converse(
+            system=REBUTTAL_PROMPT,
+            messages=messages,
+            tools=offered or None,
+            max_tokens=max_tokens,
+        )
+        usage = usage + reply.usage
+        calls += 1
+        if not reply.wants_tools or toolbox is None or not offered:
+            break
+        messages.append(Message(role="assistant", text=reply.text, tool_calls=reply.tool_calls))
+        results = [toolbox.dispatch(call) for call in reply.tool_calls]
+        tool_calls_made += len(results)
+        messages.append(Message(role="user", tool_results=tuple(results)))
+        if tool_calls_made >= max_tool_calls:
+            messages.append(
+                Message(
+                    role="user",
+                    text="You have used the calls available to you. Answer the objections "
+                    "now, as JSON, from what you have seen.",
+                )
             )
-        ],
-        max_tokens=max_tokens,
-    )
     try:
         parsed = _parse_json(reply.text)
     except (ValueError, json.JSONDecodeError):
         # An unreadable rebuttal still cost what it cost.
-        return [], "", reply.usage
-    return list(parsed.get("responses", [])), str(parsed.get("revised_confidence", "")), reply.usage
+        return [], "", usage, calls
+    shown = toolbox.seen_events if toolbox is not None else set()
+    responses = []
+    for raw in parsed.get("responses", []):
+        item = dict(raw)
+        cited = [int(i) for i in item.get("log_event_ids", []) if str(i).lstrip("-").isdigit()]
+        item["log_event_ids"] = sorted(i for i in set(cited) if i in shown)
+        responses.append(item)
+    return responses, str(parsed.get("revised_confidence", "")), usage, calls
 
 
 def _outcome(result: AdversarialResult) -> str:
@@ -390,6 +465,9 @@ def _paired_objections(result: AdversarialResult) -> list[dict[str, Any]]:
                 "log_event_ids": objection.log_event_ids,
                 "response": None if reply is None else str(reply.get("response", "")),
                 "conceded": None if reply is None else bool(reply.get("conceded")),
+                "response_log_event_ids": (
+                    [] if reply is None else list(reply.get("log_event_ids", []))
+                ),
             }
         )
 
@@ -403,6 +481,7 @@ def _paired_objections(result: AdversarialResult) -> list[dict[str, Any]]:
             "log_event_ids": [],
             "response": str(reply.get("response", "")),
             "conceded": bool(reply.get("conceded")),
+            "response_log_event_ids": list(reply.get("log_event_ids", [])),
         }
         for objection_id, reply in replies.items()
     )

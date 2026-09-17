@@ -129,12 +129,21 @@ class Redactor:
                     # Preceding context marks this as a false positive (e.g. a version
                     # string). Leave the value intact rather than destroy a diagnostic.
                     return match.group(0)
-                groups = match.groupdict()
-                if "value" in groups and groups["value"] is not None:
-                    # Keep the surrounding key name; swap only the secret itself.
-                    value = groups["value"]
+                # A pattern with alternatives names one `value*` group per branch, since a
+                # regex cannot reuse a name across branches; whichever matched holds the
+                # secret. Keep the surrounding key name; swap only the secret itself.
+                value_group = next(
+                    (
+                        name
+                        for name, text in match.groupdict().items()
+                        if name.startswith("value") and text is not None
+                    ),
+                    None,
+                )
+                if value_group is not None:
+                    value = match.group(value_group)
                     self._counts[_entity] += 1
-                    start, end = match.span("value")
+                    start, end = match.span(value_group)
                     return (
                         match.group(0)[: start - match.start()]
                         + self._token_and_record(_entity, value)

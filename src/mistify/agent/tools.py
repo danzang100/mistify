@@ -41,6 +41,7 @@ from mistify.scratchpad.db import ReadOnlyViolation, ScratchpadDB
 
 __all__ = [
     "CONFIDENCE_LEVELS",
+    "MAX_CELL_CHARS",
     "SLICE_LINES_DEFAULT",
     "SLICE_LINES_MAX",
     "SQL_ROW_CAP",
@@ -48,6 +49,7 @@ __all__ = [
     "TEMPLATE_LIMIT_MAX",
     "TOOL_NAMES",
     "ToolBox",
+    "clip",
 ]
 
 #: Names in the order they are offered to the model.
@@ -136,18 +138,28 @@ class ToolBox:
         noise: NoiseThresholds,
         *,
         start_step: int = 0,
+        tools: Sequence[str] | None = None,
     ) -> None:
         self.db = db
         self.noise = noise
         #: Step of the most recent dispatch. The first dispatch is step `start_step + 1`.
         self.step = start_step
-        self._handlers: dict[str, Callable[[dict[str, Any]], _Outcome]] = {
+        handlers: dict[str, Callable[[dict[str, Any]], _Outcome]] = {
             "query_templates": self._query_templates,
             "get_slice": self._get_slice,
             "run_sql": self._run_sql,
             "read_notes": self._read_notes,
             "write_note": self._write_note,
         }
+        # A caller may offer a subset -- the rebuttal gets the readers and not `write_note`,
+        # because its job is to answer objections, not to extend the conclusion under the
+        # cover of answering them. An unlisted tool is unknown to this box: refused by name,
+        # not silently present.
+        offered = TOOL_NAMES if tools is None else tuple(tools)
+        unknown = sorted(set(offered) - set(handlers))
+        if unknown:
+            raise ValueError(f"unknown tools: {', '.join(unknown)}")
+        self._handlers = {name: handlers[name] for name in TOOL_NAMES if name in offered}
         #: Every log event id this investigation has actually been shown. A citation naming an
         #: id that is not in here was not read, it was produced -- which is how a run came to
         #: cite events 1 and 2, the first two lines of the file, for a claim about a service
@@ -175,6 +187,11 @@ class ToolBox:
         """Templates whose lines the model has been shown. A copy: callers must not edit it."""
         return set(self._shown_templates)
 
+    @property
+    def seen_events(self) -> set[int]:
+        """Log event ids the model has been shown. A copy, for the same reason."""
+        return set(self._seen_events)
+
     def _note_shown(self, rows: Sequence[Mapping[str, Any]]) -> None:
         """Record every template represented in a tool result the model is about to read."""
         for row in rows:
@@ -191,6 +208,9 @@ class ToolBox:
         model that knows `max_lines` is capped at 500 asks for a narrower window instead of
         discovering the cap by hitting it.
         """
+        return [spec for spec in self._all_specs() if spec.name in self._handlers]
+
+    def _all_specs(self) -> list[ToolSpec]:
         return [
             ToolSpec(
                 name="query_templates",
@@ -419,7 +439,7 @@ class ToolBox:
                 call,
                 _Outcome(
                     content=(
-                        f"unknown tool {call.name!r}. Available tools: {', '.join(TOOL_NAMES)}."
+                        f"unknown tool {call.name!r}. Available tools: {', '.join(self._handlers)}."
                     ),
                     row_count=0,
                     description=f"unknown_tool({call.name!r})",
@@ -892,17 +912,26 @@ def _unresolved(db: ScratchpadDB, template_ids: Sequence[int], event_ids: Sequen
 # ---------------------------------------------------------------- rendering
 
 
-def _clip(text: str, limit: int = CELL_CHARS) -> str:
+def clip(text: str, limit: int = CELL_CHARS) -> str:
     """Flatten and bound one value, saying how much was dropped.
 
     The count matters more than the text it replaces. A model told `...(+4211 more chars)`
     knows to fetch the line by id; a model handed a quietly shortened string reads it as the
     whole line.
+
+    Public because the critique's evidence bundle and the report's cited-row tables need the
+    same bound: a note that cites a 131,239-character Solr query line - two of them, on a real
+    customer log - put 66k tokens of boost parameters in front of the critique twice over and
+    wrote a 300 KB report, and the rebuttal, drowning in it, conceded an objection it had the
+    tools to refute.
     """
     flat = " ".join(text.split())
     if len(flat) <= limit:
         return flat
     return f"{flat[:limit]}...(+{len(flat) - limit} more chars)"
+
+
+_clip = clip
 
 
 def _cell(value: object, limit: int = CELL_CHARS) -> str:

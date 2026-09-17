@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from mistify.agent.adversarial import run_adversarial_check
+from mistify.agent.adversarial import REBUTTAL_TOOLS, run_adversarial_check
 from mistify.agent.loop import InvestigationLoop, InvestigationResult
 from mistify.agent.tools import ToolBox
 from mistify.llm.registry import build_provider
@@ -73,8 +73,22 @@ def run_investigation(
         )
         raw_ids = MetricView(db.metrics("anomaly")).text(ANOMALY_SIGNAL_TEMPLATE_IDS) or ""
         signal_ids = [int(part) for part in raw_ids.split(",") if part.strip()]
+        # A fresh box for the rebuttal, readers only, continuing the loop's step count so
+        # its queries land in the trail after the investigation's rather than over them.
+        rebuttal_tools = ToolBox(
+            db,
+            noise=config.anomaly.noise_thresholds(),
+            start_step=loop.toolbox.step,
+            tools=REBUTTAL_TOOLS,
+        )
         run_adversarial_check(
-            db, critic, signal_ids, rebuttal_provider=provider, max_tokens=config.llm.max_tokens
+            db,
+            critic,
+            signal_ids,
+            rebuttal_provider=provider,
+            max_tokens=config.llm.max_tokens,
+            toolbox=rebuttal_tools,
+            rebuttal_tool_calls=config.pipeline.rebuttal_tool_calls,
         )
 
     return result

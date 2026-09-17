@@ -211,6 +211,58 @@ def test_token_variants_are_redacted(text: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        # A customer log carried the ESB login body on 277 lines: the bearer token was
+        # caught, the client secret and the customer's own password were not.
+        '"clientSecret":"87c24164-79b8-443e-b55c-c2d673998373","userSecret":"Andrea@1234"',
+        "Password: Andrea@1234",
+        "PW: Unilog@468",
+        "passwd=hunter22 accepted",
+        # The key word as the tail of a longer identifier.
+        "csrftoken: U7fKJ28cCn0LpVoc1gM9",
+        # HTTP Basic is base64 of user:password; the token charset has no + / =.
+        "Authorization Value - Basic Y2ltbTJiY2xpZW50OkBjIW1tQGJjbCFlbnQ=",
+    ],
+)
+def test_passwords_secrets_and_basic_auth_are_redacted(text: str) -> None:
+    out = Redactor().redact(text)
+    assert "[API_KEY:" in out
+    for secret in ("Andrea@1234", "Unilog@468", "hunter22", "87c24164", "U7fKJ28c", "Y2ltbTJi"):
+        assert secret not in out
+
+
+def test_every_secret_on_a_line_is_redacted_separately() -> None:
+    """Three credentials in one JSON body become three placeholders, not one or two."""
+    out = Redactor().redact(
+        '{"clientSecret":"87c24164-79b8-443e-b55c-c2d673998373","userSecret":"Andrea@1234",'
+        '"httpHeaders":{"Authorization":"Bearer abcdefghijklmnop0123456789"}}'
+    )
+    assert out.count("[API_KEY:") == 3
+    assert '"clientSecret":"[API_KEY:' in out
+    assert '"userSecret":"[API_KEY:' in out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # The password branch needs an explicit separator: prose keeps its words.
+        "secret manager failed",
+        "basic auth failed for user",
+        "token expired now",
+        # Masks, nulls and placeholders are not secrets.
+        "password: ****",
+        "password=null",
+        "password: [REDACTED]",
+        # Too short to be a credential worth a placeholder.
+        "password: ab",
+    ],
+)
+def test_credential_words_without_a_credential_are_left_alone(text: str) -> None:
+    assert Redactor().redact(text) == text
+
+
+@pytest.mark.parametrize(
     "address",
     [
         "2001:0db8:85a3:0000:0000:8a2e:0370:7334",

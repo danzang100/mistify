@@ -68,6 +68,10 @@
   <tr><td>Templates</td><td class="num">{{ template_count }}</td></tr>
   <tr><td>Log window</td><td class="mono">{{ first_ts or "n/a" }} &rarr; {{ last_ts or "n/a" }}</td></tr>
 </table>
+{% if incident.brief %}
+<h3>What was reported</h3>
+<blockquote>{{ incident.brief }}</blockquote>
+{% endif %}
 
 <h2>What was found</h2>
 {% if issues %}
@@ -236,7 +240,7 @@ Outcome: <strong>{{ adversarial.outcome }}</strong>.</p>
     {%- if not objection.template_ids and not objection.log_event_ids %} nothing - an objection citing no rows cannot outweigh a conclusion that cites them{% endif %}
   </div>
   {% if objection.response is not none %}
-  <p>{% if objection.conceded %}<span class="conceded">Conceded.</span> {% else %}<strong>Answer:</strong> {% endif %}{{ objection.response }}</p>
+  <p>{% if objection.conceded %}<span class="conceded">Conceded.</span> {% else %}<strong>Answer:</strong> {% endif %}{{ objection.response }}{% if objection.response_log_event_ids %} <span class="mono">(cites events {{ objection.response_log_event_ids | join(", ") }})</span>{% endif %}</p>
   {% else %}
   <p class="note">Not answered.</p>
   {% endif %}

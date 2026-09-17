@@ -91,10 +91,34 @@ uv run mistify run --source path/to/incident-logs/
 Without a key, the run ingests and then stops with an error that names the variable and points
 back at `--investigator skeleton`.
 
-The shipped models are the cheap tiers - `gemini-3.5-flash-lite` for the loop and
-`gemini-3.5-flash` for the adversarial pass. They must differ: a critique that shares the
-reasoning model shares its blind spots, so config rejects a run where they match. The loop is
-roughly fifteen calls to the critique's one, so the critique is the cheap place to spend more.
+**Tell it what was reported.** `--brief` takes the ticket in the reporter's words - the user,
+the items, the action, the symptom - inline or as `@ticket.txt`:
+
+```bash
+uv run mistify run --source path/to/incident-logs/ --brief @ticket.txt
+```
+
+Without one, the investigator answers "what is anomalous in this log", and on a full
+production day that is rarely the ticket: the first run over a real customer log led with an
+unrelated chronic error and wrote the actual evidence off as noise from rank 2, because
+nothing had told it what the incident was. With the brief it searched for the user and the
+items first and found it. The brief goes on `ingest` and `run`, not `investigate`, because it
+is redacted with the incident's own placeholders - the user named in it carries the same
+`[EMAIL:...]` as every line they touched, which is what makes the search work - and those
+placeholders only exist while ingest is running. It appears in front of the loop on every
+step, in front of the critique, and at the top of the report. Strip passwords from a pasted
+ticket first; redaction catches the common shapes and does not promise every one.
+
+The shipped models are `gemini-3.5-flash-lite` for the loop, `gemini-3.6-flash` for the
+one call that writes the conclusion from the loop's notes (`llm.synthesis_model`), and
+`gemini-3.5-flash` for the adversarial pass. The critique must differ from whichever model
+wrote the conclusion: a critique that shares the reasoning model shares its blind spots, so
+config rejects a run where they match. The loop is roughly fifteen to thirty calls to the
+synthesis's one and the critique's one, so those two are the cheap place to spend more. The
+synthesis never sees raw logs and has no tools - it is handed the notes and the rows they
+cite and can cite nothing else - so it is exactly as right as the search was; what it buys is
+a conclusion written as an answer to the brief, with observation and inference told apart,
+instead of a restatement of the notes at the budget cap.
 `--no-adversarial` skips the critique when you want one model call instead of three.
 
 Free-tier quotas are per-minute, and `gemini-3.5-flash` also has a small per-day cap. The
@@ -160,6 +184,11 @@ Responder-facing, in order:
 5. **The challenge** - what the critique actually argued, what it cited, and what the
    investigation conceded. Objections carry ids the rebuttal quotes back, so an answer lands on
    the objection it was written for rather than on whichever one shared its position in a list.
+   The rebuttal may read the scratchpad first - `pipeline.rebuttal_tool_calls`, three by
+   default, readers only - and the rows it cites in its answer are shown beside it. Before
+   that it could only answer from the notes, and an objection that the cited rows did not
+   settle drew a restatement even when the settling row was one second later on the same
+   thread.
 6. **Templates by anomaly score**.
 
 Then an appendix: run signals, token usage, the investigation trail, and pipeline
@@ -324,8 +353,9 @@ prints the whole grid, which is how a near-miss becomes visible before it become
 Redaction runs on every record immediately after parsing, before templating, before anything
 is written to the scratchpad, and before any model call. The model, the on-disk Drain3
 snapshot and the report only ever see the redacted text. By default five entities are
-replaced: `api_key` (values following `api_key`, `token`, `bearer`, `secret` and the like),
-`email`, `ipv4`, `ipv6` and `ssn`. `phone` is available and off, because it collides with
+replaced: `api_key` (values following `api_key`, `token`, `bearer`, `secret`, `password` and
+the like, including JSON-quoted keys and HTTP `Basic` credentials), `email`, `ipv4`, `ipv6`
+and `ssn`. `phone` is available and off, because it collides with
 numeric identifiers; credit cards are not detected at all, because a 13-16 digit pattern
 shreds epoch timestamps and trace ids. `redaction.entities` in `config.yaml` is the list.
 

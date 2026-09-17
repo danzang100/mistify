@@ -10,6 +10,13 @@
 | Events | {{ "{:,}".format(event_count) }} |
 | Templates | {{ template_count }} |
 | Log window | {{ first_ts or "n/a" }} → {{ last_ts or "n/a" }} |
+{% if incident.brief %}
+**What was reported**
+
+> {{ incident.brief | replace("
+", "
+> ") }}
+{% endif %}
 
 ## What was found
 
@@ -165,7 +172,7 @@ investigation was given the objections and allowed to answer. Outcome: **{{ adve
 - Cites: {% if objection.template_ids %}templates {{ objection.template_ids | join(", ") }}{% endif %}{% if objection.template_ids and objection.log_event_ids %}, {% endif %}{% if objection.log_event_ids %}events {{ objection.log_event_ids | join(", ") }}{% endif %}{% if not objection.template_ids and not objection.log_event_ids %}nothing - an objection citing no rows cannot outweigh a conclusion that cites them{% endif %}
 
 {% if objection.response is not none %}
-- Answer{% if objection.conceded %} (**conceded**){% endif %}: {{ objection.response }}
+- Answer{% if objection.conceded %} (**conceded**){% endif %}: {{ objection.response }}{% if objection.response_log_event_ids %} (cites events {{ objection.response_log_event_ids | join(", ") }}){% endif %}
 {% else %}
 - Not answered.
 {% endif %}

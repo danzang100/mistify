@@ -29,6 +29,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from mistify.agent.tools import MAX_CELL_CHARS, clip
 from mistify.common.models import SYNTHESIS_MARKER
 from mistify.llm.base import LLMProvider, Message, Usage
 from mistify.metrics import (
@@ -68,6 +69,10 @@ Your job is to say what happened, once, in a way an on-call engineer can act on.
   evidence; anything else you name will be dropped.
 - If the notes do not support a single coherent conclusion, say that. An honest "these two
   facts do not connect" is worth more than a narrative that papers over it.
+- If what was reported is given, the conclusion is an answer to it. Say which notes explain
+  the reported symptom and which describe something else that was also happening; a true
+  finding that does not explain the report is context, not the conclusion. If none of the
+  notes explain it, say so.
 
 Reply with JSON only, no prose around it:
 
@@ -99,6 +104,14 @@ def _evidence_for_synthesis(db: ScratchpadDB) -> tuple[str, set[int], set[int]]:
     allowed_templates: set[int] = set()
     allowed_events: set[int] = set()
 
+    brief = (db.incident() or {}).get("brief")
+    if brief:
+        # The synthesis writes the answer, so it has to know the question. Redacted at
+        # ingest, so the placeholders match the rows below.
+        lines.extend(
+            ["## What was reported", "", brief, "", "## What the investigation recorded", ""]
+        )
+
     for note in db.notes():
         cited_templates = [int(i) for i in note.evidence.get("template_ids", [])]
         cited_events = [int(i) for i in note.evidence.get("log_event_ids", [])]
@@ -117,9 +130,11 @@ def _evidence_for_synthesis(db: ScratchpadDB) -> tuple[str, set[int], set[int]]:
                     f"{template['first_seen']}..{template['last_seen']} :: {template['pattern']}"
                 )
         for row in db.events_by_id(cited_events):
+            # Bounded like a tool result: a cited 131k-character Solr line is not evidence
+            # the conclusion can use, and unclipped it was most of the prompt.
             lines.append(
                 f"  [event {row['id']}] {row['ts']} {row['source']} {row['severity']} "
-                f"{row['message'] or row['raw']}"
+                f"{clip(str(row['message'] or row['raw']), MAX_CELL_CHARS)}"
             )
         lines.append("")
 

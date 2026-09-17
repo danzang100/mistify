@@ -42,6 +42,33 @@ _vault_option = click.option(
 )
 
 
+_brief_option = click.option(
+    "--brief",
+    default=None,
+    help="What was reported, in the reporter's words - the user, the items, the symptom - or "
+    "@FILE to read it from a file. Redacted with the incident's own placeholders and put in "
+    "front of the investigator and the critique. Given at ingest because that is when the "
+    "placeholders are made; strip credentials from a pasted ticket first, redaction catches "
+    "the common shapes and cannot promise every one.",
+)
+
+
+def _read_brief(brief: str | None) -> str | None:
+    """The brief text, read from a file when the value is `@path`.
+
+    A ticket is a paragraph with line breaks, quoting and characters a shell mangles, so a
+    file is the usual way to hand one over; the inline form is for the one-line case.
+    """
+    if brief is None:
+        return None
+    if brief.startswith("@"):
+        path = Path(brief[1:])
+        if not path.is_file():
+            raise click.ClickException(f"--brief {brief}: no such file")
+        return path.read_text(encoding="utf-8", errors="replace")
+    return brief
+
+
 def _with_vault(config: MistifyConfig, vault: bool) -> MistifyConfig:
     """The config with the vault switched on when the flag asks for it.
 
@@ -70,19 +97,27 @@ def cli() -> None:
 @click.option("--source", required=True, type=click.Path(exists=True, path_type=Path))
 @click.option("--incident-id", default=None, help="Defaults to a date-and-slug from --source.")
 @click.option("--format", "format_name", default="auto", help="Adapter to force, or 'auto'.")
+@_brief_option
 @_vault_option
 @_config_option
 def ingest_command(
     source: Path,
     incident_id: str | None,
     format_name: str,
+    brief: str | None,
     vault: bool,
     config_path: Path | None,
 ) -> None:
     """Parse, redact, template and load a log source into a scratchpad."""
     config = _with_vault(load_config(config_path), vault)
     try:
-        result = ingest(source, config, incident_id=incident_id, format_name=format_name)
+        result = ingest(
+            source,
+            config,
+            incident_id=incident_id,
+            format_name=format_name,
+            brief=_read_brief(brief),
+        )
     except (UnknownFormatError, BinarySourceError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -285,6 +320,7 @@ def _warn_unredacted() -> None:
 @click.option("--format", "format_name", default="auto")
 @_investigator_option
 @click.option("--no-adversarial", is_flag=True, help="Skip the adversarial check.")
+@_brief_option
 @_vault_option
 @_config_option
 def run_command(
@@ -293,6 +329,7 @@ def run_command(
     format_name: str,
     investigator: str,
     no_adversarial: bool,
+    brief: str | None,
     vault: bool,
     config_path: Path | None,
 ) -> None:
@@ -300,7 +337,13 @@ def run_command(
     config = _with_vault(load_config(config_path), vault)
     incident_id = incident_id or derive_incident_id(source)
     try:
-        result = ingest(source, config, incident_id=incident_id, format_name=format_name)
+        result = ingest(
+            source,
+            config,
+            incident_id=incident_id,
+            format_name=format_name,
+            brief=_read_brief(brief),
+        )
     except (UnknownFormatError, BinarySourceError) as exc:
         raise click.ClickException(str(exc)) from exc
 

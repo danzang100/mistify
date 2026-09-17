@@ -13,7 +13,11 @@ import re
 
 import pytest
 
-from mistify.agent.adversarial import run_adversarial_check, unexplained_signal_templates
+from mistify.agent.adversarial import (
+    REBUTTAL_TOOLS,
+    run_adversarial_check,
+    unexplained_signal_templates,
+)
 from mistify.agent.loop import (
     DIGEST_CHAR_BUDGET,
     DIGEST_LIMIT,
@@ -293,6 +297,57 @@ def test_an_acute_template_is_still_counted(loaded_db: ScratchpadDB) -> None:
     assert chronic == [5]
 
 
+def _brief(db: ScratchpadDB, text: str) -> None:
+    incident = db.incident()
+    assert incident is not None
+    db.create_incident(
+        incident["incident_id"],
+        source=incident["source"],
+        format_name=incident["format"],
+        redaction_mode=incident["redaction_mode"],
+        brief=text,
+    )
+
+
+def test_the_brief_sits_in_the_stable_prefix_above_the_digest(loaded_db: ScratchpadDB) -> None:
+    """In the system prompt, before the templates: in front of the model on every step, and
+    out of reach of the compaction that trims old tool output."""
+    _brief(loaded_db, "Customer [EMAIL:0543d786] cannot add F-T S/0140/30/120T 20 to cart.")
+
+    prompt = build_system_prompt(loaded_db)
+
+    assert "## What was reported" in prompt
+    assert prompt.index("F-T S/0140/30/120T 20") < prompt.index("## Templates, most anomalous")
+
+
+def test_without_a_brief_the_prompt_does_not_mention_one(loaded_db: ScratchpadDB) -> None:
+    assert "What was reported" not in build_system_prompt(loaded_db)
+
+
+def test_the_critique_is_given_the_brief(loaded_db: ScratchpadDB) -> None:
+    """A sound conclusion about the wrong incident passed the critique once, with no
+    objections, because the critique had no way to know what the incident was."""
+    _brief(loaded_db, "Add to cart spins for [EMAIL:0543d786].")
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    critic = _critique({"assessment": "sound", "objections": []})
+
+    run_adversarial_check(loaded_db, critic, [9])
+
+    sent = critic.calls[0]
+    assert "Add to cart spins for [EMAIL:0543d786]" in sent.messages[0].text
+    assert "does the conclusion explain it" in sent.system
+
+
+def test_the_report_shows_what_was_reported(loaded_db: ScratchpadDB) -> None:
+    _brief(loaded_db, "Add to cart spins for [EMAIL:0543d786].")
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+
+    report = generate_report(loaded_db)
+
+    assert "What was reported" in report
+    assert "Add to cart spins for [EMAIL:0543d786]." in report
+
+
 def test_a_sound_investigation_draws_no_objections(loaded_db: ScratchpadDB) -> None:
     loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
     result = run_adversarial_check(
@@ -345,6 +400,197 @@ def test_an_evidenced_objection_gets_a_rebuttal(loaded_db: ScratchpadDB) -> None
     assert len(result.rebuttals) == 1
     assert result.outcome == "objections_answered"
     assert result.high_severity_objections == ["pool exhausted"]
+
+
+def _one_objection() -> ScriptedProvider:
+    return _critique(
+        {
+            "assessment": "questionable",
+            "objections": [
+                {
+                    "claim": "pool exhausted",
+                    "objection": "the cited rows show no failure",
+                    "template_ids": [9],
+                    "severity": "high",
+                }
+            ],
+        }
+    )
+
+
+def _rebuttal_toolbox(db: ScratchpadDB) -> ToolBox:
+    return ToolBox(db, noise=NOISE, tools=REBUTTAL_TOOLS)
+
+
+def test_the_rebuttal_may_read_the_scratchpad_before_answering(loaded_db: ScratchpadDB) -> None:
+    """An objection is often settled by a row the loop never cited. The rebuttal fetches it,
+    cites it, and the citation is kept because the rebuttal was shown that row."""
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    template = loaded_db.top_templates(limit=1, order_by="anomaly_score")[0]
+    row = loaded_db.get_slice(template_id=int(template["template_id"]), max_lines=1)[0]
+    rebutter = ScriptedProvider(
+        [
+            tool_call_turn(
+                "get_slice",
+                {"template_id": int(template["template_id"]), "max_lines": 1},
+                call_id="r1",
+            ),
+            text_turn(
+                json.dumps(
+                    {
+                        "responses": [
+                            {
+                                "objection_id": "o1",
+                                "response": "the row says so",
+                                "log_event_ids": [int(row["id"]), 999999],
+                                "conceded": False,
+                            }
+                        ],
+                        "revised_confidence": "high",
+                    }
+                )
+            ),
+        ]
+    )
+    before = len(loaded_db.queries())
+
+    result = run_adversarial_check(
+        loaded_db,
+        _one_objection(),
+        [9],
+        rebuttal_provider=rebutter,
+        toolbox=_rebuttal_toolbox(loaded_db),
+    )
+
+    assert rebutter.remaining == 0
+    assert result.model_calls == 3  # critique, the reading turn, the answer
+    assert result.rebuttals[0]["log_event_ids"] == [int(row["id"])]  # 999999 was never shown
+    assert len(loaded_db.queries()) == before + 1
+    stored = loaded_db.adversarial_objections()[0]
+    assert stored["response_log_event_ids"] == [int(row["id"])]
+    assert stored["response"] == "the row says so"
+
+
+def test_the_rebuttal_is_never_offered_write_note(loaded_db: ScratchpadDB) -> None:
+    box = _rebuttal_toolbox(loaded_db)
+    assert [spec.name for spec in box.specs()] == ["query_templates", "get_slice", "run_sql"]
+    refused = box.dispatch(
+        tool_call_turn(
+            "write_note", {"note": "x", "evidence": {}, "confidence": "low"}, call_id="w"
+        ).tool_calls[0]
+    )
+    assert refused.is_error
+    assert "unknown tool" in refused.content
+
+
+def test_the_rebuttals_tools_are_taken_away_at_the_cap(loaded_db: ScratchpadDB) -> None:
+    """After the last permitted call the answer turn is made without tools, so a rebuttal
+    that would keep reading is made to answer instead."""
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    rebutter = ScriptedProvider(
+        [
+            tool_call_turn("query_templates", {}, call_id="r1"),
+            text_turn(json.dumps({"responses": [{"objection_id": "o1", "conceded": False}]})),
+        ]
+    )
+
+    run_adversarial_check(
+        loaded_db,
+        _one_objection(),
+        [9],
+        rebuttal_provider=rebutter,
+        toolbox=_rebuttal_toolbox(loaded_db),
+        rebuttal_tool_calls=1,
+    )
+
+    reading, answering = rebutter.calls
+    assert reading.tools
+    assert not answering.tools
+    assert "Answer the objections now" in answering.messages[-1].text
+
+
+def test_without_a_toolbox_the_rebuttal_answers_from_the_notes(loaded_db: ScratchpadDB) -> None:
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    rebutter = ScriptedProvider(
+        [text_turn(json.dumps({"responses": [{"objection_id": "o1", "conceded": False}]}))]
+    )
+
+    result = run_adversarial_check(loaded_db, _one_objection(), [9], rebuttal_provider=rebutter)
+
+    assert not rebutter.calls[0].tools
+    assert result.model_calls == 2
+
+
+def test_the_report_shows_what_the_answer_cites(loaded_db: ScratchpadDB) -> None:
+    loaded_db.write_note(1, "pool exhausted", {"template_ids": [9]}, "high")
+    template = loaded_db.top_templates(limit=1, order_by="anomaly_score")[0]
+    row = loaded_db.get_slice(template_id=int(template["template_id"]), max_lines=1)[0]
+    rebutter = ScriptedProvider(
+        [
+            tool_call_turn(
+                "get_slice",
+                {"template_id": int(template["template_id"]), "max_lines": 1},
+                call_id="r1",
+            ),
+            text_turn(
+                json.dumps(
+                    {
+                        "responses": [
+                            {
+                                "objection_id": "o1",
+                                "response": "settled",
+                                "log_event_ids": [int(row["id"])],
+                                "conceded": False,
+                            }
+                        ]
+                    }
+                )
+            ),
+        ]
+    )
+    run_adversarial_check(
+        loaded_db,
+        _one_objection(),
+        [9],
+        rebuttal_provider=rebutter,
+        toolbox=_rebuttal_toolbox(loaded_db),
+    )
+
+    report = generate_report(loaded_db)
+
+    assert f"settled (cites events {row['id']})" in report
+
+
+def test_a_cited_row_is_bounded_in_the_critique_bundle(loaded_db: ScratchpadDB) -> None:
+    """Two cited rows of 131,239 characters each put 66k tokens of query string in front of
+    the critique and the rebuttal. The bundle bounds each row the way a tool result does."""
+    huge = "q=" + "x" * 50_000
+    loaded_db._conn.execute(
+        "UPDATE log_events SET raw = ?, message = ? WHERE id = 1", (huge, huge)
+    )
+    loaded_db._conn.commit()
+    loaded_db.write_note(1, "look at row 1", {"log_event_ids": [1]}, "high")
+    critic = _critique({"assessment": "sound", "objections": []})
+
+    run_adversarial_check(loaded_db, critic, [9])
+
+    sent = critic.calls[0].messages[0].text
+    assert len(sent) < 10_000
+    assert "more chars)" in sent
+
+
+def test_a_cited_row_is_bounded_in_the_report(loaded_db: ScratchpadDB) -> None:
+    huge = "q=" + "x" * 50_000
+    loaded_db._conn.execute(
+        "UPDATE log_events SET raw = ?, message = ? WHERE id = 1", (huge, huge)
+    )
+    loaded_db._conn.commit()
+    loaded_db.write_note(1, "look at row 1", {"log_event_ids": [1]}, "high")
+
+    report = generate_report(loaded_db)
+
+    assert len(report) < 60_000
+    assert "more chars)" in report
 
 
 def test_a_conceded_objection_says_so(loaded_db: ScratchpadDB) -> None:

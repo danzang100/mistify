@@ -38,7 +38,17 @@ class _Strict(BaseModel):
 
 
 class PipelineConfig(_Strict):
-    max_agent_tool_calls: int = Field(default=20, ge=1)
+    #: 30, up from 20: with a brief the loop searches harder, and the briefed run over a real
+    #: customer log hit 20 having found the answer at step 13 and then spent the rest
+    #: restating it, so the last calls bought nothing either way. The cost curve is bounded
+    #: by `tool_result_history_steps`, not by this.
+    max_agent_tool_calls: int = Field(default=30, ge=1)
+
+    #: Reading calls the rebuttal may make before it answers the critique. Zero is the old
+    #: behaviour: answer from the notes alone. It exists because an objection is often
+    #: answerable from a row the loop never cited -- the failure line a second after the
+    #: request it did cite -- and a rebuttal that cannot fetch it can only repeat itself.
+    rebuttal_tool_calls: int = Field(default=3, ge=0)
 
     #: How many recent steps keep their tool output in full. The loop re-sends the whole
     #: conversation every step, so a slice pulled early is paid for again on every step after
@@ -332,16 +342,21 @@ class LLMConfig(_Strict):
     #: Must differ from whichever model writes the conclusion -- the loop's, or the synthesis
     #: model when one is set. The critique has to be independent of the reasoning it checks,
     #: and the critique is one call against the loop's fifteen, so it is a cheap place to spend.
-    adversarial_model: str = "gemini-3.6-flash"
+    #: 3.5-flash rather than 3.6: the same as config.yaml, where 3.6 timed out repeatedly on
+    #: the critique prompt, and because 3.6 is now the synthesis model, which this must differ
+    #: from. A built-in default that config.yaml always overrode was a default nobody ran.
+    adversarial_model: str = "gemini-3.5-flash"
 
     #: Writes the final conclusion from the scratchpad, once, after the loop has finished
     #: searching. Search is mechanical and cheap; concluding is one call where being slightly
     #: better is worth paying for. Set to None to let the loop's own last note stand.
     synthesis_provider: Literal["gemini", "scripted"] | None = None
-    #: None leaves the loop's own last note as the conclusion, which is the shipped default:
-    #: a stronger model writing the conclusion is a plausible improvement with no measurement
-    #: behind it yet, and `mistify eval` exists to settle that before the default moves.
-    synthesis_model: str | None = None
+    #: None leaves the loop's own last note as the conclusion. The default moved off None on
+    #: 2026-09-17, on a real customer log: the loop's own conclusion was a budget-cap dump
+    #: restating its notes, and this model wrote the answer in a paragraph that told
+    #: observation from inference, for 2.5k tokens against the loop's 1.2M. It is exactly as
+    #: right as the notes - see config.yaml - so it improves the writing, not the search.
+    synthesis_model: str | None = "gemini-3.6-flash"
 
     bootstrap_model: str = "gemini-3.5-flash-lite"
     judge_model: str = "gemini-3.5-flash"

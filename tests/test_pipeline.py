@@ -533,3 +533,44 @@ def test_a_parsed_format_keeps_the_timestamps_in_its_message(
 
     assert result.format_name == "json_lines"
     assert result.unique_templates > 1
+
+
+# --------------------------------------------------------------- the brief
+
+
+def test_the_brief_is_stored_with_the_incidents_own_placeholders(
+    incident_file: Path, config: MistifyConfig
+) -> None:
+    """A user named in the brief must carry the placeholder that is on their lines.
+
+    The salt is drawn per incident, so this only holds if the brief is redacted by the same
+    redactor during the same ingest -- which is why the brief is an ingest argument.
+    """
+    user = PLANTED_EMAILS[0]
+    result = ingest(
+        incident_file,
+        config,
+        incident_id="briefed",
+        brief=f"Customer {user} reports checkout hangs. Password: Hunter2!x",
+    )
+
+    with ScratchpadDB(result.scratchpad_path) as db:
+        incident = db.incident()
+        assert incident is not None
+        brief = incident["brief"]
+        assert user not in brief
+        assert "Hunter2!x" not in brief
+        placeholder = brief.split("Customer ", 1)[1].split(" ", 1)[0]
+        assert placeholder.startswith("[EMAIL:")
+        hits = db.run_readonly_sql(
+            f"SELECT COUNT(*) AS n FROM log_events WHERE raw LIKE '%{placeholder}%'"
+        )
+        assert hits[0]["n"] > 0
+
+
+def test_no_brief_is_stored_as_null_not_empty(incident_file: Path, config: MistifyConfig) -> None:
+    result = ingest(incident_file, config, incident_id="unbriefed", brief="   ")
+    with ScratchpadDB(result.scratchpad_path) as db:
+        incident = db.incident()
+        assert incident is not None
+        assert incident["brief"] is None

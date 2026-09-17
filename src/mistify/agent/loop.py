@@ -123,7 +123,20 @@ order rather than as a conclusion: it says where to look first, not what is true
 
 How to work:
 
-- Start from the ranked templates. Pull slices to see actual lines before forming a view.
+- If a report of the incident is given below, it is the question. Search for what it names -
+  the user, the item, the action, the request - with `get_slice` text search and `run_sql`
+  before you trust the ranking, and read the reported user's lines around the reported item
+  in time order. The ranking was computed without knowing what was reported, and on a busy
+  production log the loudest error of the day is usually not the reported one. Check for
+  absence as well as presence: "it spins and nothing happens" often means the server never
+  received a request, and a request that is missing from the reported user's session is
+  evidence, not a dead end - record it and say so. If a later attempt reached further - a
+  request that did arrive, an error the first attempt never produced - that is the mechanism
+  behind the first one; give it its own note and say how the two relate. A conclusion that
+  does not explain the reported symptom is not a conclusion about this incident, and if the
+  logs cannot explain it, say what they do show for the reported user and items and stop.
+- Otherwise, start from the ranked templates. Pull slices to see actual lines before forming
+  a view.
 - Prefer evidence over narrative. A plausible story with no supporting rows is worth less than
   a dull one with them.
 - Consider whether this is one incident or several before concluding. Two unrelated failures
@@ -264,6 +277,13 @@ def build_system_prompt(db: ScratchpadDB, digest_limit: int = DIGEST_LIMIT) -> s
         # this says how much to trust it, which differs by a lot between a parsed level and a
         # word matched in the line.
         lines.extend([f"Ranking: {ranking}", ""])
+    brief = incident.get("brief")
+    if brief:
+        # Above the digest, not in the opening message: it is part of the stable prefix, so
+        # it is in front of the model on every step rather than only the first, and the
+        # compaction that trims old tool output never reaches it. Redacted at ingest with the
+        # incident's own salt, so a placeholder here is the placeholder on the user's lines.
+        lines.extend(["## What was reported", "", brief, ""])
     lines.extend(
         [
             "## Templates, most anomalous first "
@@ -332,7 +352,8 @@ class InvestigationLoop:
         # because nobody noticed a 52k-token digest until one run cost 1.58M input tokens.
         self.db.record(INVESTIGATE_DIGEST_CHARS, len(system))
         opening = incident_context.strip() or (
-            "Investigate this incident. Start from the ranked templates above."
+            "Investigate this incident. Start from what was reported, if a report is given "
+            "above, and otherwise from the ranked templates."
         )
         messages: list[Message] = [Message(role="user", text=opening)]
 

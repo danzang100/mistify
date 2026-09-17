@@ -2,7 +2,10 @@
 # Validated against mistify.common.config.MistifyConfig; unknown keys are rejected.
 
 pipeline:
-  max_agent_tool_calls: 20
+  max_agent_tool_calls: 30
+  # Reading calls the rebuttal may make before answering the critique; 0 answers from the
+  # notes alone. An objection is often settled by a row the loop never cited.
+  rebuttal_tool_calls: 3
   # The whole conversation is re-sent every step, so an early slice is paid for on every step
   # after it. Older tool output is reduced to the summary line the tool already wrote; this is
   # how many recent steps keep their rows in full. 0 keeps everything.
@@ -111,11 +114,15 @@ llm:
   provider: gemini
   model: gemini-3.5-flash-lite          # cheapest tier that still calls tools reliably
   # Writes the final conclusion once, from the scratchpad, after the loop has finished
-  # searching. Search is mechanical and cheap; concluding is one call that might be worth
-  # paying more for -- but that is a hypothesis, and `mistify eval` is how it gets tested.
-  # Off until then: the shipped default should not change ahead of the evidence for it.
-  # Set to a model (e.g. gemini-3.5-flash) to enable, and raise adversarial_model above it.
-  synthesis_model: null
+  # searching. Search is mechanical and cheap; concluding is one call over evidence already
+  # gathered, where being wrong is expensive -- and it is the call the cheap tier gets wrong.
+  # Measured on a real customer log (REY-462, 2026-09-17): the loop's own conclusions came
+  # out as a budget-cap dump restating the notes, once with the wrong note promoted; this
+  # model wrote the answer in one paragraph, cited four rows, and said in the sentence which
+  # part was observed and which inferred. It cannot introduce evidence, so it is only as good
+  # as the notes -- replayed over a run whose notes were wrong it wrote the wrong answer just
+  # as confidently. 2.5k tokens against a 1.2M-token loop. Set null to let the loop conclude.
+  synthesis_model: gemini-3.6-flash
   # Must differ from whichever model writes the conclusion -- the loop's, or the synthesis
   # model when one is set. The critique cannot share a model with the thing it is checking
   # or it shares its blind spots. Enforced at config load.

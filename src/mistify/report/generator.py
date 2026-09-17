@@ -19,6 +19,7 @@ from typing import Any
 from jinja2 import Environment, PackageLoader, StrictUndefined
 
 from mistify import __version__
+from mistify.agent.tools import MAX_CELL_CHARS, clip
 from mistify.common.models import SEVERITIES
 from mistify.findings import (
     chronic_template_ids,
@@ -102,6 +103,11 @@ def verify_citations(db: ScratchpadDB) -> tuple[dict[int, list[dict[str, Any]]],
         note_id = note.id or 0
         event_ids = [int(i) for i in note.evidence.get("log_event_ids", [])]
         rows = db.events_by_id(event_ids)
+        # Bounded the way a tool result is, saying what was dropped. The scratchpad keeps
+        # the whole line; the report shows enough to check the claim against.
+        for row in rows:
+            row["message"] = clip(str(row["message"]), MAX_CELL_CHARS)
+            row["raw"] = clip(str(row["raw"]), MAX_CELL_CHARS)
         cited_events[note_id] = rows
 
         missing_events = sorted(set(event_ids) - {int(r["id"]) for r in rows})

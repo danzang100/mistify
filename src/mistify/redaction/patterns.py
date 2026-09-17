@@ -34,12 +34,30 @@ __all__ = [
 ENTITY_ORDER: tuple[str, ...] = ("api_key", "email", "ipv6", "ipv4", "ssn", "phone")
 
 PATTERNS: dict[str, re.Pattern[str]] = {
-    # Key/token assignments: capture the value, keep the key name visible so the log still
-    # says *what* was redacted.
+    # Credential assignments: capture the value, keep the key name visible so the log still
+    # says *what* was redacted. Three shapes, each with its own value group -- the redactor
+    # takes whichever `value*` group matched -- because the shapes cannot share one charset:
+    #
+    # 1. Tokens: a key word followed by 16+ token characters. The key may be the tail of a
+    #    longer identifier (`csrftoken:`, `accessToken`), and JSON quoting around key and
+    #    value is allowed, so `"clientSecret":"..."` is read the same as `client_secret=...`.
+    # 2. Passwords: `password`, `pw`, `secret` and the like, but only with an explicit `:` or
+    #    `=` and a value of 4+ characters that is not a mask, `null`, `none` or a placeholder.
+    #    A password is short and full of punctuation, so the token charset misses it -- a
+    #    customer log carried `"userSecret":"..."` in plaintext on 277 lines and every one
+    #    reached the scratchpad -- and the separator is required because `secret manager
+    #    failed` must not lose its second word.
+    # 3. HTTP Basic: `Basic <base64>`, whose alphabet has `+`, `/` and `=` that the token
+    #    charset excludes, and which decodes to a `user:password` pair.
     "api_key": re.compile(
-        r"(?i)\b(api[_-]?key|access[_-]?token|auth[_-]?token|secret|bearer|token)"
-        r"(\s*[:=]\s*|\s+)"
-        r"(?P<value>[A-Za-z0-9_\-\.]{16,})"
+        r"(?i)"
+        r"(?:\b[\w-]*?(?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|bearer|token)"
+        r"[\"']?(?:\s*[:=]\s*|\s+)[\"']?"
+        r"(?P<value>[A-Za-z0-9_\-\.]{16,}))"
+        r"|(?:\b[\w-]*?(?:password|passwd|passphrase|pwd|pw|secret)"
+        r"[\"']?\s*[:=]\s*[\"']?"
+        r"(?P<value_secret>(?!\*+(?!\S)|null\b|none\b|\[)[^\s\"',;&]{4,}))"
+        r"|(?:\bbasic\s+(?P<value_basic>[A-Za-z0-9+/]{16,}={0,2}))"
     ),
     "email": re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]*[A-Za-z]\b"),
     # Full eight-group form, or any form containing "::". Requiring one of those two shapes

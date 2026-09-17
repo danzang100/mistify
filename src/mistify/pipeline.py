@@ -292,8 +292,15 @@ def ingest(
     config: MistifyConfig,
     incident_id: str | None = None,
     format_name: str | None = None,
+    brief: str | None = None,
 ) -> IngestResult:
-    """Run a source file through the pipeline and load the scratchpad."""
+    """Run a source file through the pipeline and load the scratchpad.
+
+    `brief` is what was reported -- the ticket's own words -- and is redacted with this
+    incident's redactor before it is stored, so a user named in it carries the same
+    placeholder on every line they touched. It has to arrive here rather than at
+    `investigate`: the salt is drawn below and kept nowhere.
+    """
     source_path = Path(source)
     if not source_path.exists():
         raise FileNotFoundError(f"source not found: {source_path}")
@@ -396,6 +403,7 @@ def ingest(
             source=str(source_path),
             format_name=adapter.format_name,
             redaction_mode=config.redaction.mode,
+            brief=redactor.redact(brief.strip()) if brief and brief.strip() else None,
         )
 
         # Streamed in fixed-size batches rather than buffered whole. Holding every record
