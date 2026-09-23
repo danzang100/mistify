@@ -1,8 +1,9 @@
 """The seam between the investigation and whichever model runs it.
 
 Everything above this line - the loop, the tools, the adversarial pass - is written against
-these types and never against a vendor SDK. Two adapters satisfy it today: `GeminiProvider`
-talks to a real model, and `ScriptedProvider` replays a fixed sequence of turns, which is what
+these types and never against a vendor SDK. Three adapters satisfy it today: `GeminiProvider`
+talks to Gemini directly, `LiteLLMProvider` to most other vendors and to local models, and
+`ScriptedProvider` replays a fixed sequence of turns, which is what
 lets the whole agent loop be tested without a credential, a network, or a bill.
 
 The seam is deliberately narrow. A provider is handed a system prompt, a conversation, and a

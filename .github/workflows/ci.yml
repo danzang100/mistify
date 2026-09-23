@@ -31,7 +31,7 @@ jobs:
           enable-cache: true
 
       - name: Install
-        run: uv sync --extra pdf
+        run: uv sync --extra pdf --extra litellm
 
       - name: Lint
         run: uv run ruff check .
