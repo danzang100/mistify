@@ -24,6 +24,7 @@ from pathlib import Path
 
 __all__ = [
     "FIXTURE_VERSION",
+    "MIXED_TZ_LOCAL_OFFSET",
     "PLANTED_API_KEY",
     "PLANTED_EMAILS",
     "PLANTED_IPS",
@@ -33,6 +34,7 @@ __all__ = [
     "generate_quiet_hour",
     "write_incident",
     "write_incident_otlp",
+    "write_mixed_timezone_bundle",
     "write_quiet_hour",
 ]
 
@@ -399,4 +401,52 @@ def write_incident_otlp(path: str | Path, total_lines: int = 5000, seed: int = 2
                 ]
             }
             handle.write(json.dumps(request) + "\n")
+    return target
+
+
+# ------------------------------------------------------------ the mixed-timezone bundle
+
+#: The local zone the payments service writes in. India, because its half-hour offset is the
+#: case a skew check rounding to whole hours would miss.
+MIXED_TZ_LOCAL_OFFSET = timedelta(hours=5, minutes=30)
+
+
+def write_mixed_timezone_bundle(
+    directory: str | Path,
+    offset_style: str = "naive",
+    total_lines: int = 3000,
+    seed: int = 20260924,
+) -> Path:
+    """The incident as a two-file bundle whose payments service logs in local time.
+
+    `storefront.jsonl` carries every service but payments, in UTC with a `Z`. `payments.jsonl`
+    carries payment-service over the same hour, written in its local wall-clock time
+    (`MIXED_TZ_LOCAL_OFFSET` ahead of UTC):
+
+    *   `offset_style="naive"` -- the failure: local time with no offset, which the parser can
+        only read as UTC, so every payments line lands five and a half hours after the moment
+        it describes. Nothing errors; the timeline is simply wrong.
+    *   `offset_style="explicit"` -- the control: the same local times written with `+05:30`,
+        which parse to the right instant. A check that fired on both would be reacting to the
+        bundle spanning zones, not to the zones disagreeing.
+
+    Built from `generate_incident`, so the only difference from the sample incident is how the
+    time was written.
+    """
+    if offset_style not in {"naive", "explicit"}:
+        raise ValueError(f"offset_style must be 'naive' or 'explicit', got {offset_style!r}")
+    target = Path(directory)
+    target.mkdir(parents=True, exist_ok=True)
+    storefront: list[str] = []
+    payments: list[str] = []
+    for record in generate_incident(total_lines=total_lines, seed=seed):
+        if record["service"] != "payment-service":
+            storefront.append(json.dumps(record))
+            continue
+        instant = datetime.fromisoformat(str(record["timestamp"]).replace("Z", "+00:00"))
+        local = (instant + MIXED_TZ_LOCAL_OFFSET).replace(tzinfo=None).isoformat()
+        suffix = "+05:30" if offset_style == "explicit" else ""
+        payments.append(json.dumps({**record, "timestamp": local + suffix}))
+    (target / "storefront.jsonl").write_text("\n".join(storefront) + "\n", encoding="utf-8")
+    (target / "payments.jsonl").write_text("\n".join(payments) + "\n", encoding="utf-8")
     return target

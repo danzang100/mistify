@@ -27,6 +27,7 @@ from mistify.findings import (
     duration_minutes,
     rank_notes,
 )
+from mistify.health import OWNED_METRICS, HealthStatus, recorded_checks
 from mistify.metrics import (
     ADVERSARIAL_OUTCOME,
     ADVERSARIAL_UNEXPLAINED_SIGNAL,
@@ -35,6 +36,9 @@ from mistify.metrics import (
     ANOMALY_NEEDLE_POSITION,
     ANOMALY_SEVERITY_SOURCE,
     ANOMALY_SIGNAL_TEMPLATE_IDS,
+    HEALTH_CHECK,
+    HEALTH_OVERRIDDEN,
+    HEALTH_STATUS,
     INGEST_EVENTS_LOADED,
     INGEST_FALLBACK,
     INGEST_FALLBACK_REASON,
@@ -203,9 +207,36 @@ def _split_health(
     with the vocabulary rather than being a second opinion about it.
     """
     load_bearing = {m.key for m in ALL_METRICS if m.load_bearing}
-    signals = [m for m in metrics if (m["stage"], m["metric"]) in load_bearing]
-    detail = [m for m in metrics if (m["stage"], m["metric"]) not in load_bearing]
+    # The health verdicts are sentences, and the health section at the top of the report
+    # already prints every one of them. Listing them again here would put each warning in
+    # front of the reader twice.
+    verdicts = {m.key for m in HEALTH_CHECK.all_members()}
+    shown = [m for m in metrics if (m["stage"], m["metric"]) not in verdicts]
+    signals = [m for m in shown if (m["stage"], m["metric"]) in load_bearing]
+    detail = [m for m in shown if (m["stage"], m["metric"]) not in load_bearing]
     return signals, detail
+
+
+def _health(view: MetricView) -> dict[str, Any]:
+    """The pre-flight check as recorded, problems first.
+
+    Read back from the scratchpad rather than recomputed: the report has no config, and the
+    verdict worth showing is the one the investigation was gated on, not what today's
+    thresholds would say.
+    """
+    checks = recorded_checks(view)
+    order = {HealthStatus.FAIL: 0, HealthStatus.WARN: 1, HealthStatus.OK: 2}
+    problems = sorted(
+        (c for c in checks if c.status != HealthStatus.OK), key=lambda c: order[c.status]
+    )
+    return {
+        "status": view.text(HEALTH_STATUS),
+        "problems": [
+            {"name": c.name, "status": str(c.status), "message": c.message} for c in problems
+        ],
+        "passed": [c.name for c in checks if c.status == HealthStatus.OK],
+        "overridden": view.triggers(HEALTH_OVERRIDDEN),
+    }
 
 
 def collect(db: ScratchpadDB) -> ReportData:
@@ -302,6 +333,7 @@ def collect(db: ScratchpadDB) -> ReportData:
         "headline": headline,
         "issues": describe_issues(ranked, scores, chronic),
         "glance": _at_a_glance(db, view, headline, top_templates, chronic),
+        "health": _health(view),
         "health_signals": health_signals,
         "health_detail": health_detail,
         # Whether the pass ran and whether its content was kept are different questions. A
@@ -338,8 +370,20 @@ def _health_warnings(view: MetricView) -> list[str]:
     No cutoff appears in this function. Where a metric becomes worth mentioning is declared on
     the metric itself and evaluated by `MetricView.triggers`; all this supplies is the wording,
     which is the only half a reader actually owns.
+
+    A warning the pre-flight health check already states -- its check recorded a verdict other
+    than `ok` (`health.OWNED_METRICS`) -- is left to the health section at the top, so one
+    problem is stated once. Deferring only to a verdict that actually fired means a scratchpad
+    from before the check existed, or one whose check disagrees with the metric, still gets the
+    warning here: deduplication must never be the reason a problem goes unsaid.
     """
     warnings: list[str] = []
+    stated = {c.name for c in recorded_checks(view) if c.status != HealthStatus.OK}
+
+    def triggers(metric: Metric) -> bool:
+        if OWNED_METRICS.get(metric) in stated:
+            return False
+        return view.triggers(metric)
 
     # First, because it changes how every later number in the report should be read.
     if view.triggers(INGEST_FALLBACK):
@@ -351,7 +395,11 @@ def _health_warnings(view: MetricView) -> list[str]:
         ordinal = view.number(INGEST_UNPARSEABLE_TIMESTAMP)
         loaded = view.number(INGEST_EVENTS_LOADED)
         shape = view.text(INGEST_TIMESTAMP_SHAPE)
-        if ordinal is not None and loaded is not None and 0 < ordinal < loaded:
+        if "timestamps" in stated:
+            # The health check's `timestamps` verdict says what this read did to the times,
+            # with the coverage measured; saying it here too would say it twice.
+            scope = "What that means for the timestamps is under *Log health* above"
+        elif ordinal is not None and loaded is not None and 0 < ordinal < loaded:
             scope = (
                 f"{int(ordinal)} of {int(loaded)} events were read this way and have no parsed "
                 "timestamp. The incident window spans those events and the properly timestamped "
@@ -384,7 +432,7 @@ def _health_warnings(view: MetricView) -> list[str]:
             "and severity was guessed from the text of each line."
         )
 
-    if view.triggers(INGEST_PARSE_ERRORS):
+    if triggers(INGEST_PARSE_ERRORS):
         errors = int(_triggered_value(view, INGEST_PARSE_ERRORS))
         warnings.append(f"{errors} line(s) failed to parse and were skipped.")
 
@@ -395,7 +443,7 @@ def _health_warnings(view: MetricView) -> list[str]:
         )
 
     # Coverage first: it is the invariant, and it is the failure the ratio hides.
-    if view.triggers(TEMPLATING_COVERAGE):
+    if triggers(TEMPLATING_COVERAGE):
         lost = 1.0 - _triggered_value(view, TEMPLATING_COVERAGE)
         warnings.append(
             f"CRITICAL: {lost:.1%} of events have no reachable template. Those lines cannot "
@@ -413,7 +461,7 @@ def _health_warnings(view: MetricView) -> list[str]:
 
     # The floor on this metric is load-bearing: exactly 0.0 means an empty file, not a badly
     # compressed one, and an empty file is not something to blame templating for.
-    if view.triggers(TEMPLATING_REDUCTION_FACTOR):
+    if triggers(TEMPLATING_REDUCTION_FACTOR):
         reduction = _triggered_value(view, TEMPLATING_REDUCTION_FACTOR)
         warnings.append(
             f"Templating reduced the file only {reduction:.1f}x - there is "
@@ -421,7 +469,7 @@ def _health_warnings(view: MetricView) -> list[str]:
             "haystack and template ranking may be unreliable."
         )
 
-    if view.triggers(TEMPLATING_LARGEST_SHARE):
+    if triggers(TEMPLATING_LARGEST_SHARE):
         share = _triggered_value(view, TEMPLATING_LARGEST_SHARE)
         warnings.append(
             f"One template accounts for {share:.0%} of all events. A "
@@ -500,7 +548,7 @@ def _health_warnings(view: MetricView) -> list[str]:
         )
         warnings.append(f"{headline}{detail}")
 
-    if view.triggers(TEMPLATING_OVER_MERGED):
+    if triggers(TEMPLATING_OVER_MERGED):
         over_merged = int(_triggered_value(view, TEMPLATING_OVER_MERGED))
         ids = view.text(TEMPLATING_OVER_MERGED_IDS)
         detail = "" if ids is None else f" (templates {ids})"

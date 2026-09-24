@@ -18,6 +18,30 @@
 > ") }}
 {% endif %}
 
+## Log health
+
+{% if health.status %}
+**{{ health.status | upper }}** - the pre-flight check made on the ingested log before any model
+was called. It costs no tokens and says whether the data can support what follows.
+{% if health.overridden %}
+
+**The check failed and the investigation was run anyway**, with `--ignore-health`. Read every
+finding below with the failed check in mind.
+{% endif %}
+
+{% for check in health.problems -%}
+- **{{ check.status | upper }} - {{ check.name }}.** {{ check.message }}
+{% endfor %}
+{% if health.passed %}
+
+Passed: {{ health.passed | join(", ") }}.
+{% endif %}
+{% else %}
+No pre-flight health check was recorded for this incident; it was ingested before the check
+existed. `mistify health --incident-id {{ incident.incident_id }}` runs one without calling a
+model.
+{% endif %}
+
 ## What was found
 
 {% if issues %}

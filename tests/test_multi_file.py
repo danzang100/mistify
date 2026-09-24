@@ -340,9 +340,12 @@ def test_the_warning_says_how_much_of_the_source_was_degraded(
     # the warning must say so rather than claiming the window is meaningless. What is still
     # degraded is the *structure* -- no parsed fields, severity guessed from the text.
     assert "read one line at a time" in text
-    assert "Timestamps were read from each line as `syslog`" in text
-    assert "carries no year" in text
+    assert "as `syslog`" in text
+    # Said once, by the health section at the top; the fallback warning defers to it rather
+    # than repeating it.
+    assert text.count("carries no year") == 1
     assert "There are no parsed timestamps" not in text
+    assert "No timestamp could be read from any line" not in text
 
 
 def test_component_formats_enumerates_what_the_summary_hides(tmp_path: Path) -> None:
