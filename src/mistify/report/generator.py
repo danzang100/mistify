@@ -35,6 +35,9 @@ from mistify.metrics import (
     ANOMALY_NEEDLE_POSITION,
     ANOMALY_SEVERITY_SOURCE,
     ANOMALY_SIGNAL_TEMPLATE_IDS,
+    BUDGET_MAX_TOTAL_TOKENS,
+    BUDGET_REFUSED_STAGES,
+    BUDGET_SPENT_TOKENS,
     INGEST_EVENTS_LOADED,
     INGEST_FALLBACK,
     INGEST_FALLBACK_REASON,
@@ -43,6 +46,7 @@ from mistify.metrics import (
     INGEST_TIMESTAMP_YEAR_INFERRED,
     INGEST_UNMAPPED_SEVERITY,
     INGEST_UNPARSEABLE_TIMESTAMP,
+    INVESTIGATE_BUDGET_LIMIT,
     INVESTIGATE_BUDGET_LIMITED,
     INVESTIGATE_CAVEAT,
     INVESTIGATE_DIGEST_CHARS,
@@ -299,6 +303,8 @@ def collect(db: ScratchpadDB) -> ReportData:
         or "No caveat recorded for this investigator.",
         "token_stages": token_stages,
         "token_total": total_tokens(token_stages),
+        "token_ceiling": view.number(BUDGET_MAX_TOTAL_TOKENS),
+        "token_spent": view.number(BUDGET_SPENT_TOKENS),
         "headline": headline,
         "issues": describe_issues(ranked, scores, chronic),
         "glance": _at_a_glance(db, view, headline, top_templates, chronic),
@@ -465,10 +471,27 @@ def _health_warnings(view: MetricView) -> list[str]:
     if view.triggers(INVESTIGATE_BUDGET_LIMITED):
         calls = view.number(INVESTIGATE_TOOL_CALLS)
         spent = f" after {int(calls)} tool calls" if calls is not None else ""
+        limit = (
+            "its token ceiling"
+            if view.text(INVESTIGATE_BUDGET_LIMIT) == "tokens"
+            else "its tool-call cap"
+        )
         warnings.append(
-            f"The investigation was budget-limited: it reached its tool-call cap{spent} "
+            f"The investigation was budget-limited: it reached {limit}{spent} "
             "before concluding. Treat the finding as the best available from a search that "
             "was cut short, not as a completed investigation."
+        )
+
+    # A stage the ceiling refused did not run, and its absence from the report would otherwise
+    # read as a check that passed.
+    refused = view.text(BUDGET_REFUSED_STAGES)
+    if refused:
+        ceiling = view.number(BUDGET_MAX_TOTAL_TOKENS)
+        of = f" of {int(ceiling):,}" if ceiling is not None else ""
+        warnings.append(
+            f"The token ceiling{of} refused model calls in: {refused.replace(',', ', ')}. "
+            "Those stages did not run, or did not finish; raise pipeline.max_total_tokens to "
+            "allow them."
         )
 
     # The one adversarial test that does not depend on a model's judgement.

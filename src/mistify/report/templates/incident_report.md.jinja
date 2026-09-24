@@ -269,6 +269,12 @@ an extra column to add - the total is input plus output.
 {% endfor -%}
 | **Total** | | | **{{ "{:,}".format(token_total.input_tokens) }}** | **{{ "{:,}".format(token_total.cached_input_tokens) }}** ({{ "%.0f" | format(token_total.cached_share * 100) }}%) | **{{ "{:,}".format(token_total.output_tokens) }}** | **{{ "{:,}".format(token_total.total_tokens) }}** |
 
+{% if token_ceiling is not none %}
+Token ceiling: **{{ "{:,}".format(token_ceiling | int) }}**; this run spent {{ "{:,}".format((token_spent or 0) | int) }} ({{ "%.0f" | format((token_spent or 0) / token_ceiling * 100) }}%).
+{% else %}
+No token ceiling was set for this run.
+{% endif %}
+
 {% if token_total.cached_input_tokens == 0 and token_total.input_tokens > 0 %}
 No tokens were served from cache. The loop is built around a stable system prompt that should
 be cacheable from the second step onward, so this is either that prefix being invalidated every

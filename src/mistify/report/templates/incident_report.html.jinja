@@ -344,6 +344,12 @@ total is input plus output.</p>
     <th class="num">{{ "{:,}".format(token_total.total_tokens) }}</th>
   </tr>
 </table>
+{% if token_ceiling is not none %}
+<p class="note">Token ceiling: <strong>{{ "{:,}".format(token_ceiling | int) }}</strong>; this run spent
+{{ "{:,}".format((token_spent or 0) | int) }} ({{ "%.0f" | format((token_spent or 0) / token_ceiling * 100) }}%).</p>
+{% else %}
+<p class="note">No token ceiling was set for this run.</p>
+{% endif %}
 <p class="note">No prices appear here. They change without notice and differ per model.</p>
 {% else %}
 <p class="note">No stage reported model usage. A stage that spent nothing is absent here rather
