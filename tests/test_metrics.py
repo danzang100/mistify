@@ -101,6 +101,7 @@ EXPECTED_METRIC_KEYS = {
     ("investigate", "digest_nudges"),
     ("investigate", "silent_nudges"),
     ("investigate", "nudged_templates"),
+    ("investigate", "budget_limit"),
     ("synthesis", "provider"),
     ("synthesis", "model"),
     ("synthesis", "outcome"),
@@ -123,6 +124,9 @@ EXPECTED_METRIC_KEYS = {
     ("adversarial", "output_tokens"),
     ("adversarial", "cached_input_tokens"),
     ("adversarial", "rebuttal_model"),
+    ("budget", "max_total_tokens"),
+    ("budget", "spent_tokens"),
+    ("budget", "refused_stages"),
 }
 
 

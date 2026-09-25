@@ -291,6 +291,10 @@ INVESTIGATE_BUDGET_LIMITED = Metric(
     trigger_values=frozenset({"True"}),
 )
 INVESTIGATE_STOP_REASON = Metric("investigate", "stop_reason", "str")
+#: Which budget cut the investigation short, when one did: `tool_calls` or `tokens`. The
+#: report says different things for each -- a tool-call cap says the search ran out of steps,
+#: a token ceiling says it ran out of money.
+INVESTIGATE_BUDGET_LIMIT = Metric("investigate", "budget_limit", "str")
 #: Every prompt token the loop spent, cached ones included -- see `llm.base.Usage`.
 INVESTIGATE_INPUT_TOKENS = Metric("investigate", "input_tokens", "int", token_role="input")
 INVESTIGATE_OUTPUT_TOKENS = Metric("investigate", "output_tokens", "int", token_role="output")
@@ -437,6 +441,15 @@ ADVERSARIAL_CACHED_INPUT_TOKENS = Metric(
 #: this stage's tokens would be attributed entirely to the critique's model.
 ADVERSARIAL_REBUTTAL_MODEL = Metric("adversarial", "rebuttal_model", "str")
 
+#: The run's token ceiling, from `pipeline.max_total_tokens`. Absent when there was none.
+BUDGET_MAX_TOTAL_TOKENS = Metric("budget", "max_total_tokens", "int")
+#: Tokens charged against the ceiling across every stage. Equal to the token table's total
+#: when every stage reported its usage; kept separately because it is what was enforced.
+BUDGET_SPENT_TOKENS = Metric("budget", "spent_tokens", "int")
+#: Stages whose model call was refused by the ceiling, comma-separated. A stage listed here
+#: did not run, and the report has to say so rather than let its absence pass as success.
+BUDGET_REFUSED_STAGES = Metric("budget", "refused_stages", "str", load_bearing=True)
+
 
 ALL_METRICS: tuple[Metric, ...] = (
     INGEST_FORMAT,
@@ -495,6 +508,7 @@ ALL_METRICS: tuple[Metric, ...] = (
     INVESTIGATE_TOOL_CALLS,
     INVESTIGATE_BUDGET_LIMITED,
     INVESTIGATE_STOP_REASON,
+    INVESTIGATE_BUDGET_LIMIT,
     INVESTIGATE_INPUT_TOKENS,
     INVESTIGATE_OUTPUT_TOKENS,
     INVESTIGATE_CACHED_INPUT_TOKENS,
@@ -528,6 +542,9 @@ ALL_METRICS: tuple[Metric, ...] = (
     ADVERSARIAL_CACHED_INPUT_TOKENS,
     ADVERSARIAL_REBUTTAL_MODEL,
     ADVERSARIAL_OUTCOME,
+    BUDGET_MAX_TOTAL_TOKENS,
+    BUDGET_SPENT_TOKENS,
+    BUDGET_REFUSED_STAGES,
 )
 
 

@@ -63,6 +63,16 @@ class PipelineConfig(_Strict):
     #: part of the normal path rather than a backstop.
     coverage_nudges: int = Field(default=1, ge=0)
 
+    #: Hard ceiling on the tokens one run may spend, across the loop, synthesis and critique.
+    #: The loop stops early enough to leave room for the stages after it; past the ceiling
+    #: every model call is refused. None removes the ceiling.
+    #:
+    #: 1.5M because it cuts no run on record: measured 2026-09-24 over the 22 recorded runs,
+    #: the largest was 1.22M (rey-0811-v6, the shipped configuration on a real customer log)
+    #: and the median 194k. It does stop the shape that motivated it -- one digest blow-up
+    #: spent 1.58M in the loop alone. With a paid model, set this to what a run may cost.
+    max_total_tokens: int | None = Field(default=1_500_000, ge=10_000)
+
 
 def _registered_adapters() -> list[str]:
     """Every adapter the registry implements, in a stable order.

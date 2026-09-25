@@ -24,11 +24,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from mistify.agent.adversarial import unexplained_signal_templates
+from mistify.agent.budget import BudgetedProvider, TokenBudget, TokenCeilingReached
 from mistify.agent.tools import ToolBox
 from mistify.common.models import ScratchpadNote
 from mistify.llm.base import LLMProvider, Message, ToolResult, ToolSpec, Turn, Usage
 from mistify.metrics import (
     ANOMALY_SIGNAL_TEMPLATE_IDS,
+    INVESTIGATE_BUDGET_LIMIT,
     INVESTIGATE_BUDGET_LIMITED,
     INVESTIGATE_CACHED_INPUT_TOKENS,
     INVESTIGATE_CAVEAT,
@@ -101,6 +103,9 @@ SILENT_NUDGE_AFTER = 0.6
 #: listing thirty of them is a shopping list, not a question -- and the prompt tells the model
 #: not to pad the investigation, which a long list invites it to do.
 MAX_NUDGED_TEMPLATES = 3
+
+#: How a budget-limited note names the budget it ran into.
+_LIMIT_WORDS = {"tool_calls": "tool-call cap", "tokens": "token ceiling"}
 
 CAVEAT = (
     "A model drove this investigation through the scratchpad tools. Every claim below cites "
@@ -200,6 +205,8 @@ class InvestigationResult:
     steps: int = 0
     tool_calls: int = 0
     budget_limited: bool = False
+    #: Which budget did the limiting: `tool_calls` or `tokens`. None when neither did.
+    budget_limit: str | None = None
     stop_reason: str = "end_turn"
     usage: Usage = field(default_factory=Usage)
     #: Input tokens on each step, in order. The total hides the curve, and the curve is what
@@ -345,6 +352,12 @@ class InvestigationLoop:
         #: How many times a conclusion may be sent back for leaving an acute signal template
         #: unaccounted for. Zero accepts the first conclusion offered.
         self.max_coverage_nudges = coverage_nudges
+        #: The run's shared token ceiling, read from the provider that charges it, so there is
+        #: one budget and no way to hand the loop a different one. The loop stops while there
+        #: is still room for its closing turn and the stages after it; see `agent.budget`.
+        self.token_budget: TokenBudget | None = (
+            provider.budget if isinstance(provider, BudgetedProvider) else None
+        )
 
     def run(self, incident_context: str = "") -> InvestigationResult:
         system = build_system_prompt(self.db)
@@ -361,14 +374,29 @@ class InvestigationLoop:
         specs = self.toolbox.specs()
 
         while True:
-            turn = self._converse(system, messages, specs)
+            try:
+                turn = self._converse(system, messages, specs)
+            except TokenCeilingReached:
+                # The projection below should stop the loop before this can happen; reaching
+                # it means one step cost far more than the one before it. Nothing is left to
+                # spend on a closing turn, so the notes so far are what the run has.
+                result.budget_limited = True
+                result.budget_limit = "tokens"
+                result.stop_reason = "token_ceiling"
+                break
             result.steps += 1
             result.usage = result.usage + turn.usage
             result.input_per_step.append(turn.usage.input_tokens)
             result.stop_reason = turn.stop_reason
 
             if not turn.wants_tools:
-                if self._nudge(messages, turn, result):
+                # A nudge sends the conclusion back for more searching, which spends the reserve
+                # the stages after the loop are counting on once the loop's share is used.
+                # Past that point the conclusion stands as offered.
+                over_share = self.token_budget is not None and self.token_budget.loop_should_stop(
+                    turn.usage.total_tokens
+                )
+                if not over_share and self._nudge(messages, turn, result):
                     continue
                 break
 
@@ -383,6 +411,14 @@ class InvestigationLoop:
 
             if result.tool_calls >= self.max_tool_calls:
                 result.budget_limited = True
+                result.budget_limit = "tool_calls"
+                self._converge(system, messages, result)
+                break
+            if self.token_budget is not None and self.token_budget.loop_should_stop(
+                turn.usage.total_tokens
+            ):
+                result.budget_limited = True
+                result.budget_limit = "tokens"
                 self._converge(system, messages, result)
                 break
 
@@ -436,18 +472,32 @@ class InvestigationLoop:
         """
         if result.silent_nudges or self.db.notes():
             return
-        if result.tool_calls < self.max_tool_calls * SILENT_NUDGE_AFTER:
+        calls_spent = result.tool_calls >= self.max_tool_calls * SILENT_NUDGE_AFTER
+        # The same point measured in tokens, for a run the ceiling will stop first. Found
+        # live on 2026-09-24: a 60k-ceiling run of the sample incident was stopped at 8 of
+        # its 30 calls having written nothing, and was never asked to, because this nudge
+        # only watched the tool-call count.
+        tokens_spent = (
+            self.token_budget is not None
+            and self.token_budget.spent >= self.token_budget.loop_limit * SILENT_NUDGE_AFTER
+        )
+        if not (calls_spent or tokens_spent):
             return
+        used = (
+            f"{result.tool_calls} of your {self.max_tool_calls} tool calls"
+            if calls_spent
+            else "most of your token budget"
+        )
         messages.append(
             Message(
                 role="user",
                 text=(
-                    f"You have used {result.tool_calls} of your {self.max_tool_calls} tool "
-                    "calls and recorded no findings. Write down what you have established so "
-                    "far with write_note, citing the templates and log event ids you have "
-                    "actually read. A note you can revise later is worth more than a "
-                    "conclusion you run out of budget before writing, and an investigation "
-                    "that records nothing is indistinguishable from one that found nothing."
+                    f"You have used {used} and recorded no findings. Write down what you "
+                    "have established so far with write_note, citing the templates and log "
+                    "event ids you have actually read. A note you can revise later is worth "
+                    "more than a conclusion you run out of budget before writing, and an "
+                    "investigation that records nothing is indistinguishable from one that "
+                    "found nothing."
                 ),
             )
         )
@@ -567,24 +617,32 @@ class InvestigationLoop:
         cannot ask for more, so it must answer from what it already has. Asking politely while
         leaving the tools available would just spend another call.
         """
+        spent = (
+            f"your budget of {self.max_tool_calls} tool calls and none remain"
+            if result.budget_limit == "tool_calls"
+            else "the token budget for searching and no more tool calls can be made"
+        )
         messages.append(
             Message(
                 role="user",
                 text=(
-                    f"You have used your budget of {self.max_tool_calls} tool calls and "
-                    "none remain. State your conclusion now from what you have already seen. "
-                    "Say honestly how confident you are, and name what you would have looked "
-                    "at next if you could have."
+                    f"You have used {spent}. State your conclusion now from what you have "
+                    "already seen. Say honestly how confident you are, and name what you "
+                    "would have looked at next if you could have."
                 ),
             )
         )
-        turn = self.provider.converse(
-            system=system,
-            messages=messages,
-            tools=None,
-            max_tokens=self.max_tokens,
-            task_budget_tokens=None,
-        )
+        try:
+            turn = self.provider.converse(
+                system=system,
+                messages=messages,
+                tools=None,
+                max_tokens=self.max_tokens,
+                task_budget_tokens=None,
+            )
+        except TokenCeilingReached:
+            result.stop_reason = "token_ceiling"
+            return
         result.steps += 1
         result.usage = result.usage + turn.usage
         result.stop_reason = "budget_exhausted"
@@ -593,15 +651,22 @@ class InvestigationLoop:
             self.db.write_note(
                 step=result.steps,
                 note=(
-                    "Investigation was budget-limited: it reached its tool-call cap before "
-                    f"concluding. Stated conclusion at that point: {turn.text.strip()}"
+                    "Investigation was budget-limited: it reached its "
+                    f"{_LIMIT_WORDS[result.budget_limit or 'tool_calls']} "
+                    f"before concluding. Stated conclusion at that point: {turn.text.strip()}"
                 ),
-                evidence={"budget_limited": True, "tool_calls": result.tool_calls},
+                evidence={
+                    "budget_limited": True,
+                    "budget_limit": result.budget_limit,
+                    "tool_calls": result.tool_calls,
+                },
                 confidence="low",
             )
 
     def _record(self, result: InvestigationResult) -> None:
         notes = self.db.notes()
+        if result.budget_limit is None:
+            self.db.forget([INVESTIGATE_BUDGET_LIMIT])
         self.db.record_many(
             [
                 (INVESTIGATE_INVESTIGATOR, INVESTIGATOR_NAME),
@@ -612,6 +677,11 @@ class InvestigationLoop:
                 (INVESTIGATE_TOOL_CALLS, result.tool_calls),
                 (INVESTIGATE_NOTES_WRITTEN, len(notes)),
                 (INVESTIGATE_BUDGET_LIMITED, result.budget_limited),
+                *(
+                    [(INVESTIGATE_BUDGET_LIMIT, result.budget_limit)]
+                    if result.budget_limit is not None
+                    else []
+                ),
                 (INVESTIGATE_STOP_REASON, result.stop_reason),
                 (INVESTIGATE_INPUT_TOKENS, result.usage.input_tokens),
                 (INVESTIGATE_OUTPUT_TOKENS, result.usage.output_tokens),

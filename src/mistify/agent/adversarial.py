@@ -30,6 +30,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from mistify.agent.budget import TokenCeilingReached
 from mistify.agent.tools import MAX_CELL_CHARS, ToolBox, clip
 from mistify.llm.base import LLMProvider, Message, Usage
 from mistify.metrics import (
@@ -330,14 +331,24 @@ def run_adversarial_check(
 
     if rebut and result.evidenced_objections:
         answering = rebuttal_provider or provider
-        result.rebuttals, result.revised_confidence, rebuttal_usage, calls = _rebut(
-            db,
-            answering,
-            result.evidenced_objections,
-            max_tokens,
-            toolbox=toolbox,
-            max_tool_calls=rebuttal_tool_calls,
-        )
+        try:
+            result.rebuttals, result.revised_confidence, rebuttal_usage, calls = _rebut(
+                db,
+                answering,
+                result.evidenced_objections,
+                max_tokens,
+                toolbox=toolbox,
+                max_tool_calls=rebuttal_tool_calls,
+            )
+        except _RebuttalRefused as refused:
+            # The critique ran and its objections are real; only the answer was refused. Kept
+            # and recorded before the refusal goes up, so the report shows what was objected
+            # and what it cost rather than a stage that seems never to have run.
+            result.usage = result.usage + refused.usage
+            result.model_calls += refused.calls
+            result.outcome = "rebuttal_refused"
+            _record(db, provider, result)
+            raise
         result.usage = result.usage + rebuttal_usage
         result.model_calls += calls
         # Two models can spend this stage's tokens. Recording only the critique's would
@@ -348,6 +359,15 @@ def run_adversarial_check(
     result.outcome = _outcome(result)
     _record(db, provider, result)
     return result
+
+
+class _RebuttalRefused(TokenCeilingReached):
+    """The token ceiling refused the rebuttal, carrying what it had spent before that."""
+
+    def __init__(self, message: str, usage: Usage, calls: int) -> None:
+        super().__init__(message)
+        self.usage = usage
+        self.calls = calls
 
 
 def _rebut(
@@ -385,12 +405,15 @@ def _rebut(
     tool_calls_made = 0
     while True:
         offered = specs if tool_calls_made < max_tool_calls else []
-        reply = provider.converse(
-            system=REBUTTAL_PROMPT,
-            messages=messages,
-            tools=offered or None,
-            max_tokens=max_tokens,
-        )
+        try:
+            reply = provider.converse(
+                system=REBUTTAL_PROMPT,
+                messages=messages,
+                tools=offered or None,
+                max_tokens=max_tokens,
+            )
+        except TokenCeilingReached as exc:
+            raise _RebuttalRefused(str(exc), usage, calls) from exc
         usage = usage + reply.usage
         calls += 1
         if not reply.wants_tools or toolbox is None or not offered:
