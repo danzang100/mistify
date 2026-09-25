@@ -355,3 +355,50 @@ def test_restart_clears_a_run_that_wrote_no_notes(
     assert result.exit_code == 0, result.output
     with ScratchpadDB(scratchpad) as db:
         assert [q["sql_query"] for q in db.queries()] != ["SELECT * FROM log_events"]
+
+
+def test_dotenv_is_read_from_the_working_directory_only(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Found in use: with no path, load_dotenv searched up from the source file's directory, and
+    from a git worktree that reached the main checkout's key."""
+    seen: list[object] = []
+    monkeypatch.setattr("mistify.cli.load_dotenv", lambda *a, **k: seen.append(a[0] if a else None))
+    monkeypatch.chdir(tmp_path)
+
+    runner.invoke(cli, ["report", "--incident-id", "none"])
+
+    assert seen == [tmp_path / ".env"]
+
+
+def test_help_lists_the_mcp_command(runner: CliRunner) -> None:
+    result = runner.invoke(cli, ["--help"])
+    assert "mcp" in result.output
+
+
+def test_mcp_reads_dotenv_beside_its_config_and_nowhere_else(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The server is started by a client from an arbitrary directory; its credentials are the
+    config's, not whatever .env happens to sit where the client was launched."""
+    import mistify.mcp_server as server_module
+
+    seen: list[object] = []
+    monkeypatch.setattr("mistify.cli.load_dotenv", lambda *a, **k: seen.append(a[0] if a else None))
+
+    class _Idle:
+        def run(self, transport: str) -> None:
+            seen.append(transport)
+
+    monkeypatch.setattr(server_module, "build_server", lambda _config: _Idle())
+    elsewhere = tmp_path / "launched-here"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    config = tmp_path / "conf" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text("mcp:\n  allowed_roots: []\n", encoding="utf-8")
+
+    result = runner.invoke(cli, ["mcp", "--config", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert seen == [config.parent.resolve() / ".env", "stdio"]

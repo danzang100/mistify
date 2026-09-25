@@ -423,6 +423,10 @@ SYNTHESIS_OUTCOME = Metric(
     trigger_values=frozenset({"unreadable", "no_usable_citations", "empty"}),
 )
 SYNTHESIS_MODEL_CALLS = Metric("synthesis", "model_calls", "int")
+#: The provider error that stopped the synthesis, when one did. The loop's own notes then stand
+#: as the conclusion, and the report says so -- found live on 2026-09-26, when six 503s from the
+#: synthesis model discarded a finished investigation's result along with the synthesis.
+SYNTHESIS_FAILED = Metric("synthesis", "failed", "str", load_bearing=True)
 SYNTHESIS_INPUT_TOKENS = Metric("synthesis", "input_tokens", "int", token_role="input")
 SYNTHESIS_OUTPUT_TOKENS = Metric("synthesis", "output_tokens", "int", token_role="output")
 SYNTHESIS_CACHED_INPUT_TOKENS = Metric(
@@ -481,6 +485,8 @@ ADVERSARIAL_UNEXPLAINED_SIGNAL = Metric(
 ADVERSARIAL_UNEXPLAINED_CHRONIC = Metric("adversarial", "unexplained_chronic_templates", "int")
 ADVERSARIAL_REBUTTED = Metric("adversarial", "objections_rebutted", "int")
 ADVERSARIAL_OUTCOME = Metric("adversarial", "outcome", "str")
+#: The provider error that stopped the critique, when one did. Nothing checked the conclusion.
+ADVERSARIAL_FAILED = Metric("adversarial", "failed", "str", load_bearing=True)
 #: Model calls the critique and rebuttal made between them. Without it the token counts below
 #: cannot be read as a rate, and a pass that silently made two calls looks like one.
 ADVERSARIAL_MODEL_CALLS = Metric("adversarial", "model_calls", "int")
@@ -594,6 +600,7 @@ ALL_METRICS: tuple[Metric, ...] = (
     SYNTHESIS_MODEL,
     SYNTHESIS_OUTCOME,
     SYNTHESIS_MODEL_CALLS,
+    SYNTHESIS_FAILED,
     SYNTHESIS_INPUT_TOKENS,
     SYNTHESIS_OUTPUT_TOKENS,
     SYNTHESIS_CACHED_INPUT_TOKENS,
@@ -612,6 +619,7 @@ ALL_METRICS: tuple[Metric, ...] = (
     ADVERSARIAL_CACHED_INPUT_TOKENS,
     ADVERSARIAL_REBUTTAL_MODEL,
     ADVERSARIAL_OUTCOME,
+    ADVERSARIAL_FAILED,
     BUDGET_MAX_TOTAL_TOKENS,
     BUDGET_SPENT_TOKENS,
     BUDGET_REFUSED_STAGES,

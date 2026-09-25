@@ -652,3 +652,36 @@ def test_notes_without_a_role_rank_exactly_as_they_did(loaded_db: ScratchpadDB) 
     high = {"note": "b", "step": 2, "confidence": "high", "evidence": {"template_ids": [root]}}
 
     assert rank_notes([low, high], scores)[0] is high
+
+
+# ------------------------------------------------------------------ json: the data, no template
+
+
+def test_the_json_format_is_the_report_data(loaded_db: ScratchpadDB) -> None:
+    import json
+
+    from mistify.report.data import SCHEMA, report_data
+
+    rendered = json.loads(generate_report(loaded_db, "json"))
+    assert rendered == json.loads(json.dumps(report_data(loaded_db)))
+    assert rendered["schema"] == SCHEMA
+    assert rendered["event_count"] == loaded_db.event_count()
+
+
+def test_json_keeps_the_computed_token_total(loaded_db: ScratchpadDB) -> None:
+    """A consumer should not have to know that cached tokens are already inside input."""
+    import json
+
+    from mistify.metrics import INVESTIGATE_INPUT_TOKENS, INVESTIGATE_OUTPUT_TOKENS
+
+    loaded_db.record_many([(INVESTIGATE_INPUT_TOKENS, 1_000), (INVESTIGATE_OUTPUT_TOKENS, 50)])
+    stage = json.loads(generate_report(loaded_db, "json"))["token_stages"][0]
+    assert stage["total_tokens"] == 1_050
+
+
+def test_a_value_json_cannot_hold_is_refused_not_stringified() -> None:
+    """The control for faithfulness: an unknown type fails loudly instead of becoming a repr."""
+    from mistify.report.data import _jsonable
+
+    with pytest.raises(TypeError, match="no JSON form"):
+        _jsonable({"x": object()})

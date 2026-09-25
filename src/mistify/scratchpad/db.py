@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import time
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from importlib import resources
@@ -1068,17 +1069,34 @@ class ScratchpadDB:
         self._readonly = conn
         return conn
 
-    def run_readonly_sql(self, query: str, max_rows: int = 500) -> list[dict[str, Any]]:
+    def run_readonly_sql(
+        self, query: str, max_rows: int = 500, time_limit: float | None = None
+    ) -> list[dict[str, Any]]:
         """Run a read-only query against the scratchpad.
 
         Raises `ReadOnlyViolation` for anything that attempts to change state or reach
-        outside the database.
+        outside the database, and -- when `time_limit` is given -- for a query still running
+        after that many seconds. A row cap bounds what comes back, not the work: a self-join of
+        a two-million-row table returns one row after running for hours.
         """
         conn = self._readonly_conn()
+        if time_limit is not None:
+            deadline = time.monotonic() + time_limit
+            # Called every 10,000 virtual-machine steps; a non-zero return interrupts the query.
+            conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 10_000)
         try:
             cursor = conn.execute(query)
+            if cursor.description is None:
+                raise ReadOnlyViolation("query returned no result set")
+            return [dict(row) for row in cursor.fetchmany(max_rows)]
+        except sqlite3.OperationalError as exc:
+            if time_limit is not None and "interrupted" in str(exc):
+                raise ReadOnlyViolation(
+                    f"query stopped after its {time_limit:g}-second limit"
+                ) from exc
+            raise ReadOnlyViolation(str(exc)) from exc
         except sqlite3.DatabaseError as exc:
             raise ReadOnlyViolation(str(exc)) from exc
-        if cursor.description is None:
-            raise ReadOnlyViolation("query returned no result set")
-        return [dict(row) for row in cursor.fetchmany(max_rows)]
+        finally:
+            if time_limit is not None:
+                conn.set_progress_handler(None, 0)
