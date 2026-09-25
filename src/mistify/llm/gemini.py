@@ -25,7 +25,6 @@ the caller.
 from __future__ import annotations
 
 import os
-import random
 import re
 import time
 from typing import TYPE_CHECKING, Any
@@ -39,6 +38,10 @@ from mistify.llm.base import (
     Turn,
     Usage,
 )
+from mistify.llm.retry import RETRYABLE_STATUS, advertised_delay, send_with_retries, space_out
+
+#: Kept under its old name for the tests that import it from here.
+_advertised_delay = advertised_delay
 
 if TYPE_CHECKING:  # pragma: no cover - the SDK is imported lazily
     from google.genai import Client
@@ -51,12 +54,11 @@ _UNSUPPORTED_SCHEMA_KEYS = frozenset(
     {"additionalProperties", "$schema", "$id", "definitions", "$defs", "examples"}
 )
 
-#: Retryable failures, recognised two ways because they arrive two ways. The GenAI SDK raises
-#: `ClientError`/`ServerError` carrying an HTTP `code`; wrappers elsewhere in Google's stack
-#: raise typed exceptions (`ResourceExhausted`, `DeadlineExceeded`) whose message says nothing
-#: and whose only signal is the class name.
-_RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
-
+#: Retryable failures are recognised two ways because they arrive two ways. The GenAI SDK
+#: raises `ClientError`/`ServerError` carrying an HTTP `code`, checked against
+#: `retry.RETRYABLE_STATUS`; wrappers elsewhere in Google's stack raise typed exceptions
+#: (`ResourceExhausted`, `DeadlineExceeded`) whose message says nothing and whose only signal
+#: is the class name, which the markers below catch.
 #: Matched against the type name and message with punctuation removed, so `RESOURCE_EXHAUSTED`
 #: on the wire and `ResourceExhausted` as a class name are the same marker.
 _RETRYABLE_MARKERS = (
@@ -70,11 +72,6 @@ _RETRYABLE_MARKERS = (
 
 _PUNCTUATION = re.compile(r"[^A-Z0-9]")
 
-#: Google returns a RetryInfo telling you exactly how long the quota window has left, e.g.
-#: `'retryDelay': '54s'`. Ignoring it and backing off on a guess is how a retry budget gets
-#: spent entirely inside a window that had not reset yet.
-_RETRY_DELAY = re.compile(r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s")
-
 
 def http_options(timeout_seconds: float) -> Any:
     """Transport options for the SDK client.
@@ -86,18 +83,6 @@ def http_options(timeout_seconds: float) -> Any:
     from google.genai import types
 
     return types.HttpOptions(timeout=int(timeout_seconds * 1000))
-
-
-def _advertised_delay(exc: Exception) -> float | None:
-    """Seconds the API asked us to wait, when it said so.
-
-    Free-tier quotas are per-minute, so the wait is routinely longer than any exponential
-    schedule reaches in the retries available. Honouring the server's own number is the
-    difference between recovering and failing the investigation while the quota was about to
-    reset anyway.
-    """
-    match = _RETRY_DELAY.search(str(exc))
-    return float(match.group(1)) if match else None
 
 
 def _sanitise_schema(schema: Any) -> Any:
@@ -320,26 +305,16 @@ class GeminiProvider:
 
     def _send(self, contents: list[Any], config: Any) -> Any:
         """One request, retrying the throttling the free tier hands out routinely."""
-        for attempt in range(self.max_retries + 1):
-            self._space_out()
-            try:
-                return self.client.models.generate_content(
-                    model=self.model, contents=contents, config=config
-                )
-            except Exception as exc:
-                if attempt >= self.max_retries or not self._is_retryable(exc):
-                    raise ProviderError(f"Gemini call failed: {exc}") from exc
-                # Full jitter: a loop that retries on a fixed schedule marches its own
-                # retries into the next rate-limit window together.
-                delay = min(2**attempt, 30) * (0.5 + random.random() / 2)
-                # The server knows when the window resets and says so. Backing off for less
-                # than that guarantees the next attempt fails too, which is how five retries
-                # get spent inside one 60-second quota window.
-                advertised = _advertised_delay(exc)
-                if advertised is not None:
-                    delay = max(delay, advertised + random.random())
-                self._sleep(delay)
-        raise ProviderError("unreachable: retry loop exited without returning")
+        return send_with_retries(
+            lambda: self.client.models.generate_content(
+                model=self.model, contents=contents, config=config
+            ),
+            is_retryable=self._is_retryable,
+            max_retries=self.max_retries,
+            sleep=self._sleep,
+            before_each=self._space_out,
+            failure="Gemini call failed",
+        )
 
     @staticmethod
     def _is_retryable(exc: Exception) -> bool:
@@ -349,15 +324,10 @@ class GeminiProvider:
         match is the fallback for errors that never carry one.
         """
         code = getattr(exc, "code", None)
-        if isinstance(code, int) and code in _RETRYABLE_STATUS:
+        if isinstance(code, int) and code in RETRYABLE_STATUS:
             return True
         text = _PUNCTUATION.sub("", f"{type(exc).__name__} {exc}".upper())
         return any(marker in text for marker in _RETRYABLE_MARKERS)
 
     def _space_out(self) -> None:
-        if self.min_interval_seconds <= 0:
-            return
-        elapsed = time.monotonic() - self._last_call_at
-        if elapsed < self.min_interval_seconds:
-            self._sleep(self.min_interval_seconds - elapsed)
-        self._last_call_at = time.monotonic()
+        self._last_call_at = space_out(self._last_call_at, self.min_interval_seconds, self._sleep)

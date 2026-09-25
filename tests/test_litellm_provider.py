@@ -350,3 +350,49 @@ def test_the_registry_passes_timeout_and_spacing_through(monkeypatch: pytest.Mon
     provider = build_provider("litellm", MODEL, config)
     assert isinstance(provider, LiteLLMProvider)
     assert (provider.timeout_seconds, provider.min_interval_seconds) == (45, 2)
+
+
+def test_a_tool_call_cut_off_by_the_output_ceiling_says_so() -> None:
+    """Truncated JSON under finish_reason `length` is a ceiling, not an incapable model."""
+    provider, _ = _provider(
+        _response(tool_calls=[_signed_call(arguments='{"q": "time')], finish_reason="length")
+    )
+    with pytest.raises(ProviderError, match=r"Raise llm.max_tokens"):
+        provider.converse("system", [Message(role="user", text="go")], tools=[SEARCH_TOOL])
+
+
+def test_bad_arguments_without_truncation_still_blame_the_model() -> None:
+    """The control: the same bad JSON with a normal finish keeps the capability message."""
+    provider, _ = _provider(
+        _response(tool_calls=[_signed_call(arguments='{"q": "time')], finish_reason="tool_calls")
+    )
+    with pytest.raises(ProviderError, match="try a larger model"):
+        provider.converse("system", [Message(role="user", text="go")], tools=[SEARCH_TOOL])
+
+
+class APIConnectionError(Exception):
+    """Named like LiteLLM's."""
+
+
+def test_a_refused_local_connection_fails_at_once_with_a_hint() -> None:
+    fake = _FakeCompletion(
+        APIConnectionError("[WinError 10061] the target machine actively refused it"),
+        _response(content="unused"),
+    )
+    provider = LiteLLMProvider("ollama_chat/qwen3:8b", completion=fake, sleep=lambda _s: None)
+
+    with pytest.raises(ProviderError, match="is the local server running"):
+        provider.converse("system", [Message(role="user", text="go")])
+    assert len(fake.requests) == 1
+
+
+def test_a_dropped_connection_is_still_retried() -> None:
+    """The control: a connection error that is not a refusal keeps its retries."""
+    fake = _FakeCompletion(
+        APIConnectionError("Server disconnected without sending a response."),
+        _response(content="ok"),
+    )
+    provider = LiteLLMProvider("ollama_chat/qwen3:8b", completion=fake, sleep=lambda _s: None)
+
+    assert provider.converse("system", [Message(role="user", text="go")]).text == "ok"
+    assert len(fake.requests) == 2

@@ -30,7 +30,7 @@ where it honours the server's advertised delay, rather than stacking two retry l
 from __future__ import annotations
 
 import json
-import random
+import re
 import time
 from typing import Any
 
@@ -43,9 +43,16 @@ from mistify.llm.base import (
     Turn,
     Usage,
 )
-from mistify.llm.gemini import _RETRYABLE_STATUS, _advertised_delay
+from mistify.llm.retry import RETRYABLE_STATUS, send_with_retries, space_out
 
 __all__ = ["LiteLLMProvider"]
+
+#: A refused connection: no server at that address. Linux and macOS say "Connection refused";
+#: Windows says the target machine "actively refused it".
+_REFUSED = re.compile(r"(?i)connection refused|actively refused")
+
+#: LiteLLM prefixes for servers that run on the user's machine.
+_LOCAL_PREFIXES = ("ollama/", "ollama_chat/")
 
 #: LiteLLM's exception classes for failures worth another attempt. Matched by name so this
 #: module imports nothing from LiteLLM until a call is made.
@@ -238,7 +245,17 @@ class LiteLLMProvider:
             return Turn(text="", stop_reason="refusal", usage=self._usage(response))
         choice = choices[0]
         message = _field(choice, "message")
-        calls = self._to_calls(_field(message, "tool_calls"))
+        try:
+            calls = self._to_calls(_field(message, "tool_calls"))
+        except ProviderError as exc:
+            if str(_field(choice, "finish_reason") or "").lower() != "length":
+                raise
+            # Cut off mid-call by the output ceiling, not a model that cannot write JSON:
+            # the advice to try a larger model would send the user the wrong way.
+            raise ProviderError(
+                f"{self.model} reached llm.max_tokens while writing a tool call, so its "
+                "arguments were cut off. Raise llm.max_tokens."
+            ) from exc
         return Turn(
             text=_field(message, "content") or "",
             tool_calls=calls,
@@ -247,34 +264,36 @@ class LiteLLMProvider:
         )
 
     def _send(self, request: dict[str, Any]) -> Any:
-        for attempt in range(self.max_retries + 1):
-            self._space_out()
-            try:
-                return self.completion(**request)
-            except Exception as exc:
-                if attempt >= self.max_retries or not self._is_retryable(exc):
-                    raise ProviderError(f"{self.model} call failed: {exc}") from exc
-                delay = min(2**attempt, 30) * (0.5 + random.random() / 2)
-                advertised = _advertised_delay(exc)
-                if advertised is not None:
-                    delay = max(delay, advertised + random.random())
-                self._sleep(delay)
-        raise ProviderError("unreachable: retry loop exited without returning")
+        return send_with_retries(
+            lambda: self.completion(**request),
+            is_retryable=self._is_retryable,
+            max_retries=self.max_retries,
+            sleep=self._sleep,
+            before_each=self._space_out,
+            failure=f"{self.model} call failed{self._local_hint()}",
+        )
+
+    def _local_hint(self) -> str:
+        if self.model.startswith(_LOCAL_PREFIXES):
+            return (
+                " (is the local server running? LiteLLM reads its address from "
+                "OLLAMA_API_BASE and defaults to http://localhost:11434)"
+            )
+        return ""
 
     @staticmethod
     def _is_retryable(exc: Exception) -> bool:
+        if _REFUSED.search(str(exc)):
+            # Nothing is listening. Retrying a local server that is not running spends the
+            # whole backoff schedule -- about a minute -- to report the same error.
+            return False
         code = getattr(exc, "status_code", None)
-        if isinstance(code, int) and code in _RETRYABLE_STATUS:
+        if isinstance(code, int) and code in RETRYABLE_STATUS:
             return True
         return any(cls.__name__ in _RETRYABLE_CLASSES for cls in type(exc).__mro__)
 
     def _space_out(self) -> None:
-        if self.min_interval_seconds <= 0:
-            return
-        elapsed = time.monotonic() - self._last_call_at
-        if elapsed < self.min_interval_seconds:
-            self._sleep(self.min_interval_seconds - elapsed)
-        self._last_call_at = time.monotonic()
+        self._last_call_at = space_out(self._last_call_at, self.min_interval_seconds, self._sleep)
 
 
 def _to_tool_call(call: ToolCall) -> dict[str, Any]:
