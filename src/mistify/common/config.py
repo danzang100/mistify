@@ -21,6 +21,7 @@ __all__ = [
     "AnomalyConfig",
     "BootstrapConfig",
     "Drain3Config",
+    "HealthConfig",
     "LLMConfig",
     "MistifyConfig",
     "PipelineConfig",
@@ -450,6 +451,120 @@ class ReportConfig(_Strict):
     output_dir: str = "./reports"
 
 
+class HealthConfig(_Strict):
+    """Thresholds for the pre-flight log health check (`mistify.health`).
+
+    Every default was measured on 2026-09-24 against the pipeline's own ingest of 14 Loghub-2k
+    systems (with grouping accuracy scored against Loghub's annotations), all 20 cached LogDx-CI
+    logs, a 97,431-event production Java log, the sample incident, and the mixed-timezone
+    fixture. The numbers are in the comment beside each field. `warn` thresholds sit in the gap
+    between the logs that templated badly and the ones that did not; a check whose measurement
+    never separated the two was given no `fail` threshold at all.
+    """
+
+    #: Share of events carrying a timestamp read from the line rather than inherited or
+    #: invented. Bimodal on real data: 0.0 on Proxifier, HealthApp, Spark and one LogDx log (a
+    #: shape nothing recognises, so every row is a line ordinal), and >= 0.9928 on the other 11
+    #: Loghub systems, the other 19 LogDx logs and the sample incident. The production Java log,
+    #: whose stack-frame lines inherit the timestamp above them, measured 0.9802.
+    timestamp_coverage_warn_below: float = Field(default=0.95, ge=0.0, le=1.0)
+    #: No refusal by default: a file with no readable time is still searchable, and the
+    #: raw-line reader exists precisely so that such a file is investigated with less rather
+    #: than not at all. Set above 0 to refuse spend on one.
+    timestamp_coverage_fail_below: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    #: Lines that failed to parse, over lines read. Warns on any, as the report always has;
+    #: 0 on all 35 real logs measured, so it has never fired on a healthy file.
+    parse_error_rate_warn_above: float = Field(default=0.0, ge=0.0, le=1.0)
+    #: None: no real log measured had a parse error at all, so there is no measurement to put
+    #: a refusal threshold on.
+    parse_error_rate_fail_above: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    #: One template's share of all events. The report's long-standing cutoff, kept; measured
+    #: above it only on four CI logs -- gradle 0.801, jest 0.743, biome 0.736, prettier 0.647 --
+    #: whose `> Task <*> <*>`-style templates each hide a failing line among passing ones.
+    #: Every Loghub system is at or below 0.455, the sample incident 0.505.
+    dominant_share_warn_above: float = Field(default=0.6, gt=0.0, le=1.0)
+
+    #: Events per template below which templating did not compress. The report's cutoff, kept;
+    #: below it only on one LogDx log (pnpm-audit, 1.7 over 158 events). The lowest Loghub
+    #: value was HealthApp's 3.05.
+    min_reduction_factor: float = Field(default=2.0, ge=0.0)
+
+    #: Share of events in templates that end in the same four tokens as another template: one
+    #: message split into several by something in its header. The measurement that separates
+    #: the systems templating fails on: Apache 1.000 (pipeline grouping accuracy 0.000, against
+    #: 1.000 when its message column is clustered alone -- the weekday in the header does it),
+    #: OpenStack 0.530 (0.121), Proxifier 0.462 (0.002). Everything else is at most 0.262
+    #: (OpenSSH, 0.453) and at most 0.063 on the LogDx logs; 0.0 on the sample incident.
+    split_share_warn_above: float = Field(default=0.35, ge=0.0, le=1.0)
+
+    #: Share of events in templates whose pattern still contains an identifier -- a UUID, a
+    #: 16+ character hex string, or a 7+ digit number -- that Drain3 left as a literal.
+    #: Above it: dependabot 0.631 (commit hashes), OpenStack 0.403, HealthApp 0.304, Hadoop
+    #: 0.184, lint-react 0.148. The highest of the other 30 real logs was 0.039.
+    unmasked_id_share_warn_above: float = Field(default=0.10, ge=0.0, le=1.0)
+
+    #: Of the lines carrying a failure word, the share sitting in a template whose pattern does
+    #: not carry it and whose other members do not either: success and failure folded into one
+    #: template, so the ranking cannot see them. OpenSSH 0.334 (`<*> password for` holds 383
+    #: `Failed` and 1 `Accepted`), jest 0.908, biome 0.658, hibernate 0.467, docs 0.455. Not a
+    #: clean gap on CI logs, which run on down through cargo 0.218 and go-redis 0.200: this is
+    #: a judgement that a quarter hidden is worth saying. Every other Loghub system is at most
+    #: 0.136 (Thunderbird); the sample incident 0.0.
+    hidden_failure_share_warn_above: float = Field(default=0.25, ge=0.0, le=1.0)
+    #: Below this many hidden lines the share is noise: gradle hid 2 of 7 (0.286), gh-cli 1 of 3.
+    hidden_failure_min_lines: int = Field(default=5, ge=1)
+
+    #: Share of events that are stack-frame or traceback continuation lines -- one frame per
+    #: event, cut off from the exception that owns it. Above it: prettier 0.041, docs 0.030,
+    #: tsc 0.022, and the production Java log 0.0195 (its 1,900 frame lines, matching a grep
+    #: for them). Below: jest 0.0076 and three more CI logs under 0.004; 0 on every Loghub
+    #: system (the corpus strips traces) and the sample incident.
+    continuation_share_warn_above: float = Field(default=0.01, ge=0.0, le=1.0)
+
+    #: Clock skew between sources: the whole-quarter-hour shift that best lines one source's
+    #: active minutes up with the busiest source's. Timezones are whole quarter hours, which
+    #: is what makes a skew of exactly 5h30m evidence rather than coincidence.
+    skew_step_minutes: int = Field(default=15, ge=1)
+    skew_max_hours: int = Field(default=14, ge=1)
+    #: A shift smaller than this is not reported, however well it aligns.
+    skew_min_minutes: int = Field(default=30, ge=1)
+    #: How much better the shift must align than no shift at all, as a share of the smaller
+    #: source's active slots. The skewed fixture gains 1.00 at -5h30m; every pair of sources on
+    #: one clock -- the sample incident's four, and OpenStack's nova-api and nova-compute split
+    #: into two files -- gains nothing at any shift (best non-zero -0.25). Two real multi-source
+    #: logs is thin, so the cut is the midpoint and a lone alignment only ever warns.
+    skew_min_gain: float = Field(default=0.5, gt=0.0, le=1.0)
+    #: Sources with fewer events than this are not compared; a handful of lines aligns with
+    #: anything.
+    skew_min_source_events: int = Field(default=20, ge=1)
+    #: Refuse spend when a skewed source is also the one writing timestamps with no offset --
+    #: the two independent signals agreeing. Either one alone warns.
+    fail_on_corroborated_skew: bool = True
+
+    #: Events read by the two text scans (hidden failures, continuation lines). Above this the
+    #: scan takes every k-th event, so its cost stops growing with the file: measured at 1.41 s
+    #: for 97,431 events, so about 3 s at the cap, against 14.9 s to ingest those 97,431.
+    scan_max_events: int = Field(default=200_000, ge=1000)
+
+    @model_validator(mode="after")
+    def _fail_is_worse_than_warn(self) -> HealthConfig:
+        """A refusal threshold milder than its warning would refuse a log it did not warn on."""
+        if self.timestamp_coverage_fail_below > self.timestamp_coverage_warn_below:
+            raise ValueError(
+                "health.timestamp_coverage_fail_below must not exceed "
+                "health.timestamp_coverage_warn_below"
+            )
+        fail = self.parse_error_rate_fail_above
+        if fail is not None and fail < self.parse_error_rate_warn_above:
+            raise ValueError(
+                "health.parse_error_rate_fail_above must not be below "
+                "health.parse_error_rate_warn_above"
+            )
+        return self
+
+
 class MistifyConfig(_Strict):
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     adapters: AdaptersConfig = Field(default_factory=AdaptersConfig)
@@ -460,6 +575,7 @@ class MistifyConfig(_Strict):
     scratchpad: ScratchpadConfig = Field(default_factory=ScratchpadConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     report: ReportConfig = Field(default_factory=ReportConfig)
+    health: HealthConfig = Field(default_factory=HealthConfig)
 
     def scratchpad_path(self, incident_id: str) -> Path:
         return Path(self.scratchpad.path.format(incident_id=incident_id))

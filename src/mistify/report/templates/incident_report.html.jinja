@@ -73,6 +73,29 @@
 <blockquote>{{ incident.brief }}</blockquote>
 {% endif %}
 
+<h2>Log health</h2>
+{% if health.status %}
+<p><strong>{{ health.status | upper }}</strong> - the pre-flight check made on the ingested log
+before any model was called. It costs no tokens and says whether the data can support what
+follows.</p>
+{% if health.overridden %}
+<div class="verdict contested"><strong>The check failed and the investigation was run anyway</strong>,
+with <code>--ignore-health</code>. Read every finding below with the failed check in mind.</div>
+{% endif %}
+{% if health.problems %}
+<ul class="warnings">
+  {% for check in health.problems %}<li><strong>{{ check.status | upper }} - {{ check.name }}.</strong> {{ check.message }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% if health.passed %}
+<p class="note">Passed: {{ health.passed | join(", ") }}.</p>
+{% endif %}
+{% else %}
+<p class="note">No pre-flight health check was recorded for this incident; it was ingested before
+the check existed. <code>mistify health --incident-id {{ incident.incident_id }}</code> runs one
+without calling a model.</p>
+{% endif %}
+
 <h2>What was found</h2>
 {% if issues %}
 <p class="note">Every issue the investigation recorded, most significant first. Order is the

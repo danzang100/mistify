@@ -22,6 +22,7 @@ from mistify.adapters.base import LogAdapter
 from mistify.adapters.registry import detect_format, get_adapter, read_sample
 from mistify.common.config import MistifyConfig
 from mistify.common.models import LogRecord
+from mistify.health import HealthReport, check_health
 from mistify.metrics import SCRATCHPAD_ORPHAN_EVENTS
 from mistify.redaction.parallel import RedactionPool
 from mistify.redaction.redactor import Redactor
@@ -84,6 +85,9 @@ class IngestResult:
     reduction_factor: float
     evicted_templates: int
     redaction_counts: dict[str, int] = field(default_factory=dict)
+    #: The pre-flight health check, run once the load is complete and before anything could
+    #: call a model. None only when a caller built a result by hand.
+    health: HealthReport | None = None
 
 
 def derive_incident_id(source: str | Path) -> str:
@@ -501,6 +505,12 @@ def ingest(
         if vault is not None:
             vault.close()
 
+        # Last, because it reads what every stage above just recorded, and before the result is
+        # returned, because the next thing a caller does may be to spend tokens on it. Costs no
+        # model call: the patterns, activity and a sampled text scan of what was just written.
+        health = check_health(db, config.health)
+        db.record_many(health.metrics())
+
         signal = templater.signal_stats()
 
         return IngestResult(
@@ -519,4 +529,5 @@ def ingest(
             reduction_factor=signal["reduction_factor"],
             evicted_templates=templater.evicted_templates,
             redaction_counts=redactor.counts,
+            health=health,
         )

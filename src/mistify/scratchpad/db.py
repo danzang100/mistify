@@ -664,6 +664,119 @@ class ScratchpadDB:
         ).fetchone()
         return row["first_ts"], row["last_ts"]
 
+    # ------------------------------------------------------- health-check reads
+
+    def template_patterns(self) -> list[tuple[int, str, int]]:
+        """Every template as `(template_id, pattern, occurrence_count)`, largest first."""
+        rows = self._conn.execute(
+            "SELECT template_id, pattern, occurrence_count FROM templates"
+            " ORDER BY occurrence_count DESC, template_id"
+        )
+        return [(int(r[0]), str(r[1]), int(r[2])) for r in rows]
+
+    def source_minutes(self) -> dict[str, set[int]]:
+        """Per source, the minutes it logged in, as whole minutes since the epoch.
+
+        One grouped scan rather than a read of every timestamp: the question is when each
+        source was active, and a minute that held a thousand lines answers it once.
+        """
+        rows = self._conn.execute(
+            f"SELECT COALESCE(source, '{UNKNOWN_SOURCE}') AS source, substr(ts, 1, 16) AS minute"
+            " FROM log_events GROUP BY 1, 2"
+        )
+        active: dict[str, set[int]] = {}
+        for row in rows:
+            stamp = datetime.fromisoformat(f"{row['minute']}:00+00:00")
+            active.setdefault(str(row["source"]), set()).add(int(stamp.timestamp()) // 60)
+        return active
+
+    def raw_samples(self, per_source: int) -> dict[str, list[str]]:
+        """The first `per_source` verbatim lines of each source, for reading how it wrote time.
+
+        Empty when `store_raw` was off at ingest: the parsed timestamp has already been
+        normalised to UTC, so whether the file said `Z`, `+05:30` or nothing at all survives
+        only in the raw line.
+        """
+        # One pass in id order, stopping once every source has its lines. `source` has no
+        # index, so the query this replaced -- one `WHERE source IS ? ORDER BY id LIMIT n` per
+        # source -- walked the table from the start for every source: a directory of two
+        # hundred files paid for two hundred scans on every ingest, investigate and run. A
+        # window function numbering each source's rows was tried first and measured 15x slower
+        # on a 2.19M-event single-source log (0.26s to 3.79s, 2026-09-26), because it sorts
+        # the whole table where the old query stopped after two hundred rows. This stops
+        # there too, and reads the table at most once however many sources there are.
+        wanted = {
+            row[0]
+            for row in self._conn.execute(
+                "SELECT DISTINCT source FROM log_events WHERE raw IS NOT NULL"
+            )
+        }
+        taken: dict[str | None, list[str]] = {}
+        full = 0
+        for source, raw in self._conn.execute(
+            "SELECT source, raw FROM log_events WHERE raw IS NOT NULL ORDER BY id"
+        ):
+            lines = taken.setdefault(source, [])
+            if len(lines) >= per_source:
+                continue
+            lines.append(str(raw))
+            if len(lines) == per_source:
+                full += 1
+                if full == len(wanted):
+                    break
+        return {
+            UNKNOWN_SOURCE if source is None else str(source): lines
+            for source, lines in taken.items()
+        }
+
+    def text_matches_by_template(
+        self, patterns: dict[str, re.Pattern[str]], stride: int = 1
+    ) -> dict[int, dict[str, int]]:
+        """Per template: events examined (`"events"`) and how many match each named pattern.
+
+        Every `stride`-th event is examined, so the cost of a scan over a multi-gigabyte
+        scratchpad can be capped by the caller. The patterns run in Python -- SQLite has no
+        regex -- which is why the stride exists at all.
+        """
+        if stride < 1:
+            raise ValueError("stride must be at least 1")
+        names = list(patterns)
+        for index, name in enumerate(names):
+            compiled = patterns[name]
+            self._conn.create_function(
+                f"_mistify_match_{index}",
+                1,
+                lambda text, p=compiled: 1 if text and p.search(text) else 0,
+                deterministic=True,
+            )
+        sums = "".join(
+            f", SUM(_mistify_match_{i}(COALESCE(message, raw))) AS m{i}" for i in range(len(names))
+        )
+        if stride == 1:
+            rows = self._conn.execute(
+                f"SELECT template_id, COUNT(*) AS n{sums} FROM log_events GROUP BY template_id"
+            )
+        else:
+            # The same rows -- every id divisible by `stride` -- reached by seeking each one on
+            # the primary key rather than filtering a full scan. The filter capped the regex
+            # work and not the reading: every row of a multi-gigabyte scratchpad was still
+            # read to decide whether to skip it.
+            rows = self._conn.execute(
+                "WITH RECURSIVE picked(id) AS ("
+                " SELECT ? UNION ALL SELECT id + ? FROM picked"
+                " WHERE id + ? <= (SELECT MAX(id) FROM log_events)"
+                f") SELECT e.template_id, COUNT(*) AS n{sums} FROM picked"
+                " JOIN log_events AS e ON e.id = picked.id GROUP BY e.template_id",
+                (stride, stride, stride),
+            )
+        result: dict[int, dict[str, int]] = {}
+        for row in rows:
+            counts = {"events": int(row["n"])}
+            for i, name in enumerate(names):
+                counts[name] = int(row[f"m{i}"] or 0)
+            result[int(row["template_id"])] = counts
+        return result
+
     def templates_matching_text(self, text: str, limit: int = 5000) -> set[int]:
         """Templates having at least one event whose message or raw line contains `text`.
 

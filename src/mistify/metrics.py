@@ -267,6 +267,59 @@ SCRATCHPAD_ORPHAN_EVENTS = Metric(
     "scratchpad", "orphan_events", "int", load_bearing=True, threshold=0, comparison="gt"
 )
 
+# --------------------------------------------------------------------- health
+
+#: The pre-flight check's verdict: the worst status any check reached. Load-bearing twice
+#: over -- the report leads with it, and `investigate` refuses to call a model on `fail`.
+HEALTH_STATUS = Metric(
+    "health", "status", "str", load_bearing=True, trigger_values=frozenset({"warn", "fail"})
+)
+#: The checks that failed and warned, by name, so a refusal can be traced to its cause from
+#: the scratchpad alone.
+HEALTH_FAILED = Metric("health", "failed_checks", "str", load_bearing=True)
+HEALTH_WARNED = Metric("health", "warned_checks", "str")
+#: Set when an investigation was run over a failed check with `--ignore-health`. Load-bearing:
+#: a report written from a run the check refused has to say that somebody overrode it.
+HEALTH_OVERRIDDEN = Metric(
+    "health", "overridden", "bool", load_bearing=True, trigger_values=frozenset({"True"})
+)
+
+#: Each check's verdict and the sentence explaining it, as `status: sentence`. One sentence
+#: written once, in `mistify.health`: the CLI prints it before any model call and the report
+#: prints it at the top, and two writers would drift.
+HEALTH_CHECK = MetricFamily(
+    stage="health",
+    prefix="check_",
+    members=(
+        "events",
+        "timestamps",
+        "timezones",
+        "parse_errors",
+        "template_coverage",
+        "template_count",
+        "dominant_template",
+        "split_templates",
+        "unmasked_ids",
+        "over_merged",
+        "hidden_failures",
+        "multiline",
+    ),
+    kind="str",
+)
+
+#: The measurements behind the verdicts, for comparing two runs without parsing sentences.
+HEALTH_TIMESTAMP_COVERAGE = Metric("health", "timestamp_coverage", "float")
+HEALTH_PARSE_ERROR_RATE = Metric("health", "parse_error_rate", "float")
+HEALTH_SPLIT_SHARE = Metric("health", "split_template_share", "float")
+HEALTH_UNMASKED_ID_SHARE = Metric("health", "unmasked_id_share", "float")
+HEALTH_HIDDEN_FAILURE_SHARE = Metric("health", "hidden_failure_share", "float")
+HEALTH_CONTINUATION_SHARE = Metric("health", "continuation_share", "float")
+#: The largest inter-source skew found, in minutes, signed as "add this to the source to line
+#: it up". Absent when fewer than two sources were comparable.
+HEALTH_MAX_SKEW_MINUTES = Metric("health", "max_skew_minutes", "int")
+#: Sources writing timestamps with no UTC offset while another source writes one.
+HEALTH_NAIVE_SOURCES = Metric("health", "naive_timestamp_sources", "str")
+
 # ---------------------------------------------------------------- investigate
 
 #: Read by the report to name which investigator produced the notes.
@@ -497,6 +550,19 @@ ALL_METRICS: tuple[Metric, ...] = (
     ANOMALY_TOP_SCORE,
     ANOMALY_NEEDLE_POSITION,
     SCRATCHPAD_ORPHAN_EVENTS,
+    HEALTH_STATUS,
+    HEALTH_FAILED,
+    HEALTH_WARNED,
+    HEALTH_OVERRIDDEN,
+    *HEALTH_CHECK.all_members(),
+    HEALTH_TIMESTAMP_COVERAGE,
+    HEALTH_PARSE_ERROR_RATE,
+    HEALTH_SPLIT_SHARE,
+    HEALTH_UNMASKED_ID_SHARE,
+    HEALTH_HIDDEN_FAILURE_SHARE,
+    HEALTH_CONTINUATION_SHARE,
+    HEALTH_MAX_SKEW_MINUTES,
+    HEALTH_NAIVE_SOURCES,
     INVESTIGATE_INVESTIGATOR,
     INVESTIGATE_STEPS,
     INVESTIGATE_OUTCOME,

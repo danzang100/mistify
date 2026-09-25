@@ -14,6 +14,8 @@ from mistify import __version__
 from mistify.adapters.source import BinarySourceError
 from mistify.agent.skeleton import run_skeleton_investigation
 from mistify.common.config import MistifyConfig, load_config
+from mistify.health import HealthReport, HealthStatus, check_health
+from mistify.metrics import HEALTH_OVERRIDDEN
 from mistify.pipeline import UnknownFormatError, derive_incident_id, ingest
 from mistify.redaction.vault import RedactionVault
 from mistify.report.generator import ProviderMissing, write_report
@@ -131,6 +133,72 @@ def ingest_command(
     if result.parse_errors:
         click.echo(f"parse errors  {result.parse_errors}", err=True)
     click.echo(f"scratchpad    {result.scratchpad_path}")
+    if result.health is not None:
+        for line in result.health.lines():
+            click.echo(line)
+
+
+@cli.command(name="health")
+@click.option("--incident-id", required=True)
+@_config_option
+def health_command(incident_id: str, config_path: Path | None) -> None:
+    """Check an ingested incident's log health. Calls no model.
+
+    The same check `ingest` runs, and `investigate` and `run` run again before any model call:
+    timestamps, clock skew between sources, parse errors, how templating grouped the lines, and
+    stack traces read one frame at a time. Re-run it after changing the thresholds under
+    `health:` in config. Exits 1 when a check fails.
+    """
+    config = load_config(config_path)
+    path = config.scratchpad_path(incident_id)
+    if not path.exists():
+        raise click.ClickException(f"no scratchpad for incident {incident_id!r} at {path}")
+    with ScratchpadDB(path) as db:
+        report = check_health(db, config.health)
+        db.record_many(report.metrics())
+    for line in report.lines():
+        click.echo(line)
+    if report.status == HealthStatus.FAIL:
+        raise SystemExit(1)
+
+
+_ignore_health_option = click.option(
+    "--ignore-health",
+    is_flag=True,
+    help="Call the model even when the pre-flight health check fails. The report then says the "
+    "check was overridden.",
+)
+
+
+def _preflight(
+    db: ScratchpadDB,
+    report: HealthReport,
+    investigator: str,
+    ignore_health: bool,
+    after: str = "",
+) -> None:
+    """Print the health check and refuse to spend tokens on a log that failed it.
+
+    Refuses by name: the message is every failed check's own sentence, so the person reading it
+    knows what to fix rather than that something is wrong. The skeleton investigator calls no
+    model, so a failure never stops it -- there is nothing to spend.
+    """
+    for line in report.lines():
+        click.echo(line)
+    failed = report.status == HealthStatus.FAIL
+    overridden = failed and ignore_health and investigator != "skeleton"
+    # The verdict the run is gated on is the one the report shows. The override is recorded
+    # either way, so a later run that passed does not inherit an earlier one's.
+    db.record_many([*report.metrics(), (HEALTH_OVERRIDDEN, overridden)])
+    if not failed or investigator == "skeleton":
+        return
+    if not ignore_health:
+        raise click.ClickException(report.refusal() + after)
+    click.echo(
+        "warning: --ignore-health: calling a model over a failed health check; the report will "
+        "say so.",
+        err=True,
+    )
 
 
 _investigator_option = click.option(
@@ -158,6 +226,7 @@ _investigator_option = click.option(
     help="Delete the previous investigation -- its notes, queries and critique -- and start "
     "over. The ingest is untouched.",
 )
+@_ignore_health_option
 @_config_option
 def investigate_command(
     incident_id: str,
@@ -165,6 +234,7 @@ def investigate_command(
     no_adversarial: bool,
     resume: bool,
     restart: bool,
+    ignore_health: bool,
     config_path: Path | None,
 ) -> None:
     """Investigate an ingested incident."""
@@ -193,6 +263,10 @@ def investigate_command(
         # Not `if existing`: a previous attempt that wrote no notes still left its query log,
         # and the next run's audit trail then carries queries it never made. Found in use --
         # a run that died without concluding left twenty rows behind for the run after it.
+        # Checked again rather than read back from ingest: the thresholds are config, and a
+        # threshold changed since the ingest should apply to the spend it is guarding. Before
+        # `--restart` clears anything, so a refused run leaves the previous one intact.
+        _preflight(db, check_health(db, config.health), investigator, ignore_health)
         if restart:
             cleared = db.clear_investigation()
             click.echo(
@@ -322,6 +396,7 @@ def _warn_unredacted() -> None:
 @click.option("--no-adversarial", is_flag=True, help="Skip the adversarial check.")
 @_brief_option
 @_vault_option
+@_ignore_health_option
 @_config_option
 def run_command(
     source: Path,
@@ -331,6 +406,7 @@ def run_command(
     no_adversarial: bool,
     brief: str | None,
     vault: bool,
+    ignore_health: bool,
     config_path: Path | None,
 ) -> None:
     """Ingest, investigate and report in one pass."""
@@ -353,6 +429,16 @@ def run_command(
     )
 
     with ScratchpadDB(result.scratchpad_path) as db:
+        # The check ingest just ran, not a second one: nothing has changed since.
+        health = result.health or check_health(db, config.health)
+        _preflight(
+            db,
+            health,
+            investigator,
+            ignore_health,
+            after=f" The ingest is kept: `mistify report --incident-id {result.incident_id}` "
+            "renders what it found, and `mistify investigate` continues from it.",
+        )
         if investigator == "skeleton":
             steps = run_skeleton_investigation(db).steps
         else:

@@ -157,3 +157,19 @@ report:
   # markdown | html | pdf. PDF needs the optional `pdf` extra: uv sync --extra pdf
   format: markdown
   output_dir: ./reports
+
+# The pre-flight log health check: run after ingest and again before any model call, at no
+# token cost. `investigate` and `run` refuse to call a model when a check fails, unless given
+# --ignore-health; `mistify health --incident-id X` runs it alone. Every threshold was measured
+# on real logs and the numbers are beside each field in common/config.py (HealthConfig).
+health:
+  timestamp_coverage_warn_below: 0.95
+  # 0 never refuses: a file with no readable time is still worth searching.
+  timestamp_coverage_fail_below: 0.0
+  split_share_warn_above: 0.35
+  unmasked_id_share_warn_above: 0.10
+  hidden_failure_share_warn_above: 0.25
+  continuation_share_warn_above: 0.01
+  # A source both skewed by whole quarter hours and writing no UTC offset beside sources that
+  # do: its local times were read as UTC. Refuses spend; either signal alone warns.
+  fail_on_corroborated_skew: true

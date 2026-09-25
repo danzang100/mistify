@@ -53,6 +53,21 @@ def test_repo_config_is_valid() -> None:
     assert config.anomaly.bucket_minutes >= 1
     assert 0.0 < config.anomaly.severity_unmapped_ceiling <= 1.0
     assert config.anomaly.signal_min_templates <= config.anomaly.signal_max_templates
+    # A decision rather than tuning: the one refusal the health check makes by default.
+    assert config.health.fail_on_corroborated_skew is True
+    assert (
+        config.health.timestamp_coverage_fail_below <= config.health.timestamp_coverage_warn_below
+    )
+
+
+def test_a_health_refusal_milder_than_its_warning_is_rejected() -> None:
+    from pydantic import ValidationError
+
+    from mistify.common.config import HealthConfig
+
+    HealthConfig(timestamp_coverage_warn_below=0.9, timestamp_coverage_fail_below=0.5)
+    with pytest.raises(ValidationError, match="timestamp_coverage_fail_below"):
+        HealthConfig(timestamp_coverage_warn_below=0.5, timestamp_coverage_fail_below=0.9)
 
 
 def test_round_trips_through_yaml(tmp_path: Path) -> None:
