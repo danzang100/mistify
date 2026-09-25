@@ -33,6 +33,7 @@ from typing import Any
 from mistify.agent.budget import TokenCeilingReached
 from mistify.agent.tools import MAX_CELL_CHARS, ToolBox, clip
 from mistify.llm.base import LLMProvider, Message, Usage
+from mistify.llm.untrusted import DATA_RULE, fence
 from mistify.metrics import (
     ADVERSARIAL_CACHED_INPUT_TOKENS,
     ADVERSARIAL_HIGH_SEVERITY_OBJECTIONS,
@@ -290,12 +291,13 @@ def run_adversarial_check(
     # incident passes that test - it did, once, with "no objections".
     brief = (db.incident() or {}).get("brief")
     prompt = (
-        (f"## What was reported\n\n{brief}\n\n" if brief else "") + f"{_evidence_bundle(db)}\n\n"
+        (f"## What was reported\n\n{fence(brief, 'report')}\n\n" if brief else "")
+        + f"{fence(_evidence_bundle(db), 'investigation')}\n\n"
         f"Templates the ranking flagged as signal: {signal_template_ids}\n"
         f"Of those, none of the notes cite: {result.unexplained_signal}\n"
     )
     critique = provider.converse(
-        system=CRITIQUE_PROMPT,
+        system=f"{CRITIQUE_PROMPT}\n{DATA_RULE}",
         messages=[Message(role="user", text=prompt)],
         max_tokens=max_tokens,
     )
@@ -396,7 +398,12 @@ def _rebut(
     messages = [
         Message(
             role="user",
-            text=f"Your notes:\n\n{_evidence_bundle(db)}\n\nObjections:\n{listing}",
+            # The objections are fenced too: the critique wrote them by reading the same rows,
+            # and a claim it lifted from a log line is still the log line speaking.
+            text=(
+                f"Your notes:\n\n{fence(_evidence_bundle(db), 'investigation')}\n\n"
+                f"Objections:\n{fence(listing, 'objections')}"
+            ),
         )
     ]
     usage = Usage()
@@ -407,7 +414,7 @@ def _rebut(
         offered = specs if tool_calls_made < max_tool_calls else []
         try:
             reply = provider.converse(
-                system=REBUTTAL_PROMPT,
+                system=f"{REBUTTAL_PROMPT}\n{DATA_RULE}",
                 messages=messages,
                 tools=offered or None,
                 max_tokens=max_tokens,

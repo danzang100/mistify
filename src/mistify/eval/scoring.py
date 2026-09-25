@@ -239,6 +239,20 @@ def score_run(db: ScratchpadDB, case: EvalCase) -> list[Check]:
             )
         )
 
+    for marker in case.must_lead_with:
+        template_id = _template_for(db, marker)
+        if template_id is None:
+            checks.append(Check(f"resolves[{marker}]", False, f"no template carries {marker!r}"))
+            continue
+        leading = _leading_templates(db)
+        checks.append(
+            Check(
+                name=f"leads-with[{marker}]",
+                passed=template_id in leading,
+                detail=f"template {template_id}; leading issue cites {sorted(leading) or 'none'}",
+            )
+        )
+
     if not case.expects_incident:
         claims = [n for n in db.notes() if str(n.confidence).lower() in _CLAIM_CONFIDENCES]
         checks.append(
@@ -294,6 +308,20 @@ def score_run(db: ScratchpadDB, case: EvalCase) -> list[Check]:
                     ),
                 )
             )
+
+    for event_id in case.must_not_cite_events:
+        citing = [
+            n.id
+            for n in db.notes()
+            if event_id in {int(i) for i in n.evidence.get("log_event_ids", [])}
+        ]
+        checks.append(
+            Check(
+                name=f"does-not-cite[event {event_id}]",
+                passed=not citing,
+                detail="not cited" if not citing else f"cited by note(s) {citing}",
+            )
+        )
 
     _, citation_warnings = verify_citations(db)
     checks.append(

@@ -37,6 +37,7 @@ from mistify.common.models import (
     parse_timestamp,
 )
 from mistify.llm.base import ToolCall, ToolResult, ToolSpec
+from mistify.llm.untrusted import fence
 from mistify.scratchpad.db import ReadOnlyViolation, ScratchpadDB
 
 __all__ = [
@@ -122,6 +123,22 @@ class _Outcome:
     row_count: int
     description: str
     is_error: bool = False
+
+
+def _fence_rows(outcome: _Outcome) -> str:
+    """Everything below the header fenced as log data; the header is ours and stays outside.
+
+    Every tool writes one header line it composed itself -- counts, filters, limits -- and then
+    rows read from the scratchpad, which are log text or notes written about it. Only the rows
+    are fenced, so the header compaction keeps (`loop._summarise`) is still the tool's own line.
+    An error is the tool's own sentence and is left alone.
+    """
+    if outcome.is_error:
+        return outcome.content
+    head, newline, rest = outcome.content.partition("\n")
+    if not newline or not rest.strip():
+        return outcome.content
+    return f"{head}\n{fence(rest, 'rows')}"
 
 
 class ToolBox:
@@ -467,7 +484,7 @@ class ToolBox:
         if outcome.is_error:
             description = f"{description} -> error: {_clip(outcome.content, AUDIT_CHARS)}"
         self.db.log_query(self.step, _clip(description, AUDIT_CHARS), outcome.row_count)
-        return ToolResult(call_id=call.id, content=outcome.content, is_error=outcome.is_error)
+        return ToolResult(call_id=call.id, content=_fence_rows(outcome), is_error=outcome.is_error)
 
     # ---------------------------------------------------------------- handlers
 

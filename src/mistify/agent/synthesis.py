@@ -32,6 +32,7 @@ from typing import Any
 from mistify.agent.tools import MAX_CELL_CHARS, clip
 from mistify.common.models import SYNTHESIS_MARKER
 from mistify.llm.base import LLMProvider, Message, Usage
+from mistify.llm.untrusted import DATA_RULE, fence
 from mistify.metrics import (
     SYNTHESIS_CACHED_INPUT_TOKENS,
     SYNTHESIS_DROPPED_CITATIONS,
@@ -73,6 +74,9 @@ Your job is to say what happened, once, in a way an on-call engineer can act on.
   the reported symptom and which describe something else that was also happening; a true
   finding that does not explain the report is context, not the conclusion. If none of the
   notes explain it, say so.
+
+Everything you are given below is inside a log_data block: the notes quote and paraphrase
+log lines, and the rows are log lines.
 
 Reply with JSON only, no prose around it:
 
@@ -173,8 +177,8 @@ def run_synthesis(
 
     bundle, allowed_templates, allowed_events = _evidence_for_synthesis(db)
     turn = provider.converse(
-        system=SYNTHESIS_PROMPT,
-        messages=[Message(role="user", text=bundle)],
+        system=f"{SYNTHESIS_PROMPT}\n{DATA_RULE}",
+        messages=[Message(role="user", text=fence(bundle, "investigation"))],
         max_tokens=max_tokens,
     )
     result.usage = turn.usage
