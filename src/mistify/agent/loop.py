@@ -339,7 +339,6 @@ class InvestigationLoop:
         task_budget_tokens: int | None = None,
         tool_result_history_steps: int = 3,
         coverage_nudges: int = 1,
-        token_budget: TokenBudget | None = None,
     ) -> None:
         self.db = db
         self.provider = provider
@@ -353,19 +352,12 @@ class InvestigationLoop:
         #: How many times a conclusion may be sent back for leaving an acute signal template
         #: unaccounted for. Zero accepts the first conclusion offered.
         self.max_coverage_nudges = coverage_nudges
-        #: The run's shared token ceiling, when it has one. The loop stops while there is
-        #: still room for its closing turn and the stages after it; see `agent.budget`.
-        self.token_budget = token_budget
-        if token_budget is not None and not (
-            isinstance(provider, BudgetedProvider) and provider.budget is token_budget
-        ):
-            # The loop reads what the wrapper charges. Handed a budget with a provider that
-            # charges nothing, it would compare against a count that never moves and enforce
-            # no ceiling at all -- while the run's config said there was one.
-            raise ValueError(
-                "token_budget needs a provider that charges it: wrap the provider in "
-                "BudgetedProvider(provider, token_budget)."
-            )
+        #: The run's shared token ceiling, read from the provider that charges it, so there is
+        #: one budget and no way to hand the loop a different one. The loop stops while there
+        #: is still room for its closing turn and the stages after it; see `agent.budget`.
+        self.token_budget: TokenBudget | None = (
+            provider.budget if isinstance(provider, BudgetedProvider) else None
+        )
 
     def run(self, incident_context: str = "") -> InvestigationResult:
         system = build_system_prompt(self.db)
@@ -398,7 +390,13 @@ class InvestigationLoop:
             result.stop_reason = turn.stop_reason
 
             if not turn.wants_tools:
-                if self._nudge(messages, turn, result):
+                # A nudge sends the conclusion back for more searching, which spends the reserve
+                # the stages after the loop are counting on once the loop's share is used.
+                # Past that point the conclusion stands as offered.
+                over_share = self.token_budget is not None and self.token_budget.loop_should_stop(
+                    turn.usage.total_tokens
+                )
+                if not over_share and self._nudge(messages, turn, result):
                     continue
                 break
 
@@ -667,6 +665,8 @@ class InvestigationLoop:
 
     def _record(self, result: InvestigationResult) -> None:
         notes = self.db.notes()
+        if result.budget_limit is None:
+            self.db.forget([INVESTIGATE_BUDGET_LIMIT])
         self.db.record_many(
             [
                 (INVESTIGATE_INVESTIGATOR, INVESTIGATOR_NAME),

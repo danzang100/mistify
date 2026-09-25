@@ -52,7 +52,6 @@ def _loop(
         _toolbox(db),
         max_tool_calls=max_tool_calls,
         coverage_nudges=0,
-        token_budget=budget,
     )
 
 
@@ -197,15 +196,102 @@ def test_the_same_run_without_a_ceiling_is_not_asked_early(loaded_db: Scratchpad
     assert _nudges(provider) == []
 
 
-def test_a_budget_without_a_charging_provider_is_refused(loaded_db: ScratchpadDB) -> None:
-    """Otherwise the loop would compare against a count nothing ever moves."""
-    with pytest.raises(ValueError, match="BudgetedProvider"):
-        InvestigationLoop(
-            loaded_db,
-            ScriptedProvider([]),
-            _toolbox(loaded_db),
-            token_budget=TokenBudget(ceiling=10_000),
-        )
+def test_the_loop_reads_its_budget_from_the_provider(loaded_db: ScratchpadDB) -> None:
+    """One budget, carried by the provider that charges it -- nothing to keep in step."""
+    budget = TokenBudget(ceiling=10_000)
+    wrapped = InvestigationLoop(
+        loaded_db, BudgetedProvider(ScriptedProvider([]), budget), _toolbox(loaded_db)
+    )
+    plain = InvestigationLoop(loaded_db, ScriptedProvider([]), _toolbox(loaded_db))
+    assert wrapped.token_budget is budget
+    assert plain.token_budget is None
+
+
+def _concluding_early_script() -> list[Any]:
+    """A cheap step, a costly conclusion, and turns to spare in case it is sent back.
+
+    The step must stay inside the loop's share -- 1k now, projecting 3k of 8.5k -- or the
+    tool-step check stops the loop first and the nudge path is never reached, which is how
+    the first version of this test passed with the fix reverted. The 3k conclusion is what
+    crosses it: 4k spent plus two more like it is 10k.
+    """
+    return [
+        tool_call_turn("query_templates", {}, call_id="c0", usage=Usage(950, 50)),
+        text_turn("Pool exhaustion.", usage=Usage(2_900, 100)),
+        tool_call_turn("query_templates", {}, call_id="c1", usage=Usage(900, 100)),
+        text_turn("Pool exhaustion, confirmed.", usage=Usage(900, 100)),
+    ]
+
+
+def test_a_conclusion_past_the_loops_share_is_not_sent_back(loaded_db: ScratchpadDB) -> None:
+    """A nudge would spend the reserve synthesis and the critique are counting on."""
+    provider = ScriptedProvider(_concluding_early_script())
+    loop = InvestigationLoop(
+        loaded_db,
+        BudgetedProvider(provider, TokenBudget(ceiling=10_000)),
+        _toolbox(loaded_db),
+        max_tool_calls=10,
+        coverage_nudges=1,
+    )
+
+    result = loop.run()
+
+    assert result.coverage_nudges == 0
+    assert len(provider.calls) == 2
+
+
+def test_the_same_conclusion_with_room_to_spare_is_sent_back(loaded_db: ScratchpadDB) -> None:
+    """The control: the nudge still fires when the budget can afford it."""
+    provider = ScriptedProvider(_concluding_early_script())
+    loop = InvestigationLoop(
+        loaded_db,
+        BudgetedProvider(provider, TokenBudget(ceiling=1_000_000)),
+        _toolbox(loaded_db),
+        max_tool_calls=10,
+        coverage_nudges=1,
+    )
+
+    result = loop.run()
+
+    assert result.coverage_nudges == 1
+    assert len(provider.calls) > 2
+
+
+def test_a_refused_rebuttal_keeps_the_critique_and_its_cost(loaded_db: ScratchpadDB) -> None:
+    """The critique ran; only the answer was refused. Its objections and spend are recorded."""
+    import json
+
+    from mistify.agent.adversarial import run_adversarial_check
+    from mistify.metrics import ADVERSARIAL_INPUT_TOKENS, ADVERSARIAL_OUTCOME
+
+    event = loaded_db.get_slice(max_lines=1)[0]
+    loaded_db.write_note(
+        step=1,
+        note="Pool exhaustion.",
+        evidence={"template_ids": [int(event["template_id"])], "log_event_ids": [int(event["id"])]},
+        confidence="high",
+    )
+    objection = {
+        "claim": "c",
+        "objection": "o",
+        "template_ids": [],
+        "log_event_ids": [int(event["id"])],
+        "severity": "high",
+    }
+    critique = json.dumps({"assessment": "a", "objections": [objection], "alternative": ""})
+    budget = TokenBudget(ceiling=1_000)
+    critic = BudgetedProvider(
+        ScriptedProvider([text_turn(critique, usage=Usage(900, 100))], model="critic"), budget
+    )
+    answering = BudgetedProvider(ScriptedProvider([text_turn("{}")], model="loop"), budget)
+
+    with pytest.raises(TokenCeilingReached):
+        run_adversarial_check(loaded_db, critic, [], rebuttal_provider=answering)
+
+    view = MetricView(loaded_db.metrics("adversarial"))
+    assert view.text(ADVERSARIAL_OUTCOME) == "rebuttal_refused"
+    assert view.number(ADVERSARIAL_INPUT_TOKENS) == 900
+    assert loaded_db.adversarial_objections(), "the objections the critique raised are kept"
 
 
 # ------------------------------------------------------------------ the whole run
@@ -251,6 +337,43 @@ def test_the_ceiling_refuses_the_later_stages_and_the_report_says_so(
     report = generate_report(loaded_db)
     assert "refused model calls in: synthesis, adversarial" in report
     assert "Token ceiling: **10,000**; this run spent 10,500 (105%)" in report
+
+
+def test_a_rerun_does_not_inherit_the_last_runs_refusal(
+    loaded_db: ScratchpadDB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Found in review: metrics upsert, so a refusal written once outlived the run it described."""
+    tight = MistifyConfig(pipeline=PipelineConfig(max_total_tokens=10_000, coverage_nudges=0))
+    loop_script = [
+        tool_call_turn("query_templates", {}, call_id="c0", usage=Usage(2_950, 50)),
+        text_turn("Pool exhaustion, most likely.", usage=Usage(7_400, 100)),
+    ]
+    _patch_providers(
+        monkeypatch,
+        {
+            tight.llm.model: loop_script,
+            str(tight.llm.synthesis_model): [],
+            tight.llm.adversarial_model: [],
+        },
+    )
+    runner.run_investigation(loaded_db, tight, adversarial=True)
+    first = MetricView(loaded_db.metrics())
+    assert first.text(BUDGET_REFUSED_STAGES), "the first run was refused, as the control"
+    assert first.text(INVESTIGATE_BUDGET_LIMIT) == "tokens"
+
+    loaded_db.clear_investigation()
+    roomy = MistifyConfig(pipeline=PipelineConfig(max_total_tokens=None, coverage_nudges=0))
+    roomy.llm.synthesis_model = None
+    _patch_providers(monkeypatch, {roomy.llm.model: [text_turn("done")]})
+    runner.run_investigation(loaded_db, roomy, adversarial=False)
+
+    second = MetricView(loaded_db.metrics())
+    assert second.text(BUDGET_REFUSED_STAGES) is None
+    assert second.number(BUDGET_MAX_TOTAL_TOKENS) is None
+    assert second.text(INVESTIGATE_BUDGET_LIMIT) is None
+    report = generate_report(loaded_db)
+    assert "refused model calls" not in report
+    assert "No token ceiling was set for this run." in report
 
 
 def test_a_run_within_the_ceiling_records_its_spend_and_refuses_nothing(

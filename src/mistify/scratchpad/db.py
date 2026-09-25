@@ -381,6 +381,20 @@ class ScratchpadDB:
         """Record one declared health metric, replacing any prior value for the same key."""
         self._record_metric(metric.stage, metric.name, value)
 
+    def forget(self, metrics: Iterable[Metric]) -> None:
+        """Delete these metrics, for a run that has no value to write for them.
+
+        Metrics are upserted by key and `clear_investigation` leaves them, which is right for
+        a metric every run writes and wrong for one written only sometimes: a run that did
+        not set it would inherit the last run's value. Forgetting it is how a run says that
+        this time there was nothing to record.
+        """
+        with self._conn:
+            self._conn.executemany(
+                "DELETE FROM run_metadata WHERE stage = ? AND metric = ?",
+                [(m.stage, m.name) for m in metrics],
+            )
+
     def record_many(self, entries: Iterable[tuple[Metric, object]]) -> int:
         """Record a batch of declared metrics in one transaction.
 

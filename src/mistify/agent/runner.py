@@ -52,6 +52,10 @@ def run_investigation(
     then replacing them with a synthesised conclusion would leave the published finding
     unchecked.
     """
+    # Written only when there is a ceiling, and refused stages only when something was, so a
+    # previous run's values are cleared first: a report must not warn about a refusal that
+    # belonged to the run before `--restart`.
+    db.forget([BUDGET_MAX_TOTAL_TOKENS, BUDGET_SPENT_TOKENS, BUDGET_REFUSED_STAGES])
     ceiling = config.pipeline.max_total_tokens
     budget = TokenBudget(ceiling) if ceiling is not None else None
     refused: list[str] = []
@@ -70,7 +74,6 @@ def run_investigation(
         task_budget_tokens=config.llm.task_budget_tokens,
         tool_result_history_steps=config.pipeline.tool_result_history_steps,
         coverage_nudges=config.pipeline.coverage_nudges,
-        token_budget=budget,
     )
     result = loop.run(incident_context)
     if result.stop_reason == "token_ceiling":
