@@ -23,6 +23,7 @@ from mistify.metrics import (
     BUDGET_MAX_TOTAL_TOKENS,
     BUDGET_REFUSED_STAGES,
     BUDGET_SPENT_TOKENS,
+    INVESTIGATION_STAGES,
     MetricView,
 )
 
@@ -52,10 +53,10 @@ def run_investigation(
     then replacing them with a synthesised conclusion would leave the published finding
     unchecked.
     """
-    # Written only when there is a ceiling, and refused stages only when something was, so a
-    # previous run's values are cleared first: a report must not warn about a refusal that
-    # belonged to the run before `--restart`.
-    db.forget([BUDGET_MAX_TOTAL_TOKENS, BUDGET_SPENT_TOKENS, BUDGET_REFUSED_STAGES])
+    # Several of these are written only when they apply -- a ceiling, a refusal, a budget
+    # limit -- so a previous attempt's values are cleared first: a report must not warn about
+    # a refusal that belonged to the run before `--restart`.
+    db.forget_stages(*INVESTIGATION_STAGES)
     ceiling = config.pipeline.max_total_tokens
     budget = TokenBudget(ceiling) if ceiling is not None else None
     refused: list[str] = []

@@ -576,13 +576,13 @@ def eval_command(
         _run_digest(cases, config, results_dir, digest_limit)
         return
 
-    if judge and config.llm.judge_model in {config.llm.model, config.llm.adversarial_model}:
+    if judge and config.llm.judge_shares_a_model():
         # Not fatal, because the judge is opt-in tooling rather than a shipped guarantee -- but
         # a judge sharing a model with the thing it judges is the correlated-blind-spot problem
         # the separate critique model exists to prevent, and it should not pass silently.
         click.echo(
-            f"warning: judge_model {config.llm.judge_model!r} is also the loop's or the "
-            "critique's model, so its verdicts are not independent.",
+            f"warning: judge_model {config.llm.judge_model!r} is also the loop's, the "
+            "synthesis' or the critique's model, so its verdicts are not independent.",
             err=True,
         )
     reports = []

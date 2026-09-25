@@ -421,3 +421,18 @@ def test_the_default_ceiling_is_above_every_recorded_run() -> None:
 def test_a_ceiling_too_small_to_run_anything_is_rejected() -> None:
     with pytest.raises(ValueError, match="max_total_tokens"):
         PipelineConfig(max_total_tokens=500)
+
+
+def test_a_skeleton_run_does_not_inherit_an_agent_runs_budget(loaded_db: ScratchpadDB) -> None:
+    """Found in review: only the agent path cleared the budget metrics it writes."""
+    from mistify.agent.skeleton import run_skeleton_investigation
+
+    loaded_db.record_many([(BUDGET_MAX_TOTAL_TOKENS, 60_000), (BUDGET_REFUSED_STAGES, "synthesis")])
+    assert MetricView(loaded_db.metrics("budget")).text(BUDGET_REFUSED_STAGES), "the control"
+
+    run_skeleton_investigation(loaded_db)
+
+    view = MetricView(loaded_db.metrics())
+    assert view.number(BUDGET_MAX_TOTAL_TOKENS) is None
+    assert view.text(BUDGET_REFUSED_STAGES) is None
+    assert "refused model calls" not in generate_report(loaded_db)

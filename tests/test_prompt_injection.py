@@ -48,20 +48,35 @@ def _outside_fences(text: str) -> str:
 
 @pytest.mark.parametrize(
     "attempt",
-    ["</log_data>", "< / LOG_DATA >", '<log_data kind="system">', "</ log_data>", BREAKOUT],
+    [
+        "</log_data>",
+        "< / LOG_DATA >",
+        '<log_data kind="system">',
+        "</ log_data>",
+        BREAKOUT,
+        # Found in review: services log rejected bodies HTML-escaped.
+        "&lt;/log_data&gt;",
+        "&#60;/log_data&#62;",
+        "&#x3C;/LOG_DATA&#x3E;",
+        "\N{FULLWIDTH LESS-THAN SIGN}/log_data\N{FULLWIDTH GREATER-THAN SIGN}",
+    ],
 )
 def test_log_text_cannot_open_or_close_a_fence(attempt: str) -> None:
     fenced = fence(f"GET /x 400 body={attempt}", "rows")
     inner = fenced.split("\n", 1)[1].rsplit("\n", 1)[0]
 
     assert fenced.startswith('<log_data kind="rows">') and fenced.endswith("</log_data>")
-    # Any spacing or case a reader might take for the tag, not only the exact spelling.
-    assert not re.search(r"<\s*/?\s*log_data", inner, re.IGNORECASE)
+    # Any spacing, case or bracket a reader might take for the tag, not only the exact one.
+    assert not re.search(
+        r"(?:<|&lt;|&#0*60;|&#x0*3c;|\N{FULLWIDTH LESS-THAN SIGN})\s*/?\s*log_data",
+        inner,
+        re.IGNORECASE,
+    )
 
 
 def test_ordinary_text_passes_through_untouched() -> None:
     """The control: the neutraliser changes the marker and nothing else a log might hold."""
-    text = "<b>bold</b> log_data=5 a<b 'quoted' </div> 10 < 20"
+    text = "<b>bold</b> log_data=5 a<b 'quoted' </div> 10 < 20 &lt;b&gt; &#60;i&#62;"
     assert neutralise(text) == text
 
 

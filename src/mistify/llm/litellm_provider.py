@@ -264,14 +264,21 @@ class LiteLLMProvider:
         )
 
     def _send(self, request: dict[str, Any]) -> Any:
-        return send_with_retries(
-            lambda: self.completion(**request),
-            is_retryable=self._is_retryable,
-            max_retries=self.max_retries,
-            sleep=self._sleep,
-            before_each=self._space_out,
-            failure=f"{self.model} call failed{self._local_hint()}",
-        )
+        try:
+            return send_with_retries(
+                lambda: self.completion(**request),
+                is_retryable=self._is_retryable,
+                max_retries=self.max_retries,
+                sleep=self._sleep,
+                before_each=self._space_out,
+                failure=f"{self.model} call failed",
+            )
+        except ProviderError as exc:
+            # The hint only where it is the answer: a refused connection to a local model. A
+            # missing model tag on a running server is a different fix.
+            if _REFUSED.search(str(exc)) and self._local_hint():
+                raise ProviderError(f"{exc}{self._local_hint()}") from exc
+            raise
 
     def _local_hint(self) -> str:
         if self.model.startswith(_LOCAL_PREFIXES):
@@ -283,13 +290,15 @@ class LiteLLMProvider:
 
     @staticmethod
     def _is_retryable(exc: Exception) -> bool:
+        code = getattr(exc, "status_code", None)
+        if isinstance(code, int) and code in RETRYABLE_STATUS:
+            # First: a gateway that answered with a retryable status is up, whatever its
+            # error body says about the service behind it.
+            return True
         if _REFUSED.search(str(exc)):
             # Nothing is listening. Retrying a local server that is not running spends the
             # whole backoff schedule -- about a minute -- to report the same error.
             return False
-        code = getattr(exc, "status_code", None)
-        if isinstance(code, int) and code in RETRYABLE_STATUS:
-            return True
         return any(cls.__name__ in _RETRYABLE_CLASSES for cls in type(exc).__mro__)
 
     def _space_out(self) -> None:

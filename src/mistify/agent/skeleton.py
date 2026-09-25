@@ -24,6 +24,7 @@ from mistify.metrics import (
     INVESTIGATE_OUTCOME,
     INVESTIGATE_STEPS,
     INVESTIGATE_TARGET_TEMPLATE_ID,
+    INVESTIGATION_STAGES,
 )
 from mistify.scratchpad.db import ScratchpadDB
 
@@ -49,6 +50,9 @@ class SkeletonResult:
 
 def run_skeleton_investigation(db: ScratchpadDB) -> SkeletonResult:
     """Rank templates by severity, pull the surrounding slice, record one hypothesis."""
+    # The same clean start the agent path makes, or a skeleton run after an agent run would
+    # inherit that run's token spend, ceiling and budget warnings.
+    db.forget_stages(*INVESTIGATION_STAGES)
     step = 1
     ranked = db.top_templates(limit=10, order_by="severity")
     db.log_query(step, "top_templates(order_by='severity', limit=10)", len(ranked))

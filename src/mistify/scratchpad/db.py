@@ -395,6 +395,19 @@ class ScratchpadDB:
                 [(m.stage, m.name) for m in metrics],
             )
 
+    def forget_stages(self, *stages: str) -> None:
+        """Delete every metric of these stages.
+
+        For the stages that describe one investigation attempt -- the loop, synthesis, the
+        critique, the budget. Clearing a named list of metrics missed the ones written only
+        sometimes by a *different* investigator: a skeleton run after a token-limited agent run
+        reported the agent's ceiling and refusals as its own. Clearing the stage cannot miss one.
+        """
+        with self._conn:
+            self._conn.executemany(
+                "DELETE FROM run_metadata WHERE stage = ?", [(stage,) for stage in stages]
+            )
+
     def record_many(self, entries: Iterable[tuple[Metric, object]]) -> int:
         """Record a batch of declared metrics in one transaction.
 
@@ -705,10 +718,12 @@ class ScratchpadDB:
         # on a 2.19M-event single-source log (0.26s to 3.79s, 2026-09-26), because it sorts
         # the whole table where the old query stopped after two hundred rows. This stops
         # there too, and reads the table at most once however many sources there are.
-        wanted = {
-            row[0]
-            for row in self._conn.execute(
-                "SELECT DISTINCT source FROM log_events WHERE raw IS NOT NULL"
+        # How many lines each source can give: a source with fewer than `per_source` never
+        # reaches it, and waiting for it to would read the whole table every time.
+        target = {
+            source: min(per_source, int(count))
+            for source, count in self._conn.execute(
+                "SELECT source, COUNT(*) FROM log_events WHERE raw IS NOT NULL GROUP BY source"
             )
         }
         taken: dict[str | None, list[str]] = {}
@@ -717,12 +732,12 @@ class ScratchpadDB:
             "SELECT source, raw FROM log_events WHERE raw IS NOT NULL ORDER BY id"
         ):
             lines = taken.setdefault(source, [])
-            if len(lines) >= per_source:
+            if len(lines) >= target[source]:
                 continue
             lines.append(str(raw))
-            if len(lines) == per_source:
+            if len(lines) == target[source]:
                 full += 1
-                if full == len(wanted):
+                if full == len(target):
                     break
         return {
             UNKNOWN_SOURCE if source is None else str(source): lines

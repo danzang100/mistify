@@ -206,3 +206,29 @@ def test_noise_thresholds_reject_impossible_values() -> None:
         NoiseThresholds(share=1.5, anomaly_ceiling=0.3)
     with pytest.raises(ValueError, match="between 0 and 1"):
         NoiseThresholds(share=0.1, anomaly_ceiling=-0.2)
+
+
+def test_the_judge_sharing_a_model_through_litellm_is_caught() -> None:
+    """Found in review: the eval warning compared raw strings and never saw synthesis."""
+    from mistify.common.config import LLMConfig
+
+    via_litellm = LLMConfig(
+        provider="litellm",
+        model="gemini/gemini-3.5-flash-lite",
+        synthesis_model="gemini/gemini-3.6-flash",
+        adversarial_model="gemini/gemini-3.5-flash",
+        judge_model="gemini-3.6-flash",
+    )
+    assert via_litellm.judge_shares_a_model()
+
+
+def test_an_independent_judge_is_not_flagged() -> None:
+    """The control: a judge no other stage uses passes."""
+    from mistify.common.config import LLMConfig
+
+    config = LLMConfig(
+        synthesis_model="gemini-3.6-flash",
+        adversarial_model="gemini-3.5-flash",
+        judge_model="gemini-3.7-pro",
+    )
+    assert not config.judge_shares_a_model()

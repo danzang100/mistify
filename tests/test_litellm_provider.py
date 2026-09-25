@@ -396,3 +396,25 @@ def test_a_dropped_connection_is_still_retried() -> None:
 
     assert provider.converse("system", [Message(role="user", text="go")]).text == "ok"
     assert len(fake.requests) == 2
+
+
+def test_a_gateway_status_is_retried_whatever_its_body_says() -> None:
+    """Found in review: a 502 whose body mentions a refused upstream was not retried."""
+    error = APIConnectionError("upstream connect error: connection refused")
+    error.status_code = 502  # type: ignore[attr-defined]
+    fake = _FakeCompletion(error, _response(content="ok"))
+    provider = LiteLLMProvider(MODEL, completion=fake, sleep=lambda _s: None)
+
+    assert provider.converse("system", [Message(role="user", text="go")]).text == "ok"
+    assert len(fake.requests) == 2
+
+
+def test_the_local_server_hint_is_only_for_a_refused_connection() -> None:
+    """The control for the hint: a running server missing the model gets no such advice."""
+    fake = _FakeCompletion(BadRequestError("model 'qwen3:8b' not found, try pulling it first"))
+    provider = LiteLLMProvider("ollama_chat/qwen3:8b", completion=fake, sleep=lambda _s: None)
+
+    with pytest.raises(ProviderError) as caught:
+        provider.converse("system", [Message(role="user", text="go")])
+    assert "not found" in str(caught.value)
+    assert "local server running" not in str(caught.value)

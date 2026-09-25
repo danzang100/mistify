@@ -437,6 +437,16 @@ class LLMConfig(_Strict):
             )
         return authors
 
+    def judge_shares_a_model(self) -> bool:
+        """Whether the eval judge is one of the models whose work it would be judging.
+
+        Compared by `_model_identity`, like the critique rule: the same model reached through
+        LiteLLM and through the native adapter is still one model.
+        """
+        judged = [model for _, (_, model) in self.conclusion_authors()]
+        judged.append(self.adversarial_model)
+        return _model_identity(self.judge_model) in {_model_identity(m) for m in judged}
+
     def synthesis_provider_name(self) -> str:
         """Provider for the synthesis, defaulting to the loop's when unset."""
         return self.synthesis_provider or self.provider

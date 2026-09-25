@@ -504,6 +504,10 @@ BUDGET_SPENT_TOKENS = Metric("budget", "spent_tokens", "int")
 BUDGET_REFUSED_STAGES = Metric("budget", "refused_stages", "str", load_bearing=True)
 
 
+#: Stages whose metrics describe one investigation attempt, and are cleared before the next.
+INVESTIGATION_STAGES: tuple[str, ...] = ("investigate", "synthesis", "adversarial", "budget")
+
+
 ALL_METRICS: tuple[Metric, ...] = (
     INGEST_FORMAT,
     INGEST_DETECT_CONFIDENCE,
