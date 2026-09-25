@@ -23,6 +23,7 @@ from dataclasses import dataclass
 
 from mistify.eval.scoring import Check
 from mistify.llm.base import LLMProvider, Message
+from mistify.llm.untrusted import DATA_RULE, fence
 from mistify.scratchpad.db import ScratchpadDB
 
 __all__ = ["JUDGE_PROMPT", "judge_notes"]
@@ -78,11 +79,14 @@ def judge_notes(db: ScratchpadDB, provider: LLMProvider, max_tokens: int = 2048)
         if not event_ids:
             continue
         turn = provider.converse(
-            system=JUDGE_PROMPT,
+            system=f"{JUDGE_PROMPT}\n{DATA_RULE}",
             messages=[
                 Message(
                     role="user",
-                    text=f"Claim:\n{note.note}\n\nCited rows:\n{_rows_for(db, event_ids)}",
+                    text=(
+                        f"Claim:\n{fence(note.note, 'claim')}\n\n"
+                        f"Cited rows:\n{fence(_rows_for(db, event_ids), 'rows')}"
+                    ),
                 )
             ],
             max_tokens=max_tokens,

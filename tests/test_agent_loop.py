@@ -145,8 +145,9 @@ def test_the_system_prompt_never_changes_across_steps(loaded_db: ScratchpadDB) -
 def test_the_digest_leads_with_the_most_anomalous_template(loaded_db: ScratchpadDB) -> None:
     """The ranking is the search order, so it has to be what the model reads first."""
     prompt = build_system_prompt(loaded_db)
-    body = prompt.split("most anomalous first")[1]
-    assert ROOT_CAUSE_MARKER in body.splitlines()[2]
+    body = prompt.split("most anomalous first")[1].splitlines()
+    first = body[body.index('<log_data kind="templates">') + 1]
+    assert ROOT_CAUSE_MARKER in first
 
 
 def test_the_prompt_says_when_severity_was_read_out_of_the_text(

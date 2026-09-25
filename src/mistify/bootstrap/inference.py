@@ -24,6 +24,7 @@ from dataclasses import dataclass
 
 from mistify.bootstrap.schema import TIMESTAMP_PATTERNS, FieldSchema, severity_pattern
 from mistify.llm.base import LLMProvider, Message
+from mistify.llm.untrusted import DATA_RULE, fence
 
 __all__ = ["INFERENCE_PROMPT", "diverse_sample", "infer_with_model"]
 
@@ -132,8 +133,8 @@ def infer_with_model(
 
     numbered = "\n".join(f"{i}: {line}" for i, line in enumerate(sample, start=1))
     turn = provider.converse(
-        system=INFERENCE_PROMPT,
-        messages=[Message(role="user", text=numbered)],
+        system=f"{INFERENCE_PROMPT}\n{DATA_RULE}",
+        messages=[Message(role="user", text=fence(numbered, "sample_lines"))],
         max_tokens=max_tokens,
     )
 

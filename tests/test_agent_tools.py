@@ -69,6 +69,11 @@ def rows(result: ToolResult) -> list[dict[str, str]]:
     model has to guess at.
     """
     lines = result.content.splitlines()
+    # The rows are log text, so they arrive fenced; a table outside its fence is a format
+    # break, not something to parse around.
+    opening, closing = '<log_data kind="rows">', "</log_data>"
+    assert opening in lines and lines[-1] == closing, "rows must arrive inside a log_data fence"
+    lines = lines[lines.index(opening) + 1 : -1]
     legend = next(line for line in lines if line.startswith("columns: "))
     columns = legend.removeprefix("columns: ").split(" | ")
     body = lines[lines.index(legend) + 1 :]

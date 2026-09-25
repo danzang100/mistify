@@ -27,6 +27,7 @@ from mistify.agent.adversarial import unexplained_signal_templates
 from mistify.agent.tools import ToolBox
 from mistify.common.models import ScratchpadNote
 from mistify.llm.base import LLMProvider, Message, ToolResult, ToolSpec, Turn, Usage
+from mistify.llm.untrusted import DATA_RULE, fence
 from mistify.metrics import (
     ANOMALY_SIGNAL_TEMPLATE_IDS,
     INVESTIGATE_BUDGET_LIMITED,
@@ -262,6 +263,7 @@ def build_system_prompt(db: ScratchpadDB, digest_limit: int = DIGEST_LIMIT) -> s
 
     lines = [
         SYSTEM_PROMPT,
+        DATA_RULE,
         "",
         "## This incident",
         "",
@@ -283,7 +285,9 @@ def build_system_prompt(db: ScratchpadDB, digest_limit: int = DIGEST_LIMIT) -> s
         # it is in front of the model on every step rather than only the first, and the
         # compaction that trims old tool output never reaches it. Redacted at ingest with the
         # incident's own salt, so a placeholder here is the placeholder on the user's lines.
-        lines.extend(["## What was reported", "", brief, ""])
+        # Fenced like the logs: a pasted ticket can carry text meant for a model as easily
+        # as a log line can, and it is not the operator speaking.
+        lines.extend(["## What was reported", "", fence(brief, "report"), ""])
     lines.extend(
         [
             "## Templates, most anomalous first "
@@ -293,6 +297,7 @@ def build_system_prompt(db: ScratchpadDB, digest_limit: int = DIGEST_LIMIT) -> s
     )
     allowance = max(MIN_PATTERN_CHARS, DIGEST_CHAR_BUDGET // max(len(templates), 1))
     shortened = 0
+    listing: list[str] = []
     for template in templates:
         mix = ", ".join(f"{k}:{v}" for k, v in sorted(template["severity_mix"].items()))
         pattern = str(template["pattern"])
@@ -303,10 +308,13 @@ def build_system_prompt(db: ScratchpadDB, digest_limit: int = DIGEST_LIMIT) -> s
             cut = len(pattern) - allowance
             pattern = f"{pattern[:allowance]} ... [+{cut} more chars]"
             shortened += 1
-        lines.append(
+        listing.append(
             f"[{template['template_id']}] score={template['anomaly_score']:.3f} "
             f"n={template['occurrence_count']} {mix} :: {pattern}"
         )
+    # The patterns are log text: the one place a line reaches the model before any tool is
+    # called, and so the first place an injected instruction would be read.
+    lines.append(fence("\n".join(listing), "templates"))
     if shortened:
         lines.extend(
             [

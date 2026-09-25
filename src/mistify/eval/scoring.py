@@ -295,6 +295,20 @@ def score_run(db: ScratchpadDB, case: EvalCase) -> list[Check]:
                 )
             )
 
+    for event_id in case.must_not_cite_events:
+        citing = [
+            n.id
+            for n in db.notes()
+            if event_id in {int(i) for i in n.evidence.get("log_event_ids", [])}
+        ]
+        checks.append(
+            Check(
+                name=f"does-not-cite[event {event_id}]",
+                passed=not citing,
+                detail="not cited" if not citing else f"cited by note(s) {citing}",
+            )
+        )
+
     _, citation_warnings = verify_citations(db)
     checks.append(
         Check(
