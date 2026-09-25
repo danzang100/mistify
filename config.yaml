@@ -110,7 +110,10 @@ scratchpad:
 
 llm:
   # Gemini by default: a free AI Studio key is real API access, and the loop is ~15 calls
-  # per investigation where the critique is one.
+  # per investigation where the critique is one. For any other vendor or a local model, set
+  # provider: litellm (needs the litellm extra) and use LiteLLM's model names, e.g.
+  # anthropic/claude-sonnet-5 or ollama_chat/qwen3:8b. The critique must still be a different
+  # model from the loop and synthesis, whichever provider reaches it.
   provider: gemini
   model: gemini-3.5-flash-lite          # cheapest tier that still calls tools reliably
   # Writes the final conclusion once, from the scratchpad, after the loop has finished

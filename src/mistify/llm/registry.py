@@ -56,4 +56,32 @@ def build_provider(name: str, model: str, config: LLMConfig) -> LLMProvider:
             timeout_seconds=config.request_timeout_seconds,
         )
 
-    raise MissingCredentialError(f"unknown llm provider {name!r}. Known: gemini, scripted")
+    if name == "litellm":
+        try:
+            import litellm
+        except ImportError as exc:
+            raise MissingCredentialError(
+                "The 'litellm' provider needs the optional dependency: install mistify with "
+                "the litellm extra (pip install 'mistify[litellm]')."
+            ) from exc
+        # Asked of LiteLLM rather than guessed here: it knows which variable each vendor
+        # reads, and local backends such as Ollama need none.
+        missing = litellm.validate_environment(model=model).get("missing_keys") or []
+        # Except Ollama's base URL, which LiteLLM lists as missing yet defaults to the local
+        # server -- refusing on it would refuse exactly the all-local setup.
+        missing = [key for key in missing if key != "OLLAMA_API_BASE"]
+        if missing:
+            raise MissingCredentialError(
+                f"No credential found for {model!r}: set {', '.join(missing)}, either in the "
+                "environment or in a .env file at the repo root, which the CLI loads on "
+                "startup. To work without any credential, run with --investigator skeleton."
+            )
+        from mistify.llm.litellm_provider import LiteLLMProvider
+
+        return LiteLLMProvider(
+            model=model,
+            min_interval_seconds=config.min_interval_seconds,
+            timeout_seconds=config.request_timeout_seconds,
+        )
+
+    raise MissingCredentialError(f"unknown llm provider {name!r}. Known: gemini, litellm, scripted")

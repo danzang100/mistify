@@ -319,6 +319,16 @@ class ScratchpadConfig(_Strict):
     store_raw: bool = True
 
 
+def _model_identity(model: str) -> str:
+    """The model behind a configured name, whichever provider routes to it.
+
+    LiteLLM names are vendor-prefixed (`gemini/gemini-3.5-flash`, `ollama_chat/qwen3:8b`), so
+    comparing (provider, model) pairs would pass the same model reached two ways as two
+    independent reviewers. The last path segment is the model; case is not significant.
+    """
+    return model.rsplit("/", 1)[-1].strip().lower()
+
+
 class LLMConfig(_Strict):
     """Which model runs what, and through which provider.
 
@@ -331,14 +341,14 @@ class LLMConfig(_Strict):
 
     #: Provider for the investigation loop. `scripted` replays fixed turns and is what the
     #: tests use -- it needs no credential, so the whole loop is exercised without a bill.
-    provider: Literal["gemini", "scripted"] = "gemini"
+    provider: Literal["gemini", "litellm", "scripted"] = "gemini"
     #: Cheapest tier that still calls tools reliably -- verified against the live API.
     model: str = "gemini-3.5-flash-lite"
 
     #: Provider and model for the adversarial pass. Defaulting to the same provider but a
     #: different model is the weaker form of independence; pointing this at another provider
     #: entirely is the stronger one.
-    adversarial_provider: Literal["gemini", "scripted"] | None = None
+    adversarial_provider: Literal["gemini", "litellm", "scripted"] | None = None
     #: Must differ from whichever model writes the conclusion -- the loop's, or the synthesis
     #: model when one is set. The critique has to be independent of the reasoning it checks,
     #: and the critique is one call against the loop's fifteen, so it is a cheap place to spend.
@@ -350,7 +360,7 @@ class LLMConfig(_Strict):
     #: Writes the final conclusion from the scratchpad, once, after the loop has finished
     #: searching. Search is mechanical and cheap; concluding is one call where being slightly
     #: better is worth paying for. Set to None to let the loop's own last note stand.
-    synthesis_provider: Literal["gemini", "scripted"] | None = None
+    synthesis_provider: Literal["gemini", "litellm", "scripted"] | None = None
     #: None leaves the loop's own last note as the conclusion. The default moved off None on
     #: 2026-09-17, on a real customer log: the loop's own conclusion was a budget-cap dump
     #: restating its notes, and this model wrote the answer in a paragraph that told
@@ -389,11 +399,11 @@ class LLMConfig(_Strict):
         exact failure the separate model exists to prevent and the one hardest to see in a
         finished report.
         """
-        critic = (self.adversarial_provider or self.provider, self.adversarial_model)
-        for role, author in self.conclusion_authors():
-            if critic == author:
+        critic = _model_identity(self.adversarial_model)
+        for role, (_, author_model) in self.conclusion_authors():
+            if critic == _model_identity(author_model):
                 raise ValueError(
-                    f"the adversarial pass must not use the same provider and model as the "
+                    f"the adversarial pass must not use the same model as the "
                     f"{role} (a shared model gives the reasoner and its "
                     f"checker one blind spot). Change llm.adversarial_model, or the "
                     f"{role}'s model."

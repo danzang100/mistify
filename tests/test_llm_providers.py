@@ -6,8 +6,8 @@ in *what it sends* -- tool results fed back under the right id, a system prompt 
 byte-identical across steps, the task budget passed through only when the provider claims to
 support it -- is assertable without a model.
 
-The Gemini adapter, the only real provider that ships, has its own module:
-`tests/test_gemini_provider.py`.
+The real adapters have their own modules: `tests/test_gemini_provider.py` and
+`tests/test_litellm_provider.py`.
 """
 
 from __future__ import annotations

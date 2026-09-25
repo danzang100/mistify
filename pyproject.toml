@@ -23,6 +23,9 @@ mistify = "mistify.cli:cli"
 pdf = [
     "xhtml2pdf>=0.2.17",
 ]
+litellm = [
+    "litellm>=1.80,!=1.82.7,!=1.82.8",
+]
 
 [dependency-groups]
 dev = [

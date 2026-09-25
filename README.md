@@ -126,9 +126,12 @@ adapter retries throttling with backoff; if that is not enough, set `llm.min_int
 to space calls out. A run over the sample incident costs roughly 48k tokens end to end (see
 *What a run costs*).
 
-Gemini is the only real provider that ships. The seam it sits behind (`src/mistify/llm/`) took
-a second adapter once and would take another; an Anthropic implementation lived there and was
-removed when no credential for it existed.
+Gemini ships built in. Any other model, including local ones, goes through LiteLLM: install
+the extra (`uv sync --extra litellm`), set `llm.provider: litellm`, and name models the way
+LiteLLM does - `anthropic/claude-sonnet-5`, `openai/gpt-5`, `ollama_chat/qwen3:8b`. Each
+vendor reads its usual key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`); Ollama needs none. Callable
+is not capable: small local models often fail at multi-step tool calling, and which models
+actually work has not been measured yet.
 
 ### The three steps, separately
 
