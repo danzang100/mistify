@@ -88,11 +88,19 @@ def _with_vault(config: MistifyConfig, vault: bool) -> MistifyConfig:
 
 @click.group()
 @click.version_option(__version__, prog_name="mistify")
-def cli() -> None:
+@click.pass_context
+def cli(ctx: click.Context) -> None:
     """Mistify - incident log analysis agent."""
     # A key in a .env file is a key the user has already provided; making them export it as
     # well is a setup step that earns nothing. Never overrides a real environment variable.
-    load_dotenv(override=False)
+    #
+    # The working directory's .env and no other. Called with no path, load_dotenv searches
+    # upward from the directory of the *calling source file*: from an installed package that
+    # never finds the user's file, and from a git worktree it walked out into the main
+    # checkout and spent that checkout's key -- which is how a demo that had cleared its
+    # environment ran a paid investigation anyway. `mcp` loads its own, next to its config.
+    if ctx.invoked_subcommand != "mcp":
+        load_dotenv(Path.cwd() / ".env", override=False)
 
 
 @cli.command(name="ingest")
@@ -291,7 +299,8 @@ def investigate_command(
         click.echo(f"tool calls  {result.tool_calls}")
         click.echo(f"notes       {len(result.notes)}")
         if result.budget_limited:
-            click.echo("budget-limited: reached the tool-call cap before concluding", err=True)
+            limit = "token ceiling" if result.budget_limit == "tokens" else "tool-call cap"
+            click.echo(f"budget-limited: reached the {limit} before concluding", err=True)
         for note in result.notes:
             click.echo(f"  [{note.confidence}] {note.note[:160]}")
 
@@ -302,8 +311,9 @@ def investigate_command(
     "--format",
     "report_format",
     default=None,
-    type=click.Choice(["markdown", "html", "pdf"]),
-    help="Output format. Defaults to report.format in config.",
+    type=click.Choice(["markdown", "html", "pdf", "json"]),
+    help="Output format. Defaults to report.format in config. json is the data the report is "
+    "rendered from, with no template.",
 )
 @_config_option
 def report_command(incident_id: str, report_format: str | None, config_path: Path | None) -> None:
@@ -1096,6 +1106,30 @@ def _run_agent(
         )
     except MissingCredentialError as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+@cli.command(name="mcp")
+@_config_option
+def mcp_command(config_path: Path | None) -> None:
+    """Serve Mistify to MCP clients over stdio.
+
+    Offers ingest, health, investigate, report, report_data and query -- never reveal or the
+    vault. Ingest reads only from mcp.allowed_roots in the config. Credentials come from the
+    environment, or from a .env beside the config file (beside ./config.yaml when none is
+    given), and nowhere else.
+    """
+    from mistify.mcp_server import build_server
+
+    config_file = config_path if config_path is not None else Path("config.yaml")
+    load_dotenv(config_file.resolve().parent / ".env", override=False)
+    config = load_config(config_path)
+    if not config.mcp.allowed_roots:
+        click.echo(
+            "mistify mcp: mcp.allowed_roots is empty, so ingest will refuse every source. "
+            "Set it in the config to the directories your log bundles live in.",
+            err=True,
+        )
+    build_server(config).run("stdio")
 
 
 def main() -> int:

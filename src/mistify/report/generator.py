@@ -29,6 +29,7 @@ from mistify.findings import (
 )
 from mistify.health import OWNED_METRICS, HealthStatus, recorded_checks
 from mistify.metrics import (
+    ADVERSARIAL_FAILED,
     ADVERSARIAL_OUTCOME,
     ADVERSARIAL_UNEXPLAINED_SIGNAL,
     ADVERSARIAL_UNREBUTTED_HIGH_SEVERITY,
@@ -59,6 +60,7 @@ from mistify.metrics import (
     REDACTION_MODE,
     REDACTION_VAULT,
     SCRATCHPAD_ORPHAN_EVENTS,
+    SYNTHESIS_FAILED,
     TEMPLATING_CALIBRATION_REASON,
     TEMPLATING_CALIBRATION_STATUS,
     TEMPLATING_COVERAGE,
@@ -530,6 +532,20 @@ def _health_warnings(view: MetricView) -> list[str]:
             "was cut short, not as a completed investigation."
         )
 
+    # A stage whose model failed did not finish, and the conclusion reads differently for it.
+    synthesis_failed = view.text(SYNTHESIS_FAILED)
+    if synthesis_failed:
+        warnings.append(
+            "The synthesis model failed, so the investigation's own notes stand as the "
+            f"conclusion: {synthesis_failed}"
+        )
+    critique_failed = view.text(ADVERSARIAL_FAILED)
+    if critique_failed:
+        warnings.append(
+            "The critique model failed, so nothing but the citation check has examined this "
+            f"conclusion: {critique_failed}"
+        )
+
     # A stage the ceiling refused did not run, and its absence from the report would otherwise
     # read as a check that passed.
     refused = view.text(BUDGET_REFUSED_STAGES)
@@ -593,6 +609,8 @@ _FORMATS: dict[str, tuple[str, str]] = {
     "html": ("incident_report.html.jinja", ".html"),
     # PDF is the HTML, printed. Its template is the HTML one and its extension is not.
     "pdf": ("incident_report.html.jinja", ".pdf"),
+    # The data the templates are rendered from, with no template: `report.data`.
+    "json": ("", ".json"),
 }
 
 _PDF_HELP = (
@@ -611,6 +629,10 @@ def generate_report(db: ScratchpadDB, report_format: str = "markdown") -> str:
     """
     if report_format not in _FORMATS:
         raise ValueError(f"unknown report format {report_format!r}. Known: {sorted(_FORMATS)}")
+    if report_format == "json":
+        from mistify.report.data import report_json
+
+        return report_json(db)
     template_name, _ = _FORMATS[report_format]
     is_html = template_name.endswith(".html.jinja")
     env = Environment(

@@ -29,8 +29,9 @@ with no account anywhere, and so does the entire test suite.
 | JSON Lines / OTLP / Loki adapters, unknown-format bootstrapper, raw-line fallback | done |
 | Elastic adapter | written, unregistered |
 | Evaluation harness: Loghub, LogDx-CI, grep baselines, seeded wrong conclusions | done |
-| Markdown / HTML / PDF reports | done |
-| MCP server, PyPI packaging | not started |
+| Markdown / HTML / PDF reports, and the report's data as JSON | done |
+| MCP server (stdio, six tools) | done |
+| PyPI packaging | not started |
 
 ## Install
 
@@ -199,7 +200,8 @@ configuration. It is there so a conclusion can be checked, not because a respond
 
 ### Report formats
 
-`report.format` in config, or `--format` on the command, takes `markdown`, `html` or `pdf`:
+`report.format` in config, or `--format` on the command, takes `markdown`, `html`, `pdf` or
+`json`:
 
 ```bash
 uv run mistify report --incident-id demo --format html
@@ -219,6 +221,63 @@ uv sync --extra pdf
 
 Without it, `--format pdf` says so and names the fix. The engine is pure Python and renders a
 subset of CSS; a browser's print-to-PDF on the HTML gives a better-looking file if you need one.
+
+`json` is the data the templates are rendered from, with no template: findings with their
+citations, the critique, the health check, token spend. Use it when you want the conclusion in
+your own tooling rather than on our page. It carries a `schema` field
+(`mistify.report-data/1`), and an `untrusted_notice`, because every string in it that came from
+the logs could have been written by whoever wrote the logs.
+
+### Use from an agent (MCP)
+
+`mistify mcp` serves Mistify to MCP clients such as Claude Code and Cursor over stdio. Say which
+directories it may read from, because by default it reads none. In your `config.yaml`:
+
+```yaml
+mcp:
+  allowed_roots: [/path/to/log-bundles]
+```
+
+Then register it. For Claude Code:
+
+```bash
+claude mcp add mistify -- mistify mcp --config /path/to/config.yaml
+```
+
+For Cursor, in `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "mistify": {
+      "command": "mistify",
+      "args": ["mcp", "--config", "/path/to/config.yaml"]
+    }
+  }
+}
+```
+
+Credentials come from the client's environment, or from a `.env` file next to that
+`config.yaml`, and from nowhere else. The server offers six tools:
+
+| Tool | What it does |
+|---|---|
+| `ingest` | Parse, redact, template and load a file or directory from an allowed directory |
+| `health` | The pre-flight check, no model involved |
+| `investigate` | Investigation, synthesis and critique, within the configured token ceiling |
+| `report` | The report as markdown or HTML |
+| `report_data` | The report's data as JSON |
+| `query` | One read-only SQL query against an incident, up to 200 rows |
+
+What it does not offer is deliberate: no `reveal`, no vault, no way to override a failed health
+check, and no way to raise the token ceiling. Those stay with a person at the CLI. The reasons
+are in [SECURITY.md](SECURITY.md).
+
+`investigate` runs the whole investigation inside one tool call, so it takes minutes, not
+seconds. On the sample incident over stdio it took 124 seconds and 124k tokens (Gemini, 26
+September 2026, including four retried 503s). That is well inside Claude Code's limits for a
+stdio server: a call may run for hours, and is treated as idle only after 30 minutes without a
+response.
 
 ### What a run costs
 

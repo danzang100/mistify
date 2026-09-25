@@ -23,6 +23,7 @@ __all__ = [
     "Drain3Config",
     "HealthConfig",
     "LLMConfig",
+    "McpConfig",
     "MistifyConfig",
     "PipelineConfig",
     "RedactionConfig",
@@ -457,7 +458,7 @@ class LLMConfig(_Strict):
 
 
 class ReportConfig(_Strict):
-    format: Literal["markdown", "html", "pdf"] = "markdown"
+    format: Literal["markdown", "html", "pdf", "json"] = "markdown"
     output_dir: str = "./reports"
 
 
@@ -575,6 +576,20 @@ class HealthConfig(_Strict):
         return self
 
 
+class McpConfig(_Strict):
+    """What the MCP server may touch. Read only by `mistify mcp`; the CLI ignores it."""
+
+    #: Directories `ingest` may read from, after symlinks are followed. Empty by default, which
+    #: refuses every source: an MCP client is a program acting on text it was given, and a
+    #: default of "wherever the server was started" would let a log line that talks it into
+    #: ingesting `~/.ssh` succeed. Name the directories your log bundles live in.
+    allowed_roots: list[str] = Field(default_factory=list)
+
+    def resolved_roots(self) -> list[Path]:
+        """The allowed directories, absolute and with symlinks followed, as comparisons need."""
+        return [Path(root).expanduser().resolve() for root in self.allowed_roots]
+
+
 class MistifyConfig(_Strict):
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     adapters: AdaptersConfig = Field(default_factory=AdaptersConfig)
@@ -586,6 +601,7 @@ class MistifyConfig(_Strict):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     report: ReportConfig = Field(default_factory=ReportConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
 
     def scratchpad_path(self, incident_id: str) -> Path:
         return Path(self.scratchpad.path.format(incident_id=incident_id))

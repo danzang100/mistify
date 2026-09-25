@@ -154,7 +154,8 @@ llm:
   min_interval_seconds: 4.0
 
 report:
-  # markdown | html | pdf. PDF needs the optional `pdf` extra: uv sync --extra pdf
+  # markdown | html | pdf | json. PDF needs the optional `pdf` extra: uv sync --extra pdf.
+  # json is the data the report is rendered from, with no template.
   format: markdown
   output_dir: ./reports
 
@@ -173,3 +174,8 @@ health:
   # A source both skewed by whole quarter hours and writing no UTC offset beside sources that
   # do: its local times were read as UTC. Refuses spend; either signal alone warns.
   fail_on_corroborated_skew: true
+
+mcp:
+  # Directories `mistify mcp` may ingest from, after symlinks are followed. Empty refuses every
+  # source until you name where your log bundles live; the CLI does not read this.
+  allowed_roots: []

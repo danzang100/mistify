@@ -99,6 +99,23 @@ libraries follow their own settings; check the one your provider uses.
 
 ### MCP
 
-The MCP server is not built yet. It will not expose the vault or `reveal`. Its SQL will be
-read-only, and `--source` paths will be limited to directories you configure. It will also be
-subject to the same token ceiling as the CLI.
+`mistify mcp` offers six tools: `ingest`, `health`, `investigate`, `report`, `report_data` and
+`query`. An MCP client is a program acting on text it was given, including text from these
+logs, so the server withholds everything a person should decide. A test fails if any of these
+change.
+
+- **No `reveal`, no vault.** No tool or argument reaches a redacted value's original, and
+  `ingest` over MCP never writes a vault, whatever the config says.
+- **Sources only from `mcp.allowed_roots`.** A source is resolved, following every symlink and
+  junction, before it is compared with the allowed directories. For a directory, every file
+  inside is checked too, so a link planted inside an allowed directory cannot reach outside
+  it. With no roots configured, which is the default, every source is refused.
+- **Incident ids cannot name a path.** They are limited to letters, digits, `.`, `_` and `-`.
+- **No override of a failed health check.** `--ignore-health` exists only at the CLI.
+- **No way to raise the token ceiling.** Runs started over MCP stop at `pipeline.max_total_tokens`
+  from the server's config.
+- **Read-only SQL**, through the same channel the investigator uses, capped at 200 rows.
+- **Log-derived output is marked.** `report` arrives inside a `<log_data>` block, and
+  `investigate`, `query` and `report_data` results carry an `untrusted_notice`.
+- **Credentials only from the environment, or from a `.env` next to the server's config.**
+  Nothing else on disk is searched.

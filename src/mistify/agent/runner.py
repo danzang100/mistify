@@ -17,13 +17,16 @@ from mistify.agent.adversarial import REBUTTAL_TOOLS, run_adversarial_check
 from mistify.agent.budget import BudgetedProvider, TokenBudget, TokenCeilingReached
 from mistify.agent.loop import InvestigationLoop, InvestigationResult
 from mistify.agent.tools import ToolBox
+from mistify.llm.base import ProviderError
 from mistify.llm.registry import build_provider
 from mistify.metrics import (
+    ADVERSARIAL_FAILED,
     ANOMALY_SIGNAL_TEMPLATE_IDS,
     BUDGET_MAX_TOTAL_TOKENS,
     BUDGET_REFUSED_STAGES,
     BUDGET_SPENT_TOKENS,
     INVESTIGATION_STAGES,
+    SYNTHESIS_FAILED,
     MetricView,
 )
 
@@ -94,6 +97,11 @@ def run_investigation(
             # The loop's own notes stand as the conclusion, exactly as with no synthesis
             # model configured -- and the report says the synthesis was refused.
             refused.append("synthesis")
+        except ProviderError as exc:
+            # The same, for a model that would not answer. The investigation is finished and
+            # its notes are real; losing them because the model that rewrites them was
+            # overloaded would throw away the part that worked.
+            db.record(SYNTHESIS_FAILED, _clip_error(exc))
         result.notes = db.notes()
 
     if adversarial:
@@ -124,6 +132,9 @@ def run_investigation(
             )
         except TokenCeilingReached:
             refused.append("adversarial")
+        except ProviderError as exc:
+            # A conclusion nothing checked, said in words on the report -- not a run lost.
+            db.record(ADVERSARIAL_FAILED, _clip_error(exc))
 
     if budget is not None:
         db.record_many(
@@ -134,3 +145,9 @@ def run_investigation(
             ]
         )
     return result
+
+
+def _clip_error(exc: Exception) -> str:
+    """The error, bounded: a provider error can carry a whole response body."""
+    text = str(exc)
+    return text if len(text) <= 400 else text[:400] + " ..."
