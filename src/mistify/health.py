@@ -541,6 +541,18 @@ def _parse_errors(view: MetricView, config: HealthConfig) -> tuple[HealthCheck, 
             ),
             rate,
         )
+    if errors:
+        # Under the threshold is not the same as none: those lines still cannot be found.
+        return (
+            HealthCheck(
+                "parse_errors",
+                HealthStatus.OK,
+                f"{int(errors):,} of {int(lines):,} lines ({_pct(rate)}) failed to parse and "
+                f"were skipped, under the {_pct(config.parse_error_rate_warn_above)} warning "
+                "threshold.",
+            ),
+            rate,
+        )
     return HealthCheck("parse_errors", HealthStatus.OK, "Every line parsed."), rate
 
 

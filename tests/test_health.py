@@ -481,3 +481,67 @@ def test_a_scratchpad_from_before_the_check_says_so(
     connection.commit()
     connection.close()
     assert "No pre-flight health check was recorded" in generate_report(loaded_db)
+
+
+# ------------------------------------------------------------------ review fixes, 2026-09-26
+
+
+def _parse_verdict(db: ScratchpadDB, errors: int) -> str:
+    from mistify.metrics import INGEST_LINES_READ, INGEST_PARSE_ERRORS
+
+    db.record_many([(INGEST_PARSE_ERRORS, errors), (INGEST_LINES_READ, 100_000)])
+    # Raised from its default of 0, under which any parse error warns: the false "every line
+    # parsed" could only be said once a user had set a threshold above zero.
+    config = HealthConfig(parse_error_rate_warn_above=0.01)
+    check = next(c for c in check_health(db, config).checks if c.name == "parse_errors")
+    assert check.status == HealthStatus.OK, "under the threshold either way"
+    return check.message
+
+
+def test_a_few_parse_errors_under_the_threshold_are_still_named(loaded_db: ScratchpadDB) -> None:
+    """Found in review: 40 skipped lines were reported as "Every line parsed."."""
+    message = _parse_verdict(loaded_db, 40)
+    assert "40 of 100,000 lines" in message
+    assert "Every line parsed" not in message
+
+
+def test_no_parse_errors_says_every_line_parsed(loaded_db: ScratchpadDB) -> None:
+    """The control: the sentence the first test rules out is still said when it is true."""
+    assert _parse_verdict(loaded_db, 0) == "Every line parsed."
+
+
+def test_sampled_text_scan_reads_exactly_the_ids_divisible_by_the_stride(
+    loaded_db: ScratchpadDB,
+) -> None:
+    """The seek-based sample must pick the same rows the full-scan filter did."""
+    import re as regex
+
+    pattern = {"any": regex.compile(r".")}
+    for stride in (1, 3, 7):
+        got = loaded_db.text_matches_by_template(pattern, stride=stride)
+        expected: dict[int, int] = {}
+        for event_id, template_id in loaded_db._conn.execute(
+            "SELECT id, template_id FROM log_events"
+        ):
+            if event_id % stride == 0:
+                expected[int(template_id)] = expected.get(int(template_id), 0) + 1
+        assert {t: c["events"] for t, c in got.items()} == expected, stride
+
+
+def test_raw_samples_match_the_first_lines_of_every_source(loaded_db: ScratchpadDB) -> None:
+    """One early-stopping pass must return what a query per source returned."""
+    sources = [r[0] for r in loaded_db._conn.execute("SELECT DISTINCT source FROM log_events")]
+    assert len(sources) > 1, "the control needs several sources to be a test of anything"
+    for per_source in (1, 5, 200):
+        expected = {
+            str(source): [
+                str(r[0])
+                for r in loaded_db._conn.execute(
+                    "SELECT raw FROM log_events WHERE source IS ? AND raw IS NOT NULL"
+                    " ORDER BY id LIMIT ?",
+                    (source, per_source),
+                )
+            ]
+            for source in sources
+        }
+        assert loaded_db.raw_samples(per_source) == expected, per_source

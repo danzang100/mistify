@@ -683,18 +683,37 @@ class ScratchpadDB:
         normalised to UTC, so whether the file said `Z`, `+05:30` or nothing at all survives
         only in the raw line.
         """
-        sources = [row[0] for row in self._conn.execute("SELECT DISTINCT source FROM log_events")]
-        samples: dict[str, list[str]] = {}
-        for source in sources:
-            rows = self._conn.execute(
-                "SELECT raw FROM log_events WHERE source IS ? AND raw IS NOT NULL"
-                " ORDER BY id LIMIT ?",
-                (source, per_source),
+        # One pass in id order, stopping once every source has its lines. `source` has no
+        # index, so the query this replaced -- one `WHERE source IS ? ORDER BY id LIMIT n` per
+        # source -- walked the table from the start for every source: a directory of two
+        # hundred files paid for two hundred scans on every ingest, investigate and run. A
+        # window function numbering each source's rows was tried first and measured 15x slower
+        # on a 2.19M-event single-source log (0.26s to 3.79s, 2026-09-26), because it sorts
+        # the whole table where the old query stopped after two hundred rows. This stops
+        # there too, and reads the table at most once however many sources there are.
+        wanted = {
+            row[0]
+            for row in self._conn.execute(
+                "SELECT DISTINCT source FROM log_events WHERE raw IS NOT NULL"
             )
-            lines = [str(r[0]) for r in rows]
-            if lines:
-                samples[UNKNOWN_SOURCE if source is None else str(source)] = lines
-        return samples
+        }
+        taken: dict[str | None, list[str]] = {}
+        full = 0
+        for source, raw in self._conn.execute(
+            "SELECT source, raw FROM log_events WHERE raw IS NOT NULL ORDER BY id"
+        ):
+            lines = taken.setdefault(source, [])
+            if len(lines) >= per_source:
+                continue
+            lines.append(str(raw))
+            if len(lines) == per_source:
+                full += 1
+                if full == len(wanted):
+                    break
+        return {
+            UNKNOWN_SOURCE if source is None else str(source): lines
+            for source, lines in taken.items()
+        }
 
     def text_matches_by_template(
         self, patterns: dict[str, re.Pattern[str]], stride: int = 1
@@ -719,11 +738,23 @@ class ScratchpadDB:
         sums = "".join(
             f", SUM(_mistify_match_{i}(COALESCE(message, raw))) AS m{i}" for i in range(len(names))
         )
-        rows = self._conn.execute(
-            f"SELECT template_id, COUNT(*) AS n{sums} FROM log_events"
-            " WHERE id % ? = 0 GROUP BY template_id",
-            (stride,),
-        )
+        if stride == 1:
+            rows = self._conn.execute(
+                f"SELECT template_id, COUNT(*) AS n{sums} FROM log_events GROUP BY template_id"
+            )
+        else:
+            # The same rows -- every id divisible by `stride` -- reached by seeking each one on
+            # the primary key rather than filtering a full scan. The filter capped the regex
+            # work and not the reading: every row of a multi-gigabyte scratchpad was still
+            # read to decide whether to skip it.
+            rows = self._conn.execute(
+                "WITH RECURSIVE picked(id) AS ("
+                " SELECT ? UNION ALL SELECT id + ? FROM picked"
+                " WHERE id + ? <= (SELECT MAX(id) FROM log_events)"
+                f") SELECT e.template_id, COUNT(*) AS n{sums} FROM picked"
+                " JOIN log_events AS e ON e.id = picked.id GROUP BY e.template_id",
+                (stride, stride, stride),
+            )
         result: dict[int, dict[str, int]] = {}
         for row in rows:
             counts = {"events": int(row["n"])}
