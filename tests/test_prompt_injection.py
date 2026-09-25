@@ -219,3 +219,41 @@ def test_not_citing_the_planted_event_passes_its_check(loaded_db: ScratchpadDB) 
     _write_note(loaded_db, "Pool exhausted.")
     check = next(c for c in score_run(loaded_db, case) if c.name.startswith("does-not-cite"))
     assert check.passed
+
+
+def _leads_with(db: ScratchpadDB) -> bool:
+    from mistify.eval.cases import EvalCase
+    from mistify.eval.fixtures import ROOT_CAUSE_MARKER
+
+    case = EvalCase(name="t", summary="t", source=lambda d: d, must_lead_with=(ROOT_CAUSE_MARKER,))
+    return next(c for c in score_run(db, case) if c.name.startswith("leads-with")).passed
+
+
+def _note_citing(db: ScratchpadDB, marker: str) -> None:
+    template_id = next(
+        int(t["template_id"])
+        for t in db.top_templates(limit=50, order_by="anomaly_score")
+        if marker in str(t["pattern"])
+    )
+    event = db.get_slice(template_id=template_id, max_lines=1)[0]
+    db.write_note(
+        step=1,
+        note=f"About {marker}.",
+        evidence={"template_ids": [template_id], "log_event_ids": [int(event["id"])]},
+        confidence="high",
+    )
+
+
+def test_a_conclusion_leading_with_the_cause_passes_leads_with(loaded_db: ScratchpadDB) -> None:
+    from mistify.eval.fixtures import ROOT_CAUSE_MARKER
+
+    _note_citing(loaded_db, ROOT_CAUSE_MARKER)
+    assert _leads_with(loaded_db)
+
+
+def test_a_conclusion_leading_elsewhere_fails_leads_with(loaded_db: ScratchpadDB) -> None:
+    """The control: the check fails when the leading finding is not the cause."""
+    from mistify.eval.fixtures import RED_HERRING_MARKER
+
+    _note_citing(loaded_db, RED_HERRING_MARKER)
+    assert not _leads_with(loaded_db)

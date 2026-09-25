@@ -239,6 +239,20 @@ def score_run(db: ScratchpadDB, case: EvalCase) -> list[Check]:
             )
         )
 
+    for marker in case.must_lead_with:
+        template_id = _template_for(db, marker)
+        if template_id is None:
+            checks.append(Check(f"resolves[{marker}]", False, f"no template carries {marker!r}"))
+            continue
+        leading = _leading_templates(db)
+        checks.append(
+            Check(
+                name=f"leads-with[{marker}]",
+                passed=template_id in leading,
+                detail=f"template {template_id}; leading issue cites {sorted(leading) or 'none'}",
+            )
+        )
+
     if not case.expects_incident:
         claims = [n for n in db.notes() if str(n.confidence).lower() in _CLAIM_CONFIDENCES]
         checks.append(
