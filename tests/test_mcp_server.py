@@ -364,17 +364,51 @@ def test_reinvestigating_needs_restart(
     assert _call(server, "investigate", incident_id="inc", restart=True)["steps"] > 0
 
 
-# ------------------------------------------------------------------ the protocol channel
+# ------------------------------------------------------------------ review fixes, 2026-09-26
 
 
-def test_output_from_the_work_never_reaches_stdout(capfd: pytest.CaptureFixture[str]) -> None:
-    """stdout is the protocol; a dependency's print must land on stderr instead."""
+def test_a_busy_incident_refuses_a_second_writer() -> None:
+    locks = mcp_server._IncidentLocks()
 
-    def noisy() -> int:
-        print("Give Feedback / Get Help")
-        return 1
+    def nested() -> None:
+        locks.run("inc", lambda: None)
 
-    assert anyio.run(mcp_server._offload, noisy) == 1
-    captured = capfd.readouterr()
-    assert "Give Feedback" not in captured.out
-    assert "Give Feedback" in captured.err
+    with pytest.raises(ToolError, match="is busy"):
+        locks.run("inc", nested)
+
+
+def test_another_incident_is_not_held_up() -> None:
+    """The control: the lock is per incident, and released afterwards."""
+    locks = mcp_server._IncidentLocks()
+    assert locks.run("inc", lambda: locks.run("other", lambda: 7)) == 7
+    assert locks.run("inc", lambda: 8) == 8
+
+
+def test_a_runaway_query_is_stopped_at_its_limit(tmp_path: Path, logs: Path) -> None:
+    from mistify.scratchpad.db import ReadOnlyViolation
+
+    server = _ingested(tmp_path, logs)
+    config = _config(tmp_path, logs)
+    with ScratchpadDB(config.scratchpad_path("inc")) as db:
+        with pytest.raises(ReadOnlyViolation, match="limit"):
+            db.run_readonly_sql(
+                "SELECT count(*) FROM log_events a, log_events b, log_events c", time_limit=0.2
+            )
+        # The control, on the same connection: the handler was cleared, and a normal query runs.
+        assert db.run_readonly_sql("SELECT count(*) AS n FROM templates", time_limit=0.2)
+    assert server is not None
+
+
+def test_an_oversized_brief_is_refused(tmp_path: Path, logs: Path) -> None:
+    server = build_server(_config(tmp_path, logs))
+    with pytest.raises(ToolError, match="the limit is 8,000"):
+        _call(server, "ingest", source=str(logs / "incident.jsonl"), brief="x" * 8_001)
+    ok = _call(server, "ingest", source=str(logs / "incident.jsonl"), brief="checkout is down")
+    assert ok["events_loaded"] > 0
+
+
+def test_health_is_not_advertised_as_read_only(tmp_path: Path, logs: Path) -> None:
+    """It records its verdicts; a client auto-approving read-only tools must not skip asking."""
+    tools = {t.name: t for t in anyio.run(build_server(_config(tmp_path, logs)).list_tools)}
+    assert tools["health"].annotations.read_only_hint is False
+    assert tools["report"].annotations.read_only_hint is True

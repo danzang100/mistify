@@ -18,16 +18,15 @@ Everything a tool returns that came from the logs is marked as such: the report 
 `log_data` and structured results carry `untrusted_notice`. The consumer here is usually a
 model, and the conclusion it receives was written by reading attacker-writable text.
 
-Blocking work runs in a worker thread so the stdio loop stays responsive, and stdout is
-redirected to stderr while it does: stdout is the protocol channel, and one stray `print` from a
-dependency would corrupt the session.
+Blocking work runs in a worker thread so the stdio loop stays responsive, with one writer per
+incident at a time. Stray output from a dependency cannot corrupt the protocol: the SDK's stdio
+transport keeps fd 1 for the wire and sends stdout to stderr.
 """
 
 from __future__ import annotations
 
-import contextlib
 import re
-import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -63,6 +62,13 @@ INCIDENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 #: Rows `query` returns. The same cap the investigator's own SQL tool has.
 QUERY_ROW_CAP = 200
 
+#: Seconds `query` may run. The row cap bounds what comes back, not the work.
+QUERY_TIME_LIMIT = 10.0
+
+#: Characters `ingest` accepts as a brief. The brief sits in the stable prefix of every
+#: investigation step, so its size is paid on every step; a ticket is rarely a tenth of this.
+MAX_BRIEF_CHARS = 8_000
+
 INSTRUCTIONS = f"""Mistify investigates exported log files offline and reports a conclusion
 where every claim cites real log rows.
 
@@ -79,6 +85,7 @@ def build_server(config: MistifyConfig) -> MCPServer:
     """The server, bound to one configuration for its whole life."""
     server = MCPServer(name="mistify", version=__version__, instructions=INSTRUCTIONS)
     reads = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+    busy = _IncidentLocks()
 
     @server.tool(
         annotations=ToolAnnotations(
@@ -94,13 +101,21 @@ def build_server(config: MistifyConfig) -> MCPServer:
         reported, in the reporter's words; it is redacted like the logs. Re-ingesting an
         incident id replaces its scratchpad. Calls no model.
         """
-        return await _offload(lambda: _ingest(config, source, incident_id, brief))
+        return await _offload(lambda: _ingest(config, busy, source, incident_id, brief))
 
-    @server.tool(annotations=reads)
+    # Not read-only: it records its verdicts, which the report then shows.
+    @server.tool(
+        annotations=ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=False,
+        )
+    )
     async def health(incident_id: str) -> dict[str, Any]:
         """Check an ingested incident's log health: timestamps, clock skew, parse errors, and
         how templating grouped the lines. Calls no model. `investigate` refuses a failed one."""
-        return await _offload(lambda: _health(config, incident_id))
+        return await _offload(lambda: busy.run(incident_id, lambda: _health(config, incident_id)))
 
     @server.tool(
         annotations=ToolAnnotations(
@@ -114,7 +129,9 @@ def build_server(config: MistifyConfig) -> MCPServer:
         incident whose health check failed. An incident already investigated needs
         `restart=true`, which deletes the earlier notes first.
         """
-        return await _offload(lambda: _investigate(config, incident_id, restart))
+        return await _offload(
+            lambda: busy.run(incident_id, lambda: _investigate(config, incident_id, restart))
+        )
 
     @server.tool(annotations=reads)
     async def report(incident_id: str, format: str = "markdown") -> str:
@@ -140,13 +157,28 @@ def build_server(config: MistifyConfig) -> MCPServer:
 
 
 def _ingest(
-    config: MistifyConfig, source: str, incident_id: str | None, brief: str | None
+    config: MistifyConfig,
+    busy: _IncidentLocks,
+    source: str,
+    incident_id: str | None,
+    brief: str | None,
 ) -> dict[str, Any]:
-    from mistify.adapters.source import BinarySourceError
-    from mistify.pipeline import UnknownFormatError, derive_incident_id, ingest
+    from mistify.pipeline import derive_incident_id
 
+    if brief is not None and len(brief) > MAX_BRIEF_CHARS:
+        raise ToolError(
+            f"brief is {len(brief):,} characters; the limit is {MAX_BRIEF_CHARS:,}. Give what "
+            "was reported -- the user, the items, the symptom -- not the whole ticket."
+        )
     path = _allowed_source(config, source)
     chosen = _incident_id(incident_id) if incident_id is not None else derive_incident_id(path)
+    return busy.run(chosen, lambda: _load(config, path, chosen, brief))
+
+
+def _load(config: MistifyConfig, path: Path, chosen: str, brief: str | None) -> dict[str, Any]:
+    from mistify.adapters.source import BinarySourceError
+    from mistify.pipeline import UnknownFormatError, ingest
+
     # The vault is a plaintext map back to every redacted value. Nothing over MCP may create
     # one, whatever the config says.
     unvaulted = config.model_copy(
@@ -197,9 +229,9 @@ def _investigate(config: MistifyConfig, incident_id: str, restart: bool) -> dict
         if report.status == HealthStatus.FAIL:
             # No override here by design; see the module docstring.
             raise ToolError(
-                report.refusal().split(" Otherwise,")[0]
-                + " A person can override this at the CLI with `mistify investigate "
-                "--ignore-health`; it cannot be overridden over MCP."
+                "the pre-flight health check failed, so no model was called. "
+                f"{report.failed_reasons()} A person can override this at the CLI with "
+                "`mistify investigate --ignore-health`; it cannot be overridden over MCP."
             )
         if restart:
             db.clear_investigation()
@@ -247,7 +279,7 @@ def _report(config: MistifyConfig, incident_id: str, report_format: str) -> str:
 def _query(config: MistifyConfig, incident_id: str, sql: str) -> dict[str, Any]:
     def run(db: ScratchpadDB) -> dict[str, Any]:
         try:
-            rows = db.run_readonly_sql(sql, max_rows=QUERY_ROW_CAP + 1)
+            rows = db.run_readonly_sql(sql, max_rows=QUERY_ROW_CAP + 1, time_limit=QUERY_TIME_LIMIT)
         except ReadOnlyViolation as exc:
             raise ToolError(f"query refused: {exc}. Only a single read-only SELECT runs.") from exc
         truncated = len(rows) > QUERY_ROW_CAP
@@ -321,9 +353,36 @@ def _health_summary(report: Any) -> dict[str, Any]:
     }
 
 
-async def _offload[T](work: Callable[[], T]) -> T:
-    def guarded() -> T:
-        with contextlib.redirect_stdout(sys.stderr):
-            return work()
+class _IncidentLocks:
+    """One writer per incident at a time, refused rather than queued.
 
-    return await anyio.to_thread.run_sync(guarded)
+    Tools run in worker threads, so without this an `ingest` could replace a scratchpad under
+    a running `investigate`, or two investigations could write into one record. Refusing is
+    kinder than queueing: the caller learns in a second that the incident is busy instead of
+    waiting minutes behind an investigation it may not know is running. Reads do not take it.
+    """
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._held: set[str] = set()
+
+    def run[T](self, incident_id: str, work: Callable[[], T]) -> T:
+        with self._guard:
+            if incident_id in self._held:
+                raise ToolError(
+                    f"incident {incident_id!r} is busy with another ingest, health check or "
+                    "investigation. Try again when it finishes."
+                )
+            self._held.add(incident_id)
+        try:
+            return work()
+        finally:
+            with self._guard:
+                self._held.discard(incident_id)
+
+
+async def _offload[T](work: Callable[[], T]) -> T:
+    # Blocking work in a thread keeps the stdio loop responsive. Stray output needs no
+    # handling here: the SDK's stdio transport claims fd 1 for the wire and points stdout at
+    # stderr for the life of the process.
+    return await anyio.to_thread.run_sync(work)

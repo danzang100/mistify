@@ -117,3 +117,23 @@ def test_a_failed_investigation_model_still_fails_the_run(
     avoid."""
     with pytest.raises(ProviderError):
         _run(loaded_db, monkeypatch, failing={MistifyConfig().llm.model})
+
+
+def test_a_missing_credential_for_a_later_stage_fails_before_the_loop_spends(
+    loaded_db: ScratchpadDB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Found in review: providers after the loop were built after it had been paid for."""
+    from mistify.llm.registry import MissingCredentialError
+
+    config = MistifyConfig(pipeline=PipelineConfig(coverage_nudges=0))
+    loop = ScriptedProvider(_note_writing_loop(loaded_db), model=config.llm.model)
+
+    def build(_name: str, model: str, _config: Any) -> Any:
+        if model == config.llm.model:
+            return loop
+        raise MissingCredentialError(f"No credential found for {model!r}")
+
+    monkeypatch.setattr(runner, "build_provider", build)
+    with pytest.raises(MissingCredentialError):
+        runner.run_investigation(loaded_db, config, adversarial=True)
+    assert loop.calls == [], "no model call was made before the credential was known missing"

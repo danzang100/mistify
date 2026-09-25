@@ -153,13 +153,16 @@ class HealthReport:
             out.append(f"  ok    {', '.join(passed)}")
         return out
 
+    def failed_reasons(self) -> str:
+        """Every failed check, named with its own sentence."""
+        return " ".join(f"[{c.name}] {c.message}" for c in self.failed)
+
     def refusal(self) -> str:
         """Why no model is being called, naming every check that failed."""
-        reasons = " ".join(f"[{c.name}] {c.message}" for c in self.failed)
         return (
-            f"the pre-flight health check failed, so no model was called. {reasons} "
-            "Otherwise, investigate with --investigator skeleton (no model), or pass "
-            "--ignore-health to spend tokens on it anyway."
+            f"the pre-flight health check failed, so no model was called. "
+            f"{self.failed_reasons()} Otherwise, investigate with --investigator skeleton "
+            "(no model), or pass --ignore-health to spend tokens on it anyway."
         )
 
 

@@ -67,7 +67,28 @@ def run_investigation(
     def charged(built: LLMProvider) -> LLMProvider:
         return BudgetedProvider(built, budget) if budget is not None else built
 
+    # Every provider is built before the loop runs. Building the synthesis and critique
+    # providers after it meant a missing credential for either -- a different vendor, say --
+    # surfaced only once the investigation had been paid for, and discarded it.
     provider = charged(build_provider(config.llm.provider, config.llm.model, config.llm))
+    synthesiser = (
+        charged(
+            build_provider(
+                config.llm.synthesis_provider_name(), config.llm.synthesis_model, config.llm
+            )
+        )
+        if config.llm.synthesis_model is not None
+        else None
+    )
+    critic = (
+        charged(
+            build_provider(
+                config.llm.adversarial_provider_name(), config.llm.adversarial_model, config.llm
+            )
+        )
+        if adversarial
+        else None
+    )
 
     loop = InvestigationLoop(
         db=db,
@@ -83,14 +104,9 @@ def run_investigation(
     if result.stop_reason == "token_ceiling":
         refused.append("investigate")
 
-    if config.llm.synthesis_model is not None:
+    if synthesiser is not None:
         from mistify.agent.synthesis import run_synthesis
 
-        synthesiser = charged(
-            build_provider(
-                config.llm.synthesis_provider_name(), config.llm.synthesis_model, config.llm
-            )
-        )
         try:
             run_synthesis(db, synthesiser, max_tokens=config.llm.max_tokens)
         except TokenCeilingReached:
@@ -104,12 +120,7 @@ def run_investigation(
             db.record(SYNTHESIS_FAILED, _clip_error(exc))
         result.notes = db.notes()
 
-    if adversarial:
-        critic = charged(
-            build_provider(
-                config.llm.adversarial_provider_name(), config.llm.adversarial_model, config.llm
-            )
-        )
+    if critic is not None:
         raw_ids = MetricView(db.metrics("anomaly")).text(ANOMALY_SIGNAL_TEMPLATE_IDS) or ""
         signal_ids = [int(part) for part in raw_ids.split(",") if part.strip()]
         # A fresh box for the rebuttal, readers only, continuing the loop's step count so
